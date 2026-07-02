@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Hand-made telemetry field-decoder definitions (plan: docs/roadmap/telemetry_field_decoder_plan.md),
+    <!-- Hand-made telemetry field-decoder definitions are
          embedded so TelemetryRegistry loads them by resource name with no copy-to-output / runtime path. -->
     <EmbeddedResource Include="Telemetry\Definitions\*.json" />
   </ItemGroup>
@@ -53,7 +53,7 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <!-- VE3NEA.Dsp now lives in this solution as a source project. A project reference flows its compile
+  <!-- VE3NEA.Dsp lives in this solution as a source project. A project reference flows its compile
        reference and its native P/Invoke DLLs (fftw/liquid/fec/mingw, carried in VE3NEA.Dsp\Vendor) both
        here and transitively to the Tests and Bench projects that reference this library. -->
   <ItemGroup>
