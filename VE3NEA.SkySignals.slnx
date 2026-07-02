@@ -14,4 +14,10 @@
   <Project Path="VE3NEA.SkyTlm.Bench/VE3NEA.SkyTlm.Bench.csproj">
     <Platform Project="x64" />
   </Project>
+  <Project Path="VE3NEA.SkySSTV/VE3NEA.SkySSTV.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="VE3NEA.SkySSTV.Tests/VE3NEA.SkySSTV.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
 </Solution>
