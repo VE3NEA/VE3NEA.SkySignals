@@ -223,6 +223,89 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("Result 2026-07-02 (a useful NEGATIVE): no corpus-wide win from a narrower fixed " +
+      "detection channel. ±5000 ≈ ±6000 on strong bursts (some pulse gains: 199→224, 158→189) but it " +
+      "SPLITS Monitor-3's clean 285 s train into two partial image trains; ±4000 clips the 3.3 kHz-dev " +
+      "bursts (199→180, 102→65 pulses; 12_37_50 lost); ±3500 clearly degrades. And 04-18 UmKA-1 yields " +
+      "0 images at EVERY bandwidth at the standard threshold. Verdict: keep ChannelBwHz 6000; channel " +
+      "adaptivity must be per-burst deviation-aware, and 04-18 needs longer coherent integration.")]
+    public void Real_DetectionChannelSweep()
+    {
+      // per capture × channel BW: image-train count and each image train's pulse count / mean score —
+      // if ±4000 dominates ±6000 everywhere, detection gets its own (narrower) channel constant
+      foreach (string wav in Directory.GetFiles(RecordingsDir, "*.iq.wav"))
+      {
+        var (iq, sr) = WavIqReader.Read(wav);
+        output.WriteLine($"--- {Path.GetFileNameWithoutExtension(wav)}");
+        foreach (double chanBw in new[] { 6000.0, 5000.0, 4000.0, 3500.0 })
+        {
+          var o = new SstvDecodeOptions { SampleRate = sr, ChannelBwHz = chanBw };
+          double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+          var hits = SstvVisDetector.DetectAll(sync, sr);
+          var extractor = SstvDecoder.ExtractTrains(sync, sr, hits);
+
+          var parts = new List<string>();
+          foreach (var train in extractor.Trains)
+            if (extractor.IsImageTrain(train))
+              parts.Add($"{train.Format}@{train.Regr.GetPulseTime(0) / sr:0}s " +
+                $"p={train.PulseCnt} s={train.MeanPower:0.00}{(train is SstvVisPulseTrain ? " VIS" : "")}");
+          output.WriteLine($"  chan ±{chanBw:0}: images={parts.Count}  {string.Join(" | ", parts)}");
+        }
+      }
+    }
+
+
+    [ManualFact("Result 2026-07-02 (a decisive NEGATIVE): widening the coherence window HURTS everywhere " +
+      "— hard case 0.286/0.239/0.200 and strong burst 0.420/0.377/0.329 at 4/6/8 ms. The 9 ms sync pulse " +
+      "bounds single-pulse integration: a wider window eats the time template's flat top instead of " +
+      "adding gain, so 4 ms is near-optimal. Clutter tracks the burst max at EVERY window (0.42/0.42, " +
+      "0.38/0.37, 0.33/0.32): single-pulse scores are fundamentally non-separable — the only remaining " +
+      "sensitivity path is CROSS-pulse soft-evidence accumulation (the plan's soft-comb option), not a " +
+      "longer matched-filter window.")]
+    public void Real_CoherenceWindowSweep()
+    {
+      string hardWav = Path.Combine(RecordingsDir, "2026-04-18_12_36_09_UmKA-1.iq.wav");
+      string strongWav = Path.Combine(RecordingsDir, "2026-06-30_22_36_37_UTMN2_Robot36.iq.wav");
+      if (!File.Exists(hardWav) || !File.Exists(strongWav)) { output.WriteLine("captures absent; probe skipped"); return; }
+
+      var spec = SstvModes.Get(SstvMode.Robot36);
+
+      // hard case: full 0–24 s burst at its matched channel
+      var (iqH, srH) = WavIqReader.Read(hardWav);
+      var oH = new SstvDecodeOptions { SampleRate = srH, ChannelBwHz = 4000.0 };
+      double[] syncH = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iqH[..(int)(24 * srH)], oH), srH, oH);
+
+      // strong case: burst interior vs a noise-only clutter region (the Real_SyncScoreProbe spans)
+      var (iqS, srS) = WavIqReader.Read(strongWav);
+      var oS = new SstvDecodeOptions { SampleRate = srS };
+      double[] syncS = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iqS, oS), srS, oS);
+      double[] burst = syncS[(int)(185 * srS)..(int)(215 * srS)];
+      double[] clutter = syncS[(int)(20 * srS)..(int)(45 * srS)];
+
+      foreach (double winMs in new[] { 4.0, 6.0, 8.0 })
+      {
+        var detH = new SstvPulseDetector(srH, spec.SyncMs, winMs);
+        var pulsesH = detH.Detect(syncH);
+        int grid = 0;
+        double period = spec.LinePeriodMs / 1000.0 * srH;
+        for (int i = 1; i < pulsesH.Count; i++)
+        {
+          double gap = pulsesH[i].Time - (double)pulsesH[i - 1].Time;
+          double frac = gap / period;
+          if (Math.Abs(frac - Math.Round(frac)) * period < 0.005 * srH && frac < 20) grid++;
+        }
+
+        var detBurst = new SstvPulseDetector(srS, spec.SyncMs, winMs);
+        detBurst.Detect(burst);
+        var detClutter = new SstvPulseDetector(srS, spec.SyncMs, winMs);
+        detClutter.Detect(clutter);
+
+        output.WriteLine($"win {winMs} ms: hard maxScore={detH.MaxScore:0.000} pulses={pulsesH.Count} " +
+          $"onGrid={grid} | strong burst max={detBurst.MaxScore:0.000} clutter max={detClutter.MaxScore:0.000}");
+      }
+    }
+
+
     [ManualFact("Result 2026-07-02: the 04-18 UmKA-1 transmission is LOW-deviation FM (spectrogram: weak " +
       "carrier + first-order sideband pair tracing the 1.2-2.3 kHz subcarrier; devEst 1.3-2.1 kHz, " +
       "noise-inflated). Channel ±4000 is the matched sweet spot: clicks 2.4→1.2 %, maxScore 0.221→0.286, " +

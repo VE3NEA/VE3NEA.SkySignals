@@ -5,9 +5,10 @@ Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 ## Current Status
 
 **Phase: P6(c) retro work-off DONE (2026-07-02 late) — retro D/E/O closed, VIS-hijack bug fixed, a NEW
-real image uncovered. Next: remaining P6(c) experiments (de-emphasis, impulse blanking, SNR-adaptive
-video BW, longer coherent sync integration), then P7.** The code lives in the `VE3NEA.SkySignals` repo,
-branch `sstv`, project **`VE3NEA.SkySSTV`**. Suite: **88 pass / 5 manual-skip**.
+real image uncovered, 04-18 re-diagnosed (low-deviation FM), and two dead ends measured shut (fixed
+narrower channel; wider coherence window). Next: cross-pulse soft-evidence accumulation, then the
+remaining P6(c) experiments, then P7.** The code lives in the `VE3NEA.SkySignals` repo, branch `sstv`,
+project **`VE3NEA.SkySSTV`**. Suite: **88 pass / 8 manual-skip**.
 
 What landed (the Hopper port, plan §4.1/§6.1):
 
@@ -159,14 +160,32 @@ P6(c) next action 2 below, not action 1 — it is a sensitivity-floor problem, n
   unusable and thr 0.12 mis-locks Robot72, so a global threshold drop is not the answer. Confirms the
   path: **longer coherent sync integration + per-burst SNR-adaptive channel bandwidth** (next action 1).
 
+**Detection-channel sweep (2026-07-02 late, `Real_DetectionChannelSweep`) — a useful negative:** a
+narrower *fixed* detection channel is NOT a corpus-wide win. ±5000 ≈ ±6000 on the strong bursts (some
+pulse gains) but splits Monitor-3's clean 285 s train into two partial image trains; ±4000 clips the
+3.3 kHz-deviation bursts (pulse losses, 12_37_50 lost entirely); and 04-18 UmKA-1 promotes nothing at any
+bandwidth at the standard threshold. **`ChannelBwHz` stays 6000**; channel adaptivity, if built, must be
+per-burst deviation-aware (measure the burst's deviation, re-decode matched — the ±4 kHz gain on 04-18 is
+real but transmitter-specific), and the 04-18 detection floor is the coherent-integration problem, not a
+bandwidth problem.
+
+**Coherence-window sweep (2026-07-02 late, `Real_CoherenceWindowSweep`) — second decisive negative:**
+widening the detector's 4 ms coherence window to 6/8 ms LOWERS every score (hard case 0.286→0.239→0.200;
+strong burst 0.420→0.377→0.329) — the 9 ms sync pulse bounds single-pulse integration, so a wider window
+eats the time template's flat top instead of adding gain; 4 ms is near-optimal. And clutter tracks the
+burst max at every window (0.42/0.42, 0.38/0.37, 0.33/0.32): **single-pulse scores are fundamentally
+non-separable at any window length** — the "longer matched-filter window" sub-option is measured and
+closed. The only remaining sensitivity path for the 04-18 class is **cross-pulse soft-evidence
+accumulation** (the §4.1 soft-comb: integrate the un-thresholded matched-filter score over predicted
+line slots before requiring a hard triplet). The detector's window and threshold are now constructor/init
+knobs (defaults unchanged) for these experiments.
+
 Next actions:
 
-1. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
-   SNR-adaptive **channel and video** bandwidth (the 04-18 sweep above shows the matched channel alone
-   buys 3→11 on-grid syncs on a low-deviation transmitter), and — per the 04-18 re-diagnosis — longer
-   coherent sync integration for very-low-SNR passes (longer matched-filter window or soft-evidence
-   accumulation before requiring a hard triplet; a bare threshold drop locks but cannot image, and
-   invites wrong-mode locks).
+1. **Cross-pulse soft-evidence accumulation** for the 04-18 class (the §4.1 soft-comb, streaming form —
+   both single-pulse alternatives are now measured dead ends: window widening and threshold lowering).
+2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
+   per-burst deviation-matched (NOT fixed-narrower — see the sweep above) channel/video bandwidth.
 2. Then P7 (regression corpus) and P8 (SkyRoof integration, §5 — the per-train image emission just proven
    in the harness is exactly the panel's leaf-per-image behavior; `IsImageTrain` is the leaf-emission
    gate).

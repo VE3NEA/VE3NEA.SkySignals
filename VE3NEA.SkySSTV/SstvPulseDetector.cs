@@ -29,6 +29,7 @@ namespace VE3NEA.SkySSTV
     /// <summary>Per-pulse detection threshold, default <see cref="ScoreThreshold"/> — overridable for the
     /// low-SNR threshold experiments (the 04-18 UmKA-1 hardest case).</summary>
     internal double Threshold { get; init; } = ScoreThreshold;
+
     private const int RenormInterval = 4096;      // oscillator re-normalization cadence (samples)
     private const int ReanchorInterval = 1 << 20; // running-sum re-accumulation cadence (samples)
 
@@ -57,11 +58,14 @@ namespace VE3NEA.SkySSTV
     /// P6(c) threshold experiments and the real-capture score measurements.</summary>
     public double MaxScore { get; private set; }
 
-    public SstvPulseDetector(double fs, double pulseLenMs)
+    /// <summary><paramref name="windowMs"/> overrides the coherence-window length for the
+    /// longer-coherent-integration experiments (wider = more coherent gain at 1200 Hz, blunter time
+    /// peak; must stay under the family's sync duration).</summary>
+    public SstvPulseDetector(double fs, double pulseLenMs, double windowMs = FreqWindowMs)
     {
       this.fs = fs;
       durMs = (float)pulseLenMs;
-      win = Math.Max(8, (int)Math.Round(FreqWindowMs / 1000.0 * fs));
+      win = Math.Max(8, (int)Math.Round(windowMs / 1000.0 * fs));
       pulseLen = Math.Max(win, (int)Math.Round(pulseLenMs / 1000.0 * fs));
 
       double w = 2 * Math.PI * SstvTones.Sync / fs;
