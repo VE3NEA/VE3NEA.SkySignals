@@ -24,12 +24,16 @@ namespace VE3NEA.SkySSTV
     /// <see cref="SstvDecodeOptions.Acquire"/> false to decode at the fixed
     /// <see cref="SstvDecodeOptions.StartSample"/>.</summary>
     public static RgbImage Decode(Complex32[] iq, SstvMode mode, SstvDecodeOptions? options = null)
+      => Decode(Discriminator(iq, options ?? new SstvDecodeOptions()), mode, options);
+
+    /// <summary>Decode from the discriminated audio (one <see cref="Discriminator"/> pass is shared between
+    /// detection and decode — retro item O; every stage downstream of the outer FM demod consumes this
+    /// array, so callers that already discriminated must not pay a second multi-hundred-MB pass).</summary>
+    public static RgbImage Decode(double[] disc, SstvMode mode, SstvDecodeOptions? options = null)
     {
       var o = options ?? new SstvDecodeOptions();
       var spec = SstvModes.Get(mode);
       double fs = o.SampleRate;
-
-      double[] disc = Discriminator(iq, o);                  // outer FM demod → f_doppler + dev·audio(t), Hz
 
       // the MHT pulse-train extraction supplies acquisition (burst start) and per-line timing (plan §4.1)
       SstvPulseTrain? train = null;
@@ -114,7 +118,7 @@ namespace VE3NEA.SkySSTV
         foreach (var det in detectors)
           for (int i = blockStart; i < blockEnd; i++)
             det.Process(i < pad ? 0.0 : sync[i - pad], raw);
-        foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.Freq, p.DurMs));
+        foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.DurMs));
         pending.Sort((a, b) => a.Time.CompareTo(b.Time));
 
         // deliver only pulses no later emission can precede, so the extractor sees onset order
@@ -128,7 +132,7 @@ namespace VE3NEA.SkySSTV
 
       raw.Clear();
       foreach (var det in detectors) det.Flush(raw);
-      foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.Freq, p.DurMs));
+      foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.DurMs));
       pending.Sort((a, b) => a.Time.CompareTo(b.Time));
       extractor.Process(pending, sync.Length);
       extractor.Finish(sync.Length);
@@ -139,9 +143,13 @@ namespace VE3NEA.SkySSTV
     /// <see cref="SstvVisResult.Found"/> is false when no valid, parity-checked header is present
     /// anywhere; the byte may map to no supported mode.</summary>
     public static SstvVisResult DetectVis(Complex32[] iq, SstvDecodeOptions? options = null)
+      => DetectVis(Discriminator(iq, options ?? new SstvDecodeOptions()), options);
+
+    /// <summary>VIS scan from the discriminated audio (the shared-pass form, retro item O).</summary>
+    public static SstvVisResult DetectVis(double[] disc, SstvDecodeOptions? options = null)
     {
       var o = options ?? new SstvDecodeOptions();
-      double[] sync = SyncAudio(Discriminator(iq, o), o.SampleRate, o);
+      double[] sync = SyncAudio(disc, o.SampleRate, o);
       var hits = SstvVisDetector.DetectAll(sync, o.SampleRate);
       return hits.Count > 0 ? hits[0] : new SstvVisResult(false, -1, null, -1, -1, 0, false);
     }
@@ -150,15 +158,25 @@ namespace VE3NEA.SkySSTV
     /// the sync cadence/duration via the MHT. <see cref="SstvModeResult.Found"/> is false when neither a VIS
     /// header nor a coherent sync train is present.</summary>
     public static SstvModeResult DetectMode(Complex32[] iq, SstvDecodeOptions? options = null)
+      => DetectMode(Discriminator(iq, options ?? new SstvDecodeOptions()), options);
+
+    /// <summary>Mode inference from the discriminated audio (the shared-pass form, retro item O).</summary>
+    public static SstvModeResult DetectMode(double[] disc, SstvDecodeOptions? options = null)
     {
       var o = options ?? new SstvDecodeOptions();
-      double[] sync = SyncAudio(Discriminator(iq, o), o.SampleRate, o);
+      double[] sync = SyncAudio(disc, o.SampleRate, o);
       return SstvModeDetector.Detect(sync, o.SampleRate, o);
     }
 
     /// <summary>Channel FIR + FM discriminator: the outer FM demod that recovers the SSTV subcarrier audio
-    /// <c>f_doppler + dev·audio(t)</c> (Hz). Shared by acquisition, VIS detection and brightness.</summary>
-    internal static double[] Discriminator(Complex32[] iq, SstvDecodeOptions o)
+    /// <c>f_doppler + dev·audio(t)</c> (Hz). Run it ONCE per capture and hand the output to the
+    /// disc-based <see cref="DetectMode(double[], SstvDecodeOptions?)"/> /
+    /// <see cref="Decode(double[], SstvMode, SstvDecodeOptions?)"/> overloads (retro item O). The
+    /// discriminator itself stays the hand-rolled <c>Math.Atan2</c> loop rather than the wrapped liquid
+    /// <c>freqdem</c> native: its cost is negligible next to the FIR stages, and the deterministic
+    /// double-precision arithmetic keeps the tuned detection statistics stable (freqdem computes the same
+    /// phase difference in float with an approximated atan2 — no measurable win, a precision risk).</summary>
+    public static double[] Discriminator(Complex32[] iq, SstvDecodeOptions o)
     {
       double fs = o.SampleRate;
       Complex32[] chan = ChannelFilter(iq, fs, o.ChannelBwHz);

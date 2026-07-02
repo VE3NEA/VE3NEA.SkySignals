@@ -165,9 +165,10 @@ namespace VE3NEA.SkySSTV
       double phase = 0.0;
       double dcStep = 2 * Math.PI * o.DopplerHz / fs;      // constant offset → DC on recovered audio
       double devStep = 2 * Math.PI * o.DeviationHz / fs;   // audio ±1 → ±deviation
+      double rateStep = 2 * Math.PI * o.DopplerRateHzPerSec / (fs * fs);   // drift → DC ramp (plan §8)
       for (int i = 0; i < audio.Length; i++)
       {
-        phase += dcStep + devStep * audio[i];
+        phase += dcStep + rateStep * i + devStep * audio[i];
         iq[i] = new Complex32((float)Math.Cos(phase), (float)Math.Sin(phase));
       }
       if (o.NoiseStdDev > 0) AddNoise(iq, o.NoiseStdDev, o.NoiseSeed);

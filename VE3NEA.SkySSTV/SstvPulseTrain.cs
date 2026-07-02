@@ -3,18 +3,18 @@ using System.Collections.Generic;
 
 namespace VE3NEA.SkySSTV
 {
-  /// <summary>One detected 1200 Hz sync pulse: absolute sample time, matched-filter power, tone frequency
-  /// (Hz), the sync-template duration that detected it (ms — the Robot-vs-PD family discriminant, retro
-  /// item C), and a flag marking it already consumed by a train.</summary>
+  /// <summary>One detected 1200 Hz sync pulse: absolute sample time, matched-filter power, the
+  /// sync-template duration that detected it (ms — the Robot-vs-PD family discriminant, retro
+  /// item C), and a flag marking it already consumed by a train. No per-pulse frequency: FM-on-FM puts
+  /// every sync at exactly 1200 Hz (plan §1.6), so Hopper's frequency gate is dropped (retro item E).</summary>
   public struct SstvPulse
   {
     public int Time;
     public float Power;
-    public float Freq;
     public float DurMs;
     public bool Used;
-    public SstvPulse(int time, float power, float freq, float durMs = 0)
-    { Time = time; Power = power; Freq = freq; DurMs = durMs; Used = false; }
+    public SstvPulse(int time, float power, float durMs = 0)
+    { Time = time; Power = power; DurMs = durMs; Used = false; }
   }
 
   /// <summary>Lifecycle of a pulse-train hypothesis (plan §4.1). <see cref="VisOnly"/> is the initial state
@@ -25,7 +25,7 @@ namespace VE3NEA.SkySSTV
   /// One MHT hypothesis (plan §4.1/§6.1, ported from Hopper's <c>TPulseTrain</c>): a candidate SSTV sync train
   /// of a specific <see cref="SstvMode"/>, seeded by a period-consistent 3-pulse triplet and tracked by an
   /// <see cref="SstvSyncRegressor"/>. New pulses are <b>associated</b> through <see cref="TryAddPulse"/> — a
-  /// sync-duration family gate, a frequency gate, plus the regressor's growing time-tolerance gate — so clutter
+  /// sync-duration family gate plus the regressor's growing time-tolerance gate — so clutter
   /// outside the gate is ignored, not fitted. A candidate <b>promotes</b> to active once it has enough pulses
   /// within the promote timeout (back-filling earlier pulses it can explain, <see cref="AddOldPulses"/>), and
   /// <b>retires</b> after a run of inactivity. The extractor owns the state transitions and picks the best
@@ -33,7 +33,6 @@ namespace VE3NEA.SkySSTV
   /// </summary>
   internal class SstvPulseTrain
   {
-    private const double FreqTolHz = 150.0;      // reject pulses off the train's tone frequency
     private const double PromoteSeconds = 4.0;   // promote-or-kill a candidate by this idle time
     private const double RetireSeconds = 6.0;    // retire an active train after this idle time (§1.10 T_gap)
     private const double WeakPower = 2 * SstvPulseDetector.ScoreThreshold;  // a weak last pulse holds the claim longer
@@ -51,7 +50,6 @@ namespace VE3NEA.SkySSTV
     public SstvTrainState State { get; set; }
     public SstvMode Format { get; }
     public SstvSyncRegressor Regr { get; protected set; }
-    public double Freq { get; protected set; }
     public int PulseCnt => pulses.Count;
     public IReadOnlyList<SstvPulse> Pulses => pulses;
 
@@ -71,7 +69,6 @@ namespace VE3NEA.SkySSTV
     public SstvPulseTrain(SstvMode mode, SstvPulse p0, SstvPulse p1, SstvPulse p2, double fs)
       : this(mode, fs)
     {
-      Freq = (p0.Freq + p1.Freq + p2.Freq) / 3.0;
       Regr = new SstvSyncRegressor(p0.Time, nominalPeriod);
       Regr.ProcessPulse(p0.Time);
       Regr.ProcessPulse(p1.Time);
@@ -96,7 +93,7 @@ namespace VE3NEA.SkySSTV
     }
 
     /// <summary>Try to associate a pulse with this train: rejected if of the wrong sync-duration family, past
-    /// the image end, off-frequency, outside the regressor's time gate, or landing in an already-filled line
+    /// the image end, outside the regressor's time gate, or landing in an already-filled line
     /// slot (a duplicate would be double-fitted and double-counted toward promotion, retro P); otherwise
     /// folded in. Returns whether it was accepted.</summary>
     public virtual bool TryAddPulse(in SstvPulse pulse)
@@ -104,7 +101,6 @@ namespace VE3NEA.SkySSTV
       var spec = SstvModes.Get(Format);
       if (!MatchesFamily(pulse, spec)) return false;
       if (pulse.Time > Regr.GetPulseTime(spec.LineCount + 50)) return false;
-      if (Math.Abs(pulse.Freq - Freq) > FreqTolHz) return false;
 
       int pulseNo = Regr.GetPulseNo(pulse.Time);
       if (pulseNo == lastPulseNo) return false;
@@ -120,14 +116,13 @@ namespace VE3NEA.SkySSTV
     protected static bool MatchesFamily(in SstvPulse pulse, SstvModeSpec spec)
       => pulse.DurMs == 0 || Math.Abs(pulse.DurMs - spec.SyncMs) < 0.5;
 
-    /// <summary>Fold an accepted pulse in: update the smoothed tone frequency and the regressor. The pulse
+    /// <summary>Fold an accepted pulse in: update the regressor. The pulse
     /// list stays time-sorted (back-fill inserts at the front).</summary>
     public void AddPulse(in SstvPulse pulse)
     {
       if (pulses.Count > 0 && pulse.Time < pulses[0].Time) pulses.Insert(0, pulse);
       else pulses.Add(pulse);
 
-      Freq = 0.97 * Freq + 0.03 * pulse.Freq;
       lastPulseNo = Regr.GetPulseNo(pulse.Time);
       Regr.ProcessPulse(pulse.Time);
     }
@@ -241,7 +236,6 @@ namespace VE3NEA.SkySSTV
       VisTime = headerEndSample;
       anchorWing = (int)Math.Round(AnchorWingMs / 1000.0 * fs);
       tripletWing = (int)Math.Round(TripletWingMs / 1000.0 * fs);
-      Freq = SstvTones.Sync;
       Regr = new SstvSyncRegressor(headerEndSample, nominalPeriod);
       State = SstvTrainState.VisOnly;
     }
@@ -267,9 +261,15 @@ namespace VE3NEA.SkySSTV
     }
 
     /// <summary>Adopt a period-consistent triplet if a line fit through it extrapolates back to the VIS
-    /// anchor: the extractor offers each fresh triplet here before spawning a plain candidate.</summary>
+    /// anchor: the extractor offers each fresh triplet here before spawning a plain candidate. The triplet
+    /// must lie inside the image span the anchor predicts — over hundreds of periods the ±18 ms
+    /// extrapolation gate alone is nearly vacuous, and without the span gate a noise triplet minutes
+    /// before the anchor could hijack the train (seen on the UmKA-1 capture).</summary>
     public bool TryAddPulses(in SstvPulse p0, in SstvPulse p1, in SstvPulse p2)
     {
+      if (p0.Time < VisTime - anchorWing) return false;
+      if (Regr.GetPulseNo(p2.Time) > SstvModes.Get(Format).LineCount + 1) return false;
+
       var fit = new SstvSyncRegressor(p0.Time, nominalPeriod);
       fit.ProcessPulse(p0.Time);
       fit.ProcessPulse(p1.Time);

@@ -13,7 +13,7 @@ namespace VE3NEA.SkySSTV.Tests
     private static SstvPulseTrain Seed() => new SstvPulseTrain(SstvMode.Robot36,
       P(0), P((int)Period), P((int)(2 * Period)), Fs);
 
-    private static SstvPulse P(int t, float freq = 1200f) => new SstvPulse(t, 1.0f, freq);
+    private static SstvPulse P(int t) => new SstvPulse(t, 1.0f);
 
     [Fact]
     public void AcceptsInTrainPulses_AndPromotes()
@@ -23,14 +23,6 @@ namespace VE3NEA.SkySSTV.Tests
       for (int k = 3; k < 12; k++) tr.TryAddPulse(P((int)(Period * k))).Should().BeTrue($"pulse {k} is on the grid");
       tr.PulseCnt.Should().Be(12);
       tr.HasEnoughPulses.Should().BeTrue("12 on-grid pulses clear the promote threshold");
-    }
-
-    [Fact]
-    public void RejectsOffFrequencyPulse()
-    {
-      var tr = Seed();
-      tr.TryAddPulse(P((int)(Period * 3), freq: 1600f)).Should().BeFalse("400 Hz off the 1200 Hz train");
-      tr.PulseCnt.Should().Be(3);
     }
 
     [Fact]

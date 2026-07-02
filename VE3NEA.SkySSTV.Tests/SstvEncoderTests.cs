@@ -125,6 +125,33 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     [Fact]
+    public void DopplerRate_AppearsAsDcRamp()
+    {
+      // plan §8: a drifting carrier is a linear DC ramp on the discriminator output — verify the ramp's
+      // endpoints (mean instantaneous frequency over the first vs last tenth of the transmission)
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      const double start = 500.0, rate = -30.0;
+      var iq = SstvEncoder.Encode(SolidImage(spec, 128, 128, 128), SstvMode.Robot36,
+        new SstvEncoderOptions { IncludeVis = false, DopplerHz = start, DopplerRateHzPerSec = rate });
+
+      var inst = SstvTestSignal.InstantaneousFreq(iq, Fs);
+      double durSec = inst.Length / Fs;
+      double head = MeanRange(inst, 0, inst.Length / 10);
+      double tail = MeanRange(inst, inst.Length - inst.Length / 10, inst.Length);
+      output.WriteLine($"drift: head={head:0} Hz tail={tail:0} Hz over {durSec:0.0} s");
+
+      head.Should().BeApproximately(start + rate * durSec * 0.05, 50, "the ramp starts at the initial offset");
+      tail.Should().BeApproximately(start + rate * durSec * 0.95, 50, "the ramp ends at start + rate·duration");
+    }
+
+    private static double MeanRange(double[] x, int a, int b)
+    {
+      double sum = 0;
+      for (int i = a; i < b; i++) sum += x[i];
+      return sum / (b - a);
+    }
+
+    [Fact]
     public void Slant_StretchesTotalDurationUniformly()
     {
       var spec = SstvModes.Get(SstvMode.Robot36);

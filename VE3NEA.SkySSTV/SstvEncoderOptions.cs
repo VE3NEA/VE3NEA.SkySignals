@@ -19,6 +19,13 @@ namespace VE3NEA.SkySSTV
     /// offset on the recovered audio (plan §1.6) — the decoder removes it downstream.</summary>
     public double DopplerHz { get; init; } = 0.0;
 
+    /// <summary>Linear drift rate of the carrier offset (Hz/s, plan §8). A real pass is not a constant
+    /// offset but a ramp (worst near TCA: ~−30 Hz/s at 145 MHz, ~−90 Hz/s at 435 MHz for LEO); on the
+    /// recovered audio it is a drifting DC term that stresses the brightness low-pass and the tone
+    /// statistics' constant-mean assumption — exactly what the constant <see cref="DopplerHz"/> cannot
+    /// exercise.</summary>
+    public double DopplerRateHzPerSec { get; init; } = 0.0;
+
     /// <summary>Receiver sample-clock error in parts per million: stretches every segment uniformly,
     /// producing the constant line-rate slant that KF1 corrects (plan §1.6).</summary>
     public double SlantPpm { get; init; } = 0.0;

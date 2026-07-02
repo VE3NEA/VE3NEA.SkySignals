@@ -73,6 +73,31 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     [Fact]
+    public void Decode_IsRobustToDopplerDrift()
+    {
+      // plan §1.6/§8: a drifting carrier (the TCA sweep a real pass produces — here +500 → ~−580 Hz at
+      // −30 Hz/s) is a DC ramp on the discriminator output; the Stage-2 bandpass and the brightness
+      // mix + low-pass both reject near-DC, so fidelity AND detection must be unaffected. This is what
+      // the constant-DopplerHz test cannot exercise (the tone banks' constant-mean assumption).
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = GrayscaleGradient(spec.Width, spec.Height);
+      var enc = new SstvEncoderOptions
+      { IncludeVis = true, DopplerHz = 500.0, DopplerRateHzPerSec = -30.0 };
+      var iq = SstvEncoder.Encode(src, SstvMode.Robot36, enc);
+
+      var res = SstvDecoder.DetectMode(iq);
+      res.Found.Should().BeTrue("detection statistics must ride through the DC ramp");
+      res.Mode.Should().Be(SstvMode.Robot36);
+      res.FromVis.Should().BeTrue("the VIS header must decode under drift");
+
+      var dec = SstvDecoder.Decode(iq, SstvMode.Robot36, new SstvDecodeOptions { Acquire = false, Track = false,
+        StartSample = res.FirstSyncSample });
+      double psnr = Psnr(src, dec);
+      output.WriteLine($"drifting-Doppler PSNR = {psnr:0.0} dB");
+      psnr.Should().BeGreaterThan(25.0, "the DC ramp must not degrade the image beyond the clean ceiling region");
+    }
+
+    [Fact]
     public void PdMode_GrayscaleDecodesWithHighPsnr()
     {
       var spec = SstvModes.Get(SstvMode.Pd50);          // smallest PD (320×256) keeps the round trip fast

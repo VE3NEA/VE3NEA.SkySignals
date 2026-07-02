@@ -104,12 +104,12 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [ManualFact("Result 2026-07-02 (multi-image, real-tuned defaults, continuous VIS): 18 images from 8 " +
-      "of 9 captures — one per promoted train. Both UTMN2 22:36 bursts decode nearly clean (the 27 s copy " +
-      "is the better one); UTMN2 11:29 yields five bursts whose ~13 s pairs match RXSSTV's paired history " +
-      "entries; Monitor-3 text card clean (beats RXSSTV); UmKA-1 anchors fromVis=True at ~297 s + a " +
-      "second burst at ~318 s. Weak-train noise decodes (score ~0.28-0.30, e.g. 12_37_50) remain the " +
-      "retro-D threshold-tuning case.")]
+    [ManualFact("Result 2026-07-02 late (retro D+E+O in): 18 images from 8 of 9 captures — every " +
+      "promoted ≥¼-lines train emits (the weak low-fill decodes ARE real transmissions, e.g. 12_37_50 " +
+      "@157 s, user-confirmed on the FskDemod spectrogram), plus a NEW real image: the UmKA-1 ~133 s " +
+      "SpacePi/Earth burst the VIS-hijack bug had swallowed (its old '@318 s second burst' was an " +
+      "artifact of that hijack). Single discriminator pass per capture. Still undetected: the 04-18 " +
+      "UmKA-1 transmission (the longer-coherent-integration case).")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))
@@ -140,36 +140,171 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     /// <summary>Decode one image per promoted pulse train (a pass carries several transmissions — plan
-    /// §1.10/§4.1; e.g. the 22:36 UTMN2 capture holds bursts at ~30 s and ~183 s). A train must have
-    /// claimed at least a quarter of its mode's lines to count as an image (Hopper emitted a frame at
-    /// ≥ ⅓·Lines on retire).</summary>
+    /// §1.10/§4.1; e.g. the 22:36 UTMN2 capture holds bursts at ~30 s and ~183 s). The image-emission
+    /// gate is the extractor's <see cref="SstvPulseTrainExtractor.IsImageTrain"/> (retro item D).</summary>
     private List<(RgbImage img, SstvMode mode, double firstSync, bool fromVis, double score)>
       DecodeAllImages(Complex32[] iq, double sr)
     {
       var o = new SstvDecodeOptions { SampleRate = sr };
-      double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+      double[] disc = SstvDecoder.Discriminator(iq, o);      // ONE discriminator pass per capture (retro O)
+      double[] sync = SstvDecoder.SyncAudio(disc, sr, o);
       var hits = SstvVisDetector.DetectAll(sync, sr);
       var extractor = SstvDecoder.ExtractTrains(sync, sr, hits);
 
       var images = new List<(RgbImage, SstvMode, double, bool, double)>();
       foreach (var train in extractor.Trains)
       {
-        if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) continue;
+        if (!extractor.IsImageTrain(train)) continue;
         var spec = SstvModes.Get(train.Format);
-        int claimed = 0;
-        foreach (var line in extractor.Lines) if (line.Train == train) claimed++;
-        if (claimed < spec.LineCount / 4) continue;
 
         int firstSync = (int)Math.Round(train.Regr.GetPulseTime(0));
         int margin = (int)(0.5 * sr);
         int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * sr);
         int start = Math.Max(0, firstSync - margin);
-        int end = Math.Min(iq.Length, firstSync + dur + margin);
-        var img = SstvDecoder.Decode(iq[start..end], train.Format,
+        int end = Math.Min(disc.Length, firstSync + dur + margin);
+        var img = SstvDecoder.Decode(disc[start..end], train.Format,
           new SstvDecodeOptions { SampleRate = sr, Acquire = false, StartSample = firstSync - start });
         images.Add((img, train.Format, firstSync, train is SstvVisPulseTrain, train.MeanPower));
       }
       return images;
+    }
+
+
+    [ManualFact("Result 2026-07-02 (the retro-D measurement, conclusion REVISED same day): a fill-ratio " +
+      "gate (pulses/claimed, low ≤ 0.34 vs high ≥ 0.46) first looked like a noise/real separator, but the " +
+      "low-fill trains are REAL weak transmissions (user-confirmed on the FskDemod spectrogram: 12_37_50 " +
+      "Monitor-3 has a genuine burst at ~157 s = our @158.2 train) — so no train that promotes in this " +
+      "corpus is noise, the fill ratio is only a quality metric, and no rejection gate was added. The " +
+      "probe's lasting catch is the VIS triplet-adoption hijack: the UmKA VIS train held 100 pulses at " +
+      "pulseNo -1125..-777 (a pre-anchor triplet passed the ±18 ms extrapolation gate) — fixed with the " +
+      "anchor-forward span gate, which uncovered a real hidden burst at ~133 s (80 pulses, mean 0.367).")]
+    public void Real_TrainStatsProbe()
+    {
+      // retro D: dump every promoted train's evidence statistics so the noise-train / real-train margin is
+      // measurable, then pick the gate from the data (fixed vs relative threshold, plan §9 D)
+      foreach (string wav in Directory.GetFiles(RecordingsDir, "*.iq.wav"))
+      {
+        var (iq, sr) = WavIqReader.Read(wav);
+        var o = new SstvDecodeOptions { SampleRate = sr };
+        double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+        var hits = SstvVisDetector.DetectAll(sync, sr);
+        var extractor = SstvDecoder.ExtractTrains(sync, sr, hits);
+
+        output.WriteLine($"--- {Path.GetFileNameWithoutExtension(wav)} ({iq.Length / sr:0}s)");
+        foreach (var train in extractor.Trains)
+        {
+          if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) continue;
+          var spec = SstvModes.Get(train.Format);
+          int claimed = 0;
+          foreach (var line in extractor.Lines) if (line.Train == train) claimed++;
+
+          var powers = new List<float>();
+          foreach (var p in train.Pulses) powers.Add(p.Power);
+          powers.Sort();
+          float median = powers[powers.Count / 2];
+
+          // pulse-number span density (extractor-independent) + the claimed lines' PulseNo range
+          int spanLo = train.Regr.GetPulseNo(train.Pulses[0].Time);
+          int spanHi = train.Regr.GetPulseNo(train.Pulses[^1].Time);
+          double density = (double)train.PulseCnt / (spanHi - spanLo + 1);
+          int claimLo = int.MaxValue, claimHi = int.MinValue;
+          foreach (var line in extractor.Lines)
+            if (line.Train == train)
+            { claimLo = Math.Min(claimLo, line.PulseNo); claimHi = Math.Max(claimHi, line.PulseNo); }
+
+          output.WriteLine($"  {train.Format} {train.State}{(train is SstvVisPulseTrain ? " VIS" : "")} " +
+            $"@{train.Regr.GetPulseTime(0) / sr:0.0}s pulses={train.PulseCnt}/{spec.LineCount} " +
+            $"span={spanLo}..{spanHi} density={density:0.00} claimed={claimed} " +
+            $"claimNo={(claimed > 0 ? $"{claimLo}..{claimHi}" : "-")} " +
+            $"mean={train.MeanPower:0.000} median={median:0.000} " +
+            $"min={powers[0]:0.000} max={powers[^1]:0.000} corr={train.Regr.CorrFactor:0.00000}");
+        }
+      }
+    }
+
+
+    [ManualFact("Result 2026-07-02: the 04-18 UmKA-1 transmission is LOW-deviation FM (spectrogram: weak " +
+      "carrier + first-order sideband pair tracing the 1.2-2.3 kHz subcarrier; devEst 1.3-2.1 kHz, " +
+      "noise-inflated). Channel ±4000 is the matched sweet spot: clicks 2.4→1.2 %, maxScore 0.221→0.286, " +
+      "on-grid sync gaps 3→11 (±6000 vs ±4000). Per-pulse threshold sweep at ±4000: thr 0.10 yields 156 " +
+      "pulses / 24 on-grid and PROMOTES an 11-pulse Robot36 train — the decode locks the line rate " +
+      "(vertical, unslanted stripes) but the video is unusable: a lock, not an image. Confirms the " +
+      "sensitivity-floor diagnosis; needs longer coherent integration + per-burst adaptive channel BW " +
+      "(threshold alone also mis-locks Robot72 at thr 0.12).")]
+    public void Real_UmKa0418ChannelSweep()
+    {
+      // sweep the Stage-1 channel BW over the known 0–24 s burst; per BW report: the discriminator click
+      // rate (|disc| near Nyquist-scale = FM-threshold saturation), the sync matched-filter MaxScore, the
+      // detected pulse count, how many inter-pulse gaps sit on the Robot36 150 ms grid, and the apparent
+      // deviation (RMS·√2 of the Stage-2 audio — meaningful only once the clicking stops)
+      string wav = Path.Combine(RecordingsDir, "2026-04-18_12_36_09_UmKA-1.iq.wav");
+      if (!File.Exists(wav)) { output.WriteLine("capture absent; probe skipped"); return; }
+
+      var (iq, sr) = WavIqReader.Read(wav);
+      var burst = iq[..(int)(24 * sr)];
+      var spec = SstvModes.Get(SstvMode.Robot36);
+
+      foreach (double chanBw in new[] { 6000.0, 4000.0, 3000.0, 2500.0, 2000.0 })
+      {
+        var o = new SstvDecodeOptions { SampleRate = sr, ChannelBwHz = chanBw };
+        double[] disc = SstvDecoder.Discriminator(burst, o);
+
+        int clicks = 0;
+        for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) clicks++;
+
+        double[] sync = SstvDecoder.SyncAudio(disc, sr, o);
+        double sum = 0;
+        for (int i = 0; i < sync.Length; i++) sum += sync[i] * sync[i];
+        double dev = Math.Sqrt(sum / sync.Length) * Math.Sqrt(2.0);
+
+        var detector = new SstvPulseDetector(sr, spec.SyncMs);
+        var pulses = detector.Detect(sync);
+        int onGrid = 0;
+        double period = spec.LinePeriodMs / 1000.0 * sr;
+        for (int i = 1; i < pulses.Count; i++)
+        {
+          double gap = pulses[i].Time - (double)pulses[i - 1].Time;
+          double frac = gap / period;
+          if (Math.Abs(frac - Math.Round(frac)) * period < 0.005 * sr && frac < 20) onGrid++;
+        }
+
+        output.WriteLine($"chan ±{chanBw:0}: clicks={100.0 * clicks / disc.Length:0.0}% " +
+          $"maxScore={detector.MaxScore:0.000} pulses={pulses.Count} onGrid={onGrid} devEst={dev:0} Hz");
+
+        // per-pulse threshold sweep at this bandwidth: pulse yield + grid consistency + extractor lock
+        foreach (double thr in new[] { 0.15, 0.12, 0.10 })
+        {
+          var det = new SstvPulseDetector(sr, spec.SyncMs) { Threshold = thr };
+          var p = det.Detect(sync);
+          int grid = 0;
+          for (int i = 1; i < p.Count; i++)
+          {
+            double gap = p[i].Time - (double)p[i - 1].Time;
+            double frac = gap / period;
+            if (Math.Abs(frac - Math.Round(frac)) * period < 0.005 * sr && frac < 20) grid++;
+          }
+          var extractor = new SstvPulseTrainExtractor(sr);
+          extractor.Process(p, sync.Length);
+          extractor.Finish(sync.Length);
+          int promoted = 0;
+          foreach (var t in extractor.Trains)
+            if (t.State == SstvTrainState.Active || t.State == SstvTrainState.Retired) promoted++;
+          output.WriteLine($"  thr={thr:0.00}: pulses={p.Count} onGrid={grid} promoted={promoted}" +
+            (extractor.BestTrain() is SstvPulseTrain bt
+              ? $" best={bt.Format}@{bt.Regr.GetPulseTime(0) / sr:0.0}s pulses={bt.PulseCnt} fill={extractor.FillRatio(bt):0.00}"
+              : ""));
+
+          if (extractor.BestTrain() is SstvPulseTrain best && best.Format == SstvMode.Robot36)
+          {
+            var img = SstvDecoder.Decode(disc, best.Format, new SstvDecodeOptions
+            { SampleRate = sr, ChannelBwHz = chanBw, Acquire = false,
+              StartSample = (int)Math.Max(0, Math.Round(best.Regr.GetPulseTime(0))) });
+            string path = Path.Combine(OutDir, $"umka0418_chan{chanBw:0}_thr{thr * 100:0}.png");
+            img.SavePng(path);
+            output.WriteLine($"  -> {Path.GetFileName(path)}");
+          }
+        }
+      }
     }
 
 
@@ -228,17 +363,18 @@ namespace VE3NEA.SkySSTV.Tests
       {
         var (iq, sr) = WavIqReader.Read(wav);
         var o = new SstvDecodeOptions { SampleRate = sr };
-        var res = SstvDecoder.DetectMode(iq, o);
+        double[] disc = SstvDecoder.Discriminator(iq, o);    // ONE discriminator pass (retro O)
+        var res = SstvDecoder.DetectMode(disc, o);
         string stem = Path.GetFileNameWithoutExtension(wav);
         if (!res.Found || res.Mode is not SstvMode mode) { output.WriteLine($"{stem}: no burst"); continue; }
 
         var spec = SstvModes.Get(mode);
         int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * sr);
         int a = Math.Max(0, res.FirstSyncSample + dur / 10);
-        int b = Math.Min(iq.Length, res.FirstSyncSample + dur - dur / 10);
+        int b = Math.Min(disc.Length, res.FirstSyncSample + dur - dur / 10);
         if (b <= a) { output.WriteLine($"{stem}: burst span empty"); continue; }
 
-        double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq[a..b], o), sr, o);
+        double[] sync = SstvDecoder.SyncAudio(disc[a..b], sr, o);
         double sum = 0;
         int n0 = sync.Length / 10, n1 = sync.Length - sync.Length / 10;
         for (int i = n0; i < n1; i++) sum += sync[i] * sync[i];
@@ -258,17 +394,18 @@ namespace VE3NEA.SkySSTV.Tests
     /// shorter than the 0.91 s VIS header, so a second acquisition would lock a VIS bit instead.</summary>
     private static (RgbImage img, SstvModeResult res)? DecodeToImage(Complex32[] iq, double fs)
     {
-      var res = SstvDecoder.DetectMode(iq, new SstvDecodeOptions { SampleRate = fs });
+      var o = new SstvDecodeOptions { SampleRate = fs };
+      double[] disc = SstvDecoder.Discriminator(iq, o);      // ONE discriminator pass (retro O)
+      var res = SstvDecoder.DetectMode(disc, o);
       if (!res.Found || res.Mode is not SstvMode mode) return null;
 
       var spec = SstvModes.Get(mode);
       int margin = (int)(0.5 * fs);
       int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * fs);
       int start = Math.Max(0, res.FirstSyncSample - margin);
-      int end = Math.Min(iq.Length, res.FirstSyncSample + dur + margin);
-      var seg = iq[start..end];
+      int end = Math.Min(disc.Length, res.FirstSyncSample + dur + margin);
 
-      var img = SstvDecoder.Decode(seg, mode,
+      var img = SstvDecoder.Decode(disc[start..end], mode,
         new SstvDecodeOptions { SampleRate = fs, Acquire = false, StartSample = res.FirstSyncSample - start });
       return (img, res);
     }

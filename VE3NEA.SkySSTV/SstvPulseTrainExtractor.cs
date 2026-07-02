@@ -38,7 +38,7 @@ namespace VE3NEA.SkySSTV
     private const double PeriodTol = 0.03;         // triplet spacing gate: ±3 % of a mode's nominal period
     private const double SwitchHysteresis = 1.5;   // a challenger must beat the incumbent by this factor
     private const double PruneSeconds = 8.0;       // pulse-buffer tail (> the retire timeout)
-    private const double FreqTolHz = 150.0;        // triplet pulses must share a tone frequency
+    private const double MinLineFraction = 0.25;   // an image train must claim ≥ ¼ of the mode's lines
 
     private readonly double fs;
     private readonly int blockSize;
@@ -121,6 +121,36 @@ namespace VE3NEA.SkySSTV
       return best;
     }
 
+    /// <summary>Scan lines claimed by <paramref name="train"/>.</summary>
+    public int ClaimedLines(SstvPulseTrain train)
+    {
+      int claimed = 0;
+      foreach (var line in lines) if (line.Train == train) claimed++;
+      return claimed;
+    }
+
+    /// <summary>The image-emission gate (retro item D, resolved 2026-07-02): a promoted train yields an
+    /// image when it claims at least <see cref="MinLineFraction"/> of its mode's lines. No evidence-quality
+    /// rejection beyond that: the retro-D measurement first suggested a pulses/claimed-lines fill-ratio
+    /// gate (noise ≤ 0.34 vs real ≥ 0.46), but the "noise" trains it was tuned on turned out to be REAL
+    /// weak transmissions (user-confirmed on the FskDemod spectrogram — e.g. the 12_37_50 Monitor-3
+    /// ~157 s burst), and pure noise already fails at promotion (the MHT triplet + N-of-M gates, pinned
+    /// by the synthetic clutter tests). <see cref="FillRatio"/> stays as a quality diagnostic for the
+    /// image META, not a gate.</summary>
+    public bool IsImageTrain(SstvPulseTrain train)
+    {
+      if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) return false;
+      return ClaimedLines(train) >= MinLineFraction * SstvModes.Get(train.Format).LineCount;
+    }
+
+    /// <summary>Fraction of the train's claimed lines that carry a detected sync pulse — an image-quality
+    /// confidence (≈1 for a strong burst; low values mean the grid mostly coasted).</summary>
+    public double FillRatio(SstvPulseTrain train)
+    {
+      int claimed = ClaimedLines(train);
+      return claimed > 0 ? (double)train.PulseCnt / claimed : 0;
+    }
+
 
     // ----------------------------------------------------------------------------------------------------
     //                                      pulse association / spawn
@@ -152,7 +182,6 @@ namespace VE3NEA.SkySSTV
         {
           double dist = p0.Time - (double)pulses[i].Time;
           if (dist > 2 * maxPeriod + tripletTol) break;
-          if (Math.Abs(pulses[i].Freq - p0.Freq) > FreqTolHz) continue;
 
           if (dist >= minPeriod && dist <= maxPeriod) mid = i;
 

@@ -25,6 +25,10 @@ namespace VE3NEA.SkySSTV
   {
     private const double FreqWindowMs = 4.0;      // coherence window: several 1200 Hz cycles, < any sync
     internal const double ScoreThreshold = 0.18;  // bipolar score to register a pulse (clean sync ≈ 0.33+)
+
+    /// <summary>Per-pulse detection threshold, default <see cref="ScoreThreshold"/> — overridable for the
+    /// low-SNR threshold experiments (the 04-18 UmKA-1 hardest case).</summary>
+    internal double Threshold { get; init; } = ScoreThreshold;
     private const int RenormInterval = 4096;      // oscillator re-normalization cadence (samples)
     private const int ReanchorInterval = 1 << 20; // running-sum re-accumulation cadence (samples)
 
@@ -124,7 +128,7 @@ namespace VE3NEA.SkySSTV
       double score = (sumP - 0.5 * (sumL + sumR)) / l;
       if (score > MaxScore) MaxScore = score;
 
-      if (score > ScoreThreshold)
+      if (score > Threshold)
       {
         if (!inRun) { inRun = true; runBest = score; runBestT = onset; }
         else if (score > runBest) { runBest = score; runBestT = onset; }
@@ -144,10 +148,10 @@ namespace VE3NEA.SkySSTV
       if (pulses.Count > 0 && tAbs - lastEmitT < 2 * pulseLen)
       {
         if (runBest > pulses[^1].Power)
-          pulses[^1] = new SstvPulse((int)tAbs, (float)runBest, (float)SstvTones.Sync, durMs);
+          pulses[^1] = new SstvPulse((int)tAbs, (float)runBest, durMs);
         return;
       }
-      pulses.Add(new SstvPulse((int)tAbs, (float)runBest, (float)SstvTones.Sync, durMs));
+      pulses.Add(new SstvPulse((int)tAbs, (float)runBest, durMs));
       lastEmitT = tAbs;
     }
 

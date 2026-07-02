@@ -4,9 +4,10 @@ Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
 ## Current Status
 
-**Phase: P6(b) DONE (2026-07-02) — the MHT extractor is in and the FIRST REAL IMAGES decode. Next: P6(c)
-front-end fidelity + threshold tuning.** The code lives in the `VE3NEA.SkySignals` repo, branch `sstv`,
-project **`VE3NEA.SkySSTV`**. Suite: **85 pass / 2 manual-skip**.
+**Phase: P6(c) retro work-off DONE (2026-07-02 late) — retro D/E/O closed, VIS-hijack bug fixed, a NEW
+real image uncovered. Next: remaining P6(c) experiments (de-emphasis, impulse blanking, SNR-adaptive
+video BW, longer coherent sync integration), then P7.** The code lives in the `VE3NEA.SkySignals` repo,
+branch `sstv`, project **`VE3NEA.SkySSTV`**. Suite: **88 pass / 5 manual-skip**.
 
 What landed (the Hopper port, plan §4.1/§6.1):
 
@@ -80,24 +81,95 @@ Suite: **86 pass / 3 manual-skip.**
   **clean — beats the RXSSTV reference**; UTMN2 22:36 now selects the stronger ~183 s burst (near-clean
   SPUTNIX); **UmKA-1 anchors `fromVis=true`** — the continuous scan found its header ~297 s in — showing a
   Cyrillic card RXSSTV never captured. Remaining defect: 12_37_50 Monitor-3 decodes noise from a weak
-  train (score 0.30) — the retro-D threshold case.
+  train (score 0.30) — the retro-D threshold case. *(Correction 2026-07-02 late: NOT noise — the FskDemod
+  spectrogram shows a real SSTV burst at ~157 s in that capture; see the retro D/E/O entry.)*
 
 **Multi-image decode DONE (2026-07-02):** the harness decodes one image per promoted train (≥¼ of the
 mode's lines claimed) instead of only `BestTrain` — **18 images from 8 of 9 captures**. Both UTMN2 22:36
 bursts decode nearly clean (the 27 s copy is the better one — its earlier bad decode was the old wide
 filters, not the burst); UTMN2 11:29 yields five bursts whose ~13 s pairs match RXSSTV's paired history
-entries; UmKA-1 shows a second burst at ~318 s after its VIS-anchored ~297 s one.
+entries; UmKA-1 shows a second burst at ~318 s after its VIS-anchored ~297 s one. *(Correction
+2026-07-02 late: the "~318 s second burst" was an artifact of the VIS triplet-adoption hijack — those
+pulses belong to the VIS train; the real second image sits at ~133 s. See the retro D/E/O entry.)*
+
+**Investigated (2026-07-02): why `2026-04-18_12_36_09_UmKA-1.iq.wav` decodes nothing.** The user confirmed
+(spectrogram + audio) an SSTV signal is genuinely present from 0 s, already in progress at recording start,
+ending ~24 s in. Diagnosis (ad hoc probe, not kept): this is a **low-SNR pass across the board, not an
+SSTV-specific detector bug** — `FskDemod` finds 6 GMSK telemetry bursts on the same pass but **validates
+zero frames**, an independent decoder failing the same way. On the SSTV side: raw IQ RMS is *higher* than
+Monitor-3's (0.0041 vs 0.0013–0.0018, which decodes cleanly), so it is not simply too quiet; but the FM
+discriminator saturates to near ±24 kHz (full π-radian phase jumps — classic FM-threshold click noise) on
+almost every 0.5 s block for the whole 24 s span, and the sync-pulse detector finds only 11 scattered
+sub-threshold blips (max score 0.221, barely above the 0.18 gate) over 29 s with **spacings that never once
+land near Robot36's 150 ms line period** (1000, 2000, 0, 0, 1000, 8000, 4000, 1000, 1000 ms) — with either
+the current filters (chan 6 kHz/video 600 Hz) or the old wide ones (15 kHz/1800 Hz, which found only 1
+pulse). No three pulses ever form a period-consistent triplet, so the extractor has no evidence to spawn a
+train from at all — not a promotion-threshold problem, an absence-of-coherent-evidence problem. A human
+(eye or ear) tolerates far weaker, more broken evidence than a fixed 4 ms coherent matched filter; lowering
+`ScoreThreshold` would not fix this specific file (there is no 150 ms periodicity at any threshold) and
+would invite spurious triplets elsewhere in the corpus. What would actually help is longer coherent
+integration than a single 4 ms window (e.g. a longer matched-filter window, or accumulating soft evidence
+across several line periods before requiring a hard triplet) — a genuine front-end sensitivity increase, not
+a threshold tweak. **Keep this file as the corpus's hardest-case target** for that future work (folds into
+P6(c) next action 2 below, not action 1 — it is a sensitivity-floor problem, not a threshold-tuning one).
+
+**Retro D/E/O work-off DONE (2026-07-02 late).** What landed:
+
+- **Retro D — resolved with NO new rejection gate** (conclusion revised same day on user evidence): the
+  trains the plan had labeled "weak-train noise decodes" are **real transmissions** — the FskDemod
+  spectrogram shows a genuine SSTV burst at ~157 s in 12_37_50 (= our @158.2 train, score 0.30), so the
+  fill-ratio gate first built on that labeling (noise ≤ 0.34 vs real ≥ 0.46 pulses/claimed) was rejecting
+  real weak images and was reverted. **No promoted train in the corpus is noise**: pure noise already
+  fails at promotion (MHT triplet + N-of-M gates, pinned by the synthetic clutter tests), so the image
+  gate stays claimed ≥ ¼·LineCount only, `ScoreThreshold` stays 0.18, and the measured fill ratio
+  survives as `SstvPulseTrainExtractor.FillRatio` — a per-image quality/confidence diagnostic for the
+  future META panel, not a gate.
+- **VIS triplet-adoption hijack fixed** (found by the probe): `SstvVisPulseTrain.TryAddPulses` accepted any
+  triplet whose grid extrapolated to the anchor within ±18 ms — over ~1000 periods that gate is nearly
+  vacuous, and the UmKA-1 04-19 VIS train had adopted a cluster 116–169 s BEFORE its anchor (pulses at
+  pulseNo −1125..−777, 1271 claimed lines). Now the triplet must lie in the anchor-forward image span.
+  **Bonus: the un-hijacked region revealed a real, previously never-decoded image at ~133 s** (80 pulses,
+  mean 0.367 — a SpacePi/Earth card, top third clean); the earlier "second burst at ~318 s" claim below
+  was an artifact of the hijack (those pulses belong to the VIS train itself).
+- **Retro E — frequency gate dropped** (user decision: FM-on-FM puts every sync at exactly 1200 Hz, no
+  per-pulse frequency estimation warranted): `SstvPulse.Freq`, the trains' ±150 Hz gate and smoothing, and
+  the extractor's triplet frequency check are deleted.
+- **Retro O — one discriminator pass per capture**: `Decode`/`DetectMode`/`DetectVis` gained overloads
+  taking the discriminated audio; the IQ forms are thin wrappers, and the harness discriminates once and
+  slices `disc` (not IQ) per image. The discriminator stays the hand-rolled double-precision `Math.Atan2`
+  loop (decision recorded in `SstvDecoder.Discriminator` doc): its cost is negligible next to the FIR
+  stages and the deterministic arithmetic keeps the tuned statistics stable; liquid's `freqdem` computes
+  the same phase difference in float with an approximated atan2 — no measurable win.
+- **`DopplerRateHzPerSec` encoder knob (§8) DONE**: the carrier drift renders as the DC ramp on the
+  discriminator (verified +446 → −526 Hz over 36 s); the closed loop under a TCA-like sweep (+500 Hz,
+  −30 Hz/s) holds 28.5 dB PSNR with VIS detection intact — the §1.6 no-AFC design confirmed against a
+  *drifting* carrier, not just a constant offset.
+- **Real corpus result: 18 images from 8 of 9 captures** — the previous 18 minus the @318 s hijack
+  artifact, plus the new UmKA-1 133 s image; the weak low-fill decodes (12_37_50 @158 s, Monitor-3
+  @152 s, UTMN2 @26 s …) are real transmissions and are kept.
+- **04-18 UmKA-1 hardest case re-diagnosed (`Real_UmKa0418ChannelSweep`, user spectrogram in hand):** the
+  0–24 s transmission is **low-deviation FM** — the spectrogram shows a weak carrier plus only the
+  first-order sideband pair tracing the 1.2–2.3 kHz subcarrier (vs the multi-line Bessel comb of the
+  3.3 kHz-deviation bursts); devEst reads 1.3–2.1 kHz (noise-inflated). The ±6 kHz default channel is
+  ~2× the matched noise bandwidth and keeps the discriminator below the FM threshold (2.4 % π-jump
+  clicks). **Channel ±4 kHz is the matched sweet spot**: clicks 1.2 %, sync maxScore 0.221 → 0.286,
+  on-grid sync gaps 3 → 11. A per-pulse threshold sweep there (detector `Threshold` is now an instance
+  knob, default 0.18 unchanged) reaches an actual MHT **lock at thr 0.10** (156 pulses, 24 on-grid, an
+  11-pulse Robot36 train; the decode's stripes are vertical = line period correct) — but the video is
+  unusable and thr 0.12 mis-locks Robot72, so a global threshold drop is not the answer. Confirms the
+  path: **longer coherent sync integration + per-burst SNR-adaptive channel bandwidth** (next action 1).
 
 Next actions:
 
-1. **Threshold tuning** (retro D) on real IQ — the weak-train noise decodes (score ~0.28–0.30, e.g.
-   12_37_50 and Monitor-3's 152 s burst) are the test cases; retro E (per-pulse frequency or drop the
-   gate) and O (freqdem + single discriminator pass — `DetectMode`+`Decode` still discriminate twice)
-   fold in.
-2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
-   `DopplerRateHzPerSec` encoder knob (§8), SNR-adaptive video bandwidth.
-3. Then P7 (regression corpus) and P8 (SkyRoof integration, §5 — the per-train image emission just proven
-   in the harness is exactly the panel's leaf-per-image behavior).
+1. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
+   SNR-adaptive **channel and video** bandwidth (the 04-18 sweep above shows the matched channel alone
+   buys 3→11 on-grid syncs on a low-deviation transmitter), and — per the 04-18 re-diagnosis — longer
+   coherent sync integration for very-low-SNR passes (longer matched-filter window or soft-evidence
+   accumulation before requiring a hard triplet; a bare threshold drop locks but cannot image, and
+   invites wrong-mode locks).
+2. Then P7 (regression corpus) and P8 (SkyRoof integration, §5 — the per-train image emission just proven
+   in the harness is exactly the panel's leaf-per-image behavior; `IsImageTrain` is the leaf-emission
+   gate).
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
 progressively-built image in SkyRoof's TelemetryPanel. Satellites generate SSTV
@@ -637,11 +709,11 @@ Review addenda (2026-07-01, item letters per §9):
 - **Unify the dropout knobs:** §1.10 `T_gap` (3–5 s) and the pulse-train `RetireSeconds` (6 s) are the same
   physical event — make them one tunable (lands with the extractor, §9 G/H).
 - **Encoder impairment fidelity for P6(c):** ~~fix the per-segment slant rounding (retro K)~~ **DONE
-  2026-07-01** (continuous scaled-time cursor, §9); still open — add a `DopplerRateHzPerSec` knob: constant
-  Doppler is removed by design (§1.6); the drifting DC ramp is what a real pass actually produces, and it
-  is what stresses the brightness LPF and the tone banks' constant-mean assumption.
-- **Discriminator:** wire the wrapped `freqdem` native per §1.2 or record the deviation (retro O), and share
-  one discriminator pass between `DetectMode` and `Decode` (currently each rediscriminates the full capture).
+  2026-07-01** (continuous scaled-time cursor, §9); ~~add a `DopplerRateHzPerSec` knob~~ **DONE
+  2026-07-02** — the drifting DC ramp renders faithfully and the closed loop holds 28.5 dB PSNR with VIS
+  detection intact under a TCA-like sweep (see Current Status).
+- ~~**Discriminator:** wire the wrapped `freqdem` native per §1.2 or record the deviation (retro O), and share
+  one discriminator pass between `DetectMode` and `Decode`~~ **DONE 2026-07-02** (retro O, see §9).
 - Phasing (§7) has no P5 — renumber or mark the gap intentional.
 
 ---
@@ -685,18 +757,20 @@ the code shape.
   detector (a single-sample blip above threshold can still become a pulse — clutter that the train gates
   currently absorb), and the **§1.10 `T_gap` = `RetireSeconds` unification** (now one constant in
   `SstvPulseTrain`, but not yet an exposed tunable).
-- **D — detection thresholds are hardcoded near the real-signal margin** (`ScoreThreshold` 0.18 in
-  `SstvPulseDetector`). Tune on real IQ in P6(c) (A+J already raised the margin); consider a
-  relative/adaptive threshold rather than a fixed constant.
-- **E — per-pulse frequency is a constant 1200 Hz**, so `SstvPulseTrain`'s ±150 Hz frequency gate is inert
-  (Hopper used it for clutter rejection on crowded HF). Either estimate per-pulse frequency (baseband phase
-  slope) or consciously drop the gate for the single-frequency FM case and simplify the train.
+- ~~**D — detection thresholds are hardcoded near the real-signal margin**~~ **DONE 2026-07-02** (see
+  Current Status): measured on the real corpus and resolved with **no threshold change** — the low-score
+  low-fill trains are real weak transmissions (user-confirmed), pure noise already fails at promotion,
+  and the fill ratio is kept as a quality diagnostic (`FillRatio`), not a gate.
+- ~~**E — per-pulse frequency is a constant 1200 Hz**~~ **DONE 2026-07-02**: the gate is consciously
+  dropped for the single-frequency FM case (user decision — FM-on-FM needs no per-pulse frequency);
+  `SstvPulse.Freq` and all frequency gates/smoothing deleted.
 - ~~**F — reconstruction ignores `CorrFactor` for the intra-line pixel clock**~~ **DONE 2026-07-02**: both
   reconstructions scale segment/pixel widths by the winning train's `CorrFactor`
   (Hopper: `TimeScale = samplesPerMs·CorrFactor`); nominal (corr = 1) when tracking is off.
 - **I — duplicated magic constants** — mostly resolved by deleting the batch detectors; the remaining
   per-class constants (detector window/threshold, train timeouts, extractor gates) get one home when the
   push-based decoder class lands.
-- **O — hand-rolled `Math.Atan2` discriminator, run twice per capture** (`DetectMode` and `Decode` each
-  rediscriminate the full IQ — multi-hundred-MB real captures). Wire the wrapped `freqdem` native (§1.2) or
-  record the deviation and why; share one discriminator pass between detection and decode.
+- ~~**O — hand-rolled `Math.Atan2` discriminator, run twice per capture**~~ **DONE 2026-07-02**:
+  disc-based `Decode`/`DetectMode`/`DetectVis` overloads share one discriminator pass; the hand-rolled
+  double-precision discriminator is kept over the `freqdem` native (decision + rationale recorded in the
+  `SstvDecoder.Discriminator` doc comment).

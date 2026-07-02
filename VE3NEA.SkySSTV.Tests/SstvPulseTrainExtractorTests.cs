@@ -21,7 +21,7 @@ namespace VE3NEA.SkySSTV.Tests
     public SstvPulseTrainExtractorTests(ITestOutputHelper o) => output = o;
 
     private static SstvPulse P(int t, double durMs = 9.0, float power = 0.4f)
-      => new SstvPulse(t, power, 1200f, (float)durMs);
+      => new SstvPulse(t, power, (float)durMs);
 
     /// <summary>Feed <paramref name="pulses"/> (time-sorted) block-wise, as the streaming driver would.</summary>
     private static SstvPulseTrainExtractor Run(List<SstvPulse> pulses, int endTime)
@@ -163,6 +163,59 @@ namespace VE3NEA.SkySSTV.Tests
       vis.State.Should().Be(SstvTrainState.Active, "a VIS-seeded train promotes on just 3 confirming pulses");
       vis.PulseCnt.Should().Be(3);
       Math.Round(vis.Regr.GetPulseTime(0)).Should().BeApproximately(48000, 3);
+    }
+
+    [Fact]
+    public void VisSeed_TripletBeforeAnchor_IsNotAdopted()
+    {
+      // the UmKA-1 hijack (found 2026-07-02): a period-consistent triplet minutes BEFORE the VIS anchor
+      // extrapolates to it within the ±18 ms wing by chance (over ~1000 periods the gate is nearly
+      // vacuous) — the VIS train must reject it on the anchor-forward span gate, leaving it to spawn a
+      // plain candidate
+      int anchor = 200 * 48000;
+      var extractor = new SstvPulseTrainExtractor(Fs);
+      extractor.AddVisTrain(SstvMode.Robot36, anchor);
+      var pulses = Robot36Train(anchor - 170 * 48000, 12);   // a burst ~170 s before the anchor, on-grid
+      Feed(extractor, pulses, anchor + 12000);
+
+      var vis = extractor.Trains.OfType<SstvVisPulseTrain>().Single();
+      output.WriteLine($"vis train pulses: {vis.PulseCnt}");
+      vis.PulseCnt.Should().Be(0, "a pre-anchor triplet must not hijack the VIS train");
+    }
+
+    [Fact]
+    public void ImageGate_RequiresQuarterOfTheLines_KeepsSparseWeakBursts()
+    {
+      // retro item D (resolved): a full burst qualifies as an image, and so does a SPARSE weak one — the
+      // real corpus's low-fill trains turned out to be genuine transmissions (12_37_50 @157 s), so the
+      // fill ratio is a quality diagnostic, not a rejection gate. Only a below-¼-lines fragment is dropped.
+      var pulses = Robot36Train(36000, 100);
+      int end = pulses[^1].Time + 12000;
+      var extractor = Run(pulses, end);
+      var dense = extractor.Trains.Single(t => t.State != SstvTrainState.Candidate);
+      extractor.IsImageTrain(dense).Should().BeTrue("a full burst is an image train");
+      extractor.FillRatio(dense).Should().BeGreaterThan(0.9, "a pulse on nearly every claimed line");
+
+      // a weak burst: a dense clump promotes, then a sparse tail (one pulse per 5 line slots) — the RLS
+      // grid coasts over the misses; the image is ratty but REAL and must still be emitted
+      var sparse = Robot36Train(36000, 12);
+      for (int k = 12; k < 77; k += 5) sparse.Add(P(36000 + (int)Math.Round(k * 7200.0)));
+      end = sparse[^1].Time + 12000;
+      extractor = Run(sparse, end);
+      var weak = extractor.Trains.Single(t => t.State != SstvTrainState.Candidate);
+      int claimed = extractor.ClaimedLines(weak);
+      output.WriteLine($"sparse train: pulses={weak.PulseCnt} claimed={claimed} fill={extractor.FillRatio(weak):0.00}");
+      claimed.Should().BeGreaterThanOrEqualTo(60, "the coasting grid still claims the lines");
+      extractor.IsImageTrain(weak).Should().BeTrue("a sparse weak burst is still a real image");
+      extractor.FillRatio(weak).Should().BeLessThan(0.5, "…and the fill ratio records its low confidence");
+
+      // a fragment claiming under a quarter of the mode's lines is not an image
+      var frag = Robot36Train(36000, 15);
+      end = frag[^1].Time + 12000;
+      extractor = Run(frag, end);
+      var tiny = extractor.Trains.Single(t => t.State != SstvTrainState.Candidate);
+      output.WriteLine($"fragment: pulses={tiny.PulseCnt} claimed={extractor.ClaimedLines(tiny)}");
+      extractor.IsImageTrain(tiny).Should().BeFalse("a below-¼-lines fragment is not an image");
     }
 
     [Fact]
