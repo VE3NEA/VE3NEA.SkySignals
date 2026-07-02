@@ -81,39 +81,36 @@ namespace VE3NEA.SkySSTV.Tests
       double[] disc = SstvDecoder.Discriminator(iq, o);
       double[] band = SstvDecoder.SyncAudio(disc, sr, o);
       var spec = SstvModes.Get(SstvMode.Robot36);
-      int pulseLen = (int)Math.Round(spec.SyncMs / 1000.0 * sr);
 
       Report("raw ", disc);
       Report("band", band);
 
       void Report(string name, double[] audio)
       {
-        var filter = new SstvSyncFilter(audio, sr);
-        int maxPos = filter.MaxPos(pulseLen);
-        double gMax = 0; int gArg = 0;
-        for (int t = pulseLen; t < maxPos; t++)
-        {
-          double s = filter.Score(t, pulseLen);
-          if (s > gMax) { gMax = s; gArg = t; }
-        }
-        double burst = RegionMax(filter, 185, 215);
-        double clutter = RegionMax(filter, 20, 45);
-        output.WriteLine($"{name}: burst max={burst:0.000}  clutter max={clutter:0.000}  " +
-          $"global max={gMax:0.000} @ {gArg / sr:0.0}s");
+        double burst = RegionMax(audio, 185, 215);
+        double clutter = RegionMax(audio, 20, 45);
+        double gMax = RegionMax(audio, 0, audio.Length / sr);
+        output.WriteLine($"{name}: burst max={burst:0.000}  clutter max={clutter:0.000}  global max={gMax:0.000}");
       }
 
-      double RegionMax(SstvSyncFilter filter, double t0Sec, double t1Sec)
+      double RegionMax(double[] audio, double t0Sec, double t1Sec)
       {
-        int a = Math.Max(pulseLen, (int)(t0Sec * sr));
-        int b = Math.Min(filter.MaxPos(pulseLen), (int)(t1Sec * sr));
-        double best = 0;
-        for (int t = a; t < b; t++) best = Math.Max(best, filter.Score(t, pulseLen));
-        return best;
+        int a = Math.Max(0, (int)(t0Sec * sr));
+        int b = Math.Min(audio.Length, (int)(t1Sec * sr));
+        if (b <= a) return 0;
+        var detector = new SstvPulseDetector(sr, spec.SyncMs);
+        detector.Detect(audio[a..b]);
+        return detector.MaxScore;
       }
     }
 
-    [Fact(Skip = "manual harness: processes multi-hundred-MB captures and needs P6/P7 burst localization " +
-      "(real sync ~0.24 vs 0.40 synthetic; carrier confirmed centered so no AFC). Run on demand.")]
+    [Fact(Skip = "manual harness: processes multi-hundred-MB captures. Result 2026-07-02 (first real " +
+      "decodes, P6b extractor): 6 of 9 captures localize a burst and decode — Monitor-3 shows a READABLE " +
+      "text card (RA3PPY / status: Operational), UTMN2 the SPUTNIX winged-satellite image with readable " +
+      "banner; geometry straight (RLS slant OK). All detected as Robot36 via MHT (VIS never seen — the " +
+      "2 s VIS search window misses bursts that start minutes in). Heavy speckle noise remains = the " +
+      "P6(c) front-end fidelity work. VIZARD-meteo decodes on a 150 ms cadence (tag said Robot72) — " +
+      "confirm mode in P6(c).")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))

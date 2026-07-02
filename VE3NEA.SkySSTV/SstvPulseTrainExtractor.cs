@@ -1,0 +1,311 @@
+using System;
+using System.Collections.Generic;
+
+namespace VE3NEA.SkySSTV
+{
+  /// <summary>One extracted scan line: which block claimed it, the train that owns it, and the pulse
+  /// (= transmitted-line) number on that train's grid. The line's sync onset is
+  /// <c>Train.Regr.GetPulseTime(PulseNo)</c>.</summary>
+  internal struct SstvScanLine
+  {
+    public int BlkNo;
+    public int PulseNo;
+    public SstvPulseTrain Train;
+  }
+
+  /// <summary>
+  /// The pulse-train MHT (plan §4.1/§6.1, ported from Hopper's <c>TPulseTrainExtractor</c>): consumes the
+  /// time-ordered sync-pulse stream from the per-family <see cref="SstvPulseDetector"/>s and maintains a
+  /// small list of <see cref="SstvPulseTrain"/> hypotheses. Each pulse is first offered to the existing
+  /// trains (associate-first — which also kills the half-rate harmonic: a Robot36 pulse lands on the Robot36
+  /// train before it could ever seed a Robot72 grid); an unclaimed pulse may <b>spawn</b> a new candidate,
+  /// but only as the third point of a period-consistent 3-pulse triplet for some mode of its sync-duration
+  /// family — a mini-comb clutter almost never fakes. Candidates promote on N-of-M evidence (back-filling
+  /// the pulses they explain), idle candidates are pruned, idle actives retire (§1.10 T_gap). Per line block
+  /// the <b>best train</b> (smoothed sync power, 1.5× switch hysteresis, incumbent preferred) claims the
+  /// block's scan lines; a promotion/revision/retirement marks earlier blocks dirty and their lines are
+  /// re-extracted (§1.13 bounded re-render). A valid VIS seeds a high-prior <see cref="SstvVisPulseTrain"/>.
+  ///
+  /// <para>State is bounded: the pulse buffer keeps only the trailing few seconds (spawn looks back two
+  /// line periods, back-fill one retire timeout), and the train list is pruned by the lifecycle. The scan
+  /// lines and any trains they reference are kept for the whole pass (bounded by pass length; the rolling
+  /// dump lands with the push-based decoder).</para>
+  /// </summary>
+  internal sealed class SstvPulseTrainExtractor
+  {
+    private const double BlockSeconds = 0.25;      // line extraction granularity, ~ line-period scale
+    private const double TripletTolMs = 7.0;       // 3rd-pulse collinearity gate (Hopper ±20 @ 2.76 kHz)
+    private const double PeriodTol = 0.03;         // triplet spacing gate: ±3 % of a mode's nominal period
+    private const double SwitchHysteresis = 1.5;   // a challenger must beat the incumbent by this factor
+    private const double PruneSeconds = 8.0;       // pulse-buffer tail (> the retire timeout)
+    private const double FreqTolHz = 150.0;        // triplet pulses must share a tone frequency
+
+    private readonly double fs;
+    private readonly int blockSize;
+    private readonly int tripletTol;
+    private readonly int pruneLen;
+    private readonly int smoothBlocksWing;         // trailing blocks whose smoothed power can still change
+    private readonly (SstvModeSpec spec, double minPeriod, double maxPeriod)[] modeGates;
+    private readonly double maxPeriod;
+
+    private readonly List<SstvPulse> pulses = new();
+    private readonly List<SstvPulseTrain> trains = new();
+    private readonly List<SstvScanLine> lines = new();
+    private int dirtyBlock;
+
+    public IReadOnlyList<SstvPulseTrain> Trains => trains;
+    public IReadOnlyList<SstvScanLine> Lines => lines;
+
+    /// <summary>The train that retired during the last <see cref="Process"/> call, if any — the future
+    /// image-finalize hook (plan §1.10).</summary>
+    public SstvPulseTrain? RetiredTrain { get; private set; }
+
+    public SstvPulseTrainExtractor(double fs)
+    {
+      this.fs = fs;
+      blockSize = (int)Math.Round(BlockSeconds * fs);
+      tripletTol = (int)Math.Round(TripletTolMs / 1000.0 * fs);
+      pruneLen = (int)Math.Round(PruneSeconds * fs);
+
+      modeGates = new (SstvModeSpec, double, double)[SstvModes.All.Count];
+      double max = 0;
+      for (int i = 0; i < SstvModes.All.Count; i++)
+      {
+        var spec = SstvModes.All[i];
+        double nominal = spec.LinePeriodMs / 1000.0 * fs;
+        modeGates[i] = (spec, nominal * (1 - PeriodTol), nominal * (1 + PeriodTol));
+        max = Math.Max(max, nominal * (1 + PeriodTol));
+      }
+      maxPeriod = max;
+      smoothBlocksWing = (int)Math.Ceiling((4 + 1) * maxPeriod / blockSize);
+    }
+
+    /// <summary>Seed a high-prior train from a decoded VIS header (plan §4.1): mode and line-0 onset known.</summary>
+    public void AddVisTrain(SstvMode mode, int headerEndSample)
+      => trains.Add(new SstvVisPulseTrain(mode, headerEndSample, fs));
+
+    /// <summary>Fold in the pulses detected up to <paramref name="uptoTime"/> (absolute samples, pulses in
+    /// time order), then run the train lifecycle and (re-)extract the scan lines of the settled blocks.</summary>
+    public void Process(IReadOnlyList<SstvPulse> newPulses, int uptoTime)
+    {
+      foreach (var pulse in newPulses)
+      {
+        Prune(pulse.Time);
+        pulses.Add(pulse);
+        ProcessPulse();
+      }
+      UpdateTrainList(uptoTime);
+      UpdateLines(uptoTime / blockSize - 1);
+    }
+
+    /// <summary>End of stream: final lifecycle pass and line extraction through the last, partial block.</summary>
+    public void Finish(int endTime)
+    {
+      UpdateTrainList(endTime);
+      UpdateLines(endTime / blockSize);
+    }
+
+    /// <summary>The dominant train of the pass: the one claiming the most scan lines (ties to the higher
+    /// pulse count). Null when nothing ever promoted — e.g. pure noise.</summary>
+    public SstvPulseTrain? BestTrain(SstvMode? mode = null)
+    {
+      var claims = new Dictionary<SstvPulseTrain, int>();
+      foreach (var line in lines)
+        if (mode == null || line.Train.Format == mode)
+          claims[line.Train] = claims.TryGetValue(line.Train, out int n) ? n + 1 : 1;
+
+      SstvPulseTrain? best = null; int bestClaim = 0;
+      foreach (var (train, claim) in claims)
+        if (claim > bestClaim || (claim == bestClaim && train.PulseCnt > (best?.PulseCnt ?? 0)))
+        { best = train; bestClaim = claim; }
+      return best;
+    }
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                      pulse association / spawn
+    // ----------------------------------------------------------------------------------------------------
+
+
+    /// <summary>Associate-or-spawn for the newest pulse in the buffer (Hopper <c>ProcessPulse</c>).</summary>
+    private void ProcessPulse()
+    {
+      int newest = pulses.Count - 1;
+      var p0 = pulses[newest];
+
+      // associate first: VIS trains have priority, then the most recently updated
+      foreach (var train in OrderedTrains())
+        if (train.State != SstvTrainState.Retired && train.TryAddPulse(p0))
+        {
+          MarkUsed(newest);
+          return;
+        }
+
+      // spawn: the pulse plus two buffered ones must form a period-consistent triplet for some mode of
+      // the pulse's sync-duration family
+      foreach (var (spec, minPeriod, maxPeriod) in modeGates)
+      {
+        if (Math.Abs(spec.SyncMs - p0.DurMs) > 0.5) continue;
+
+        int mid = -1;
+        for (int i = newest - 1; i >= 0; i--)
+        {
+          double dist = p0.Time - (double)pulses[i].Time;
+          if (dist > 2 * maxPeriod + tripletTol) break;
+          if (Math.Abs(pulses[i].Freq - p0.Freq) > FreqTolHz) continue;
+
+          if (dist >= minPeriod && dist <= maxPeriod) mid = i;
+
+          if (mid >= 0 && i != mid
+              && Math.Abs(dist - 2 * (p0.Time - (double)pulses[mid].Time)) <= tripletTol)
+          {
+            SpawnTrain(spec.Mode, i, mid, newest);
+            break;
+          }
+        }
+      }
+    }
+
+    /// <summary>Seed a train from a fresh triplet — adopted by a waiting VIS train whose anchor the triplet's
+    /// grid extrapolates to, otherwise a new candidate.</summary>
+    private void SpawnTrain(SstvMode mode, int i0, int i1, int i2)
+    {
+      var p0 = pulses[i0];
+      var p1 = pulses[i1];
+      var p2 = pulses[i2];
+
+      bool adopted = false;
+      foreach (var train in trains)
+        if (train.Format == mode && train.State == SstvTrainState.VisOnly
+            && train is SstvVisPulseTrain vis && vis.TryAddPulses(p0, p1, p2))
+        { adopted = true; break; }
+
+      if (!adopted) trains.Add(new SstvPulseTrain(mode, p0, p1, p2, fs));
+      MarkUsed(i0);
+      MarkUsed(i1);
+      MarkUsed(i2);
+    }
+
+    /// <summary>VIS trains first (the strong prior), then by recency of the last accepted pulse.</summary>
+    private IEnumerable<SstvPulseTrain> OrderedTrains()
+    {
+      var ordered = new List<SstvPulseTrain>(trains);
+      ordered.Sort((a, b) =>
+      {
+        bool va = a is SstvVisPulseTrain, vb = b is SstvVisPulseTrain;
+        if (va != vb) return va ? -1 : 1;
+        return b.Regr.LastPulseTime.CompareTo(a.Regr.LastPulseTime);
+      });
+      return ordered;
+    }
+
+    private void MarkUsed(int index)
+    {
+      var p = pulses[index];
+      p.Used = true;
+      pulses[index] = p;
+    }
+
+    /// <summary>Keep the pulse buffer a bounded tail: spawn looks back two periods, back-fill one retire
+    /// timeout — everything older is dead weight (§1.13).</summary>
+    private void Prune(int now)
+    {
+      int keepFrom = 0;
+      while (keepFrom < pulses.Count && pulses[keepFrom].Time < now - pruneLen) keepFrom++;
+      if (keepFrom > 0) pulses.RemoveRange(0, keepFrom);
+    }
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                   train lifecycle / line extraction
+    // ----------------------------------------------------------------------------------------------------
+
+
+    /// <summary>Promote / kill / retire (Hopper <c>UpdateTrainList</c>), accumulating the earliest block
+    /// whose extracted lines may have changed. The trailing <see cref="smoothBlocksWing"/> blocks are always
+    /// dirty — their smoothed power can still move as pulses arrive.</summary>
+    private void UpdateTrainList(int time)
+    {
+      RetiredTrain = null;
+      dirtyBlock = time / blockSize - 1 - smoothBlocksWing;
+
+      for (int i = trains.Count - 1; i >= 0; i--)
+      {
+        var train = trains[i];
+        switch (train.State)
+        {
+          case SstvTrainState.Candidate:
+          case SstvTrainState.VisOnly:
+            if (train.HasEnoughPulses)
+            {
+              train.State = SstvTrainState.Active;
+              train.AddOldPulses(pulses);
+              MarkDirty(train.Regr.FirstPulseTime);
+            }
+            else if (train.IsCandidateIdle(time))
+            {
+              if (train is SstvVisPulseTrain vis) MarkDirty(vis.VisTime);
+              trains.RemoveAt(i);
+            }
+            break;
+
+          case SstvTrainState.Active:
+            if (train.CanRetire(time))
+            {
+              train.State = SstvTrainState.Retired;
+              MarkDirty(train.Regr.LastPulseTime);
+              RetiredTrain = train;
+            }
+            else if (train.RevisionDue())
+              MarkDirty(train.Regr.FirstPulseTime);
+            break;
+        }
+      }
+    }
+
+    private void MarkDirty(double time) => dirtyBlock = Math.Min(dirtyBlock, (int)(time / blockSize));
+
+    /// <summary>(Re-)extract the scan lines of blocks [<see cref="dirtyBlock"/>, <paramref name="throughBlock"/>]
+    /// (Hopper <c>UpdateLines</c>): drop the lines of dirty blocks, then per block let the best train claim
+    /// the lines whose predicted sync times fall inside it. The incumbent (previous line's train) keeps the
+    /// block unless a challenger's smoothed power beats it by the hysteresis factor.</summary>
+    private void UpdateLines(int throughBlock)
+    {
+      while (lines.Count > 0 && lines[^1].BlkNo >= dirtyBlock) lines.RemoveAt(lines.Count - 1);
+
+      for (int b = Math.Max(dirtyBlock, 0); b <= throughBlock; b++)
+      {
+        int blockStart = b * blockSize;
+        int blockCenter = blockStart + blockSize / 2;
+
+        SstvPulseTrain? best = null;
+        double bestPower = 0;
+        if (lines.Count > 0 && !lines[^1].Train.IsRetiredAt(blockStart))
+        {
+          best = lines[^1].Train;
+          bestPower = best.GetPower(blockCenter);
+        }
+
+        foreach (var train in trains)
+        {
+          if (train.State == SstvTrainState.Retired) continue;
+          if (train.State != SstvTrainState.Active && train is not SstvVisPulseTrain) continue;
+          double power = train.GetPower(blockCenter);
+          if (power > SwitchHysteresis * bestPower) { best = train; bestPower = power; }
+        }
+        if (best == null) continue;
+
+        int pulseNo = lines.Count > 0 && lines[^1].Train == best
+          ? lines[^1].PulseNo + 1
+          : best.Regr.GetPulseNo(blockStart);
+        for (; ; pulseNo++)
+        {
+          double pulseTime = best.Regr.GetPulseTime(pulseNo);
+          if (pulseTime < blockStart) continue;
+          if (pulseTime >= blockStart + blockSize) break;
+          lines.Add(new SstvScanLine { BlkNo = b, PulseNo = pulseNo, Train = best });
+        }
+      }
+    }
+  }
+}

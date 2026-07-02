@@ -4,31 +4,51 @@ Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
 ## Current Status
 
-**Phase: P6(b) — the pulse-train MHT extractor is the next action.** (2026-07-02) The code now lives in the
-`VE3NEA.SkySignals` repo, branch `sstv`, project renamed **`VE3NEA.SkySSTV`** (the retro's VE3NEA.Tlm commit
-hashes refer to the old repo). Baseline re-verified here: **build clean, suite 80 pass / 2 manual-skip** —
-identical to the state recorded in §9 (retro items J, A, C, N, K, L, M, P done; **G/H open = the next
-piece**). Next action, in order:
+**Phase: P6(b) DONE (2026-07-02) — the MHT extractor is in and the FIRST REAL IMAGES decode. Next: P6(c)
+front-end fidelity + threshold tuning.** The code lives in the `VE3NEA.SkySignals` repo, branch `sstv`,
+project **`VE3NEA.SkySSTV`**. Suite: **85 pass / 2 manual-skip**.
 
-1. Extend `SstvPulseTrain` to Hopper's `TPulseTrain` (pulse storage, `GetPower` ±4-pulse smoothing,
-   `AddOldPulses` back-fill on promote, `IsRetiredAt`, revision marks) + a `TVisPulseTrain` equivalent
-   (VIS-seeded high-prior train, promotes on 3 pulses, `TryAddPulses` triplet adoption).
-2. New `SstvPulseTrainExtractor` ported from `C:\Proj\DSP\Hopper\TrainExtr.pas` + `PulseTrn.pas` (read this
-   session; no AFC/multi-frequency dimension — associate-first, then per-mode triplet spawn gated by the
-   pulse's `DurMs` family; candidate→active→retired; best-train-per-block with 1.5× hysteresis; dirty-block
-   scan-line list). Note: associate-first naturally kills the Robot36→Robot72 half-rate harmonic spawn, and
-   ±3 % period gates separate every pair of PD modes — no extra disambiguation needed.
-3. Unit tests (clean train, clutter, fade/coast, mixed FSK+SSTV bursts), then wire into `DetectMode`
-   (replacing `SstvModeDetector`'s whole-file scan) and `LineOnsets` (train regressor grid replaces
-   `SstvSyncTracker`; apply `CorrFactor` to the intra-line pixel clock — retro F).
-4. Delete the batch detectors (`SstvSyncFilter`, `SstvSyncCorrelator`, `SstvSyncTracker`, batch
-   `SstvModeDetector` internals — retro G) and update the tests that use them directly
-   (`SstvP2Tests`, `SstvP6Tests.MaxSyncScore`, `SstvImageHarness.Real_SyncScoreProbe`). `SstvToneBank`
-   stays for now: the VIS detector's bounded ~2 s window is allowed block processing (§1.13).
-5. Re-run the real-capture probes; **unskip `Real_DecodesToPng` once the extractor localizes UTMN2's burst
-   (~185–216 s into the capture)** — with Stage-2 the per-pulse scores are at synthetic level, so the train
-   should stand out clearly: the **first real PNG** is the milestone. Then P6(c) threshold tuning (retro
-   D/E/O fold in here); raise the `SstvNoiseTests` floors as fidelity improves.
+What landed (the Hopper port, plan §4.1/§6.1):
+
+- `SstvPulseTrain` extended to Hopper's `TPulseTrain` (pulse storage, ±4-slot `GetPower` smoothing with
+  edge/spike rejection, `AddOldPulses` back-fill + regressor rebuild on promote, `IsRetiredAt` with the
+  weak-tail hold, `RevisionDue` dirty marks, sync-duration **family gate on association**) + a
+  `SstvVisPulseTrain` (VIS-seeded high-prior train: promotes on 3 confirming pulses, anchor-gated first
+  pulse, triplet adoption via grid extrapolation to the VIS anchor).
+- **`SstvPulseTrainExtractor`** — associate-first (which also kills the Robot36→Robot72 half-rate harmonic
+  spawn), per-mode triplet spawn gated by the pulse's `DurMs` family (±3 % period gates separate every PD
+  pair), candidate→active→retired lifecycle, best-train-per-block with 1.5× hysteresis + incumbent
+  preference, dirty-block scan-line re-extraction, bounded pulse buffer (8 s tail). 6 unit tests (clean /
+  clutter / fade / sequential bursts / VIS seed / off-anchor VIS).
+- Wired in: `DetectMode` = VIS prior + extractor's `BestTrain` (whole-file streaming scan — this is what
+  found the real bursts); `Decode` acquires from VIS or the winning train and lays lines on the train's
+  **RLS grid** (missed pulses coast free); **retro F done** — `CorrFactor` scales the intra-line pixel
+  clock in both reconstructions. The driver pads the lead-in (a sync at sample 0 detects) and re-orders the
+  two family detectors' differing emission latencies.
+- **Retro G done:** `SstvSyncFilter`, `SstvSyncCorrelator`, `SstvSyncTracker` deleted; `SstvModeDetector`
+  rewritten on the extractor. `SstvToneBank` stays (VIS-only, bounded ~2 s window = allowed §1.13 block
+  processing). `SstvPulseDetector` gained a `MaxScore` probe for the score measurements.
+
+**Real-capture results (Real_DecodesToPng, 2026-07-02 — the first real PNGs):** 6 of 9 captures localize
+and decode. **Monitor-3: readable text card** (RA3PPY, "status: Operational", launch date); **UTMN2 (both
+passes): the SPUTNIX winged-satellite image with readable banner**; geometry is straight — RLS slant
+correction works on real signals. All via MHT (`fromVis=false`), measured period exactly 150.0 ms.
+Remaining quality gap: heavy speckle noise = the P6(c) front-end fidelity work.
+
+Next actions (P6(c) + follow-ups surfaced by the real run):
+
+1. **Front-end fidelity sweep** (§6 goals): Stage-1 channel BW vs real deviation, `BrightnessBwHz`,
+   de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`); PSNR on synthetic impairments
+   (add the `DopplerRateHzPerSec` encoder knob, §8) + the reference-free metrics on the real decodes.
+   Raise `SstvNoiseTests` floors as fidelity improves.
+2. **Threshold tuning** (retro D) on real IQ; retro E (per-pulse frequency or drop the gate) and O
+   (freqdem + single discriminator pass — `DetectMode`+`Decode` still discriminate twice) fold in.
+3. **VIS search window**: currently only the first 2 s (`AcquireSearchSamples`) — real bursts start minutes
+   in, so VIS is never seen on captures. Either scan VIS continuously (streaming tone tracks, §6.0) or seed
+   it from each detected burst start.
+4. **VIZARD-meteo mode question**: the transmitter tag says Robot 72 but the decode locks a 150 ms cadence
+   (Robot36) with real image content in the top band — confirm the true mode / investigate mid-burst fade.
+5. Then P7 (regression corpus) and P8 (SkyRoof integration, §5).
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
 progressively-built image in SkyRoof's TelemetryPanel. Satellites generate SSTV
@@ -610,23 +630,24 @@ the code shape.
 
 ### Open (work off during the rest of P6)
 
-- **G/H — the extractor/MHT port, wiring, and batch-code deletion** — the next piece; concrete steps in
-  `## Current Status`. Port requirements folded in from the review: a **minimum KeyOn width / noise-floor
-  gate** (Hopper's `TSyncTracker` has one) so a single-sample blip above threshold cannot become a pulse,
-  and the **§1.10 `T_gap` = `SstvPulseTrain.RetireSeconds` unification** (one tunable for "the transmission
-  ended").
+- ~~**G/H — the extractor/MHT port, wiring, and batch-code deletion**~~ **DONE 2026-07-02** (see Current
+  Status): extractor + VIS train landed, wired into `DetectMode`/`Decode`, batch detectors deleted, first
+  real decodes achieved. Still folded-in leftovers: a **minimum KeyOn width / noise-floor gate** in the
+  detector (a single-sample blip above threshold can still become a pulse — clutter that the train gates
+  currently absorb), and the **§1.10 `T_gap` = `RetireSeconds` unification** (now one constant in
+  `SstvPulseTrain`, but not yet an exposed tunable).
 - **D — detection thresholds are hardcoded near the real-signal margin** (`ScoreThreshold` 0.18 in
-  `SstvPulseDetector`; ~0.25 in the batch detectors until they are deleted). Tune on real IQ in P6(c) after
-  the extractor lands (A+J already raised the margin); consider a relative/adaptive threshold rather than a
-  fixed constant.
+  `SstvPulseDetector`). Tune on real IQ in P6(c) (A+J already raised the margin); consider a
+  relative/adaptive threshold rather than a fixed constant.
 - **E — per-pulse frequency is a constant 1200 Hz**, so `SstvPulseTrain`'s ±150 Hz frequency gate is inert
   (Hopper used it for clutter rejection on crowded HF). Either estimate per-pulse frequency (baseband phase
   slope) or consciously drop the gate for the single-frequency FM case and simplify the train.
-- **F — reconstruction ignores `CorrFactor` for the intra-line pixel clock**: segment widths are computed
-  as nominal `round(ms/1000·fs)`; only the line onsets are slant-corrected. Scale segment/pixel widths by
-  the winning train's `CorrFactor` when the extractor lands (Hopper: `TimeScale = samplesPerMs·CorrFactor`).
-- **I — duplicated magic constants** (coherence window, thresholds, sync/freq tolerances, min-spacing
-  re-declared per detector) — centralize while deleting the batch detectors.
+- ~~**F — reconstruction ignores `CorrFactor` for the intra-line pixel clock**~~ **DONE 2026-07-02**: both
+  reconstructions scale segment/pixel widths by the winning train's `CorrFactor`
+  (Hopper: `TimeScale = samplesPerMs·CorrFactor`); nominal (corr = 1) when tracking is off.
+- **I — duplicated magic constants** — mostly resolved by deleting the batch detectors; the remaining
+  per-class constants (detector window/threshold, train timeouts, extractor gates) get one home when the
+  push-based decoder class lands.
 - **O — hand-rolled `Math.Atan2` discriminator, run twice per capture** (`DetectMode` and `Decode` each
   rediscriminate the full IQ — multi-hundred-MB real captures). Wire the wrapped `freqdem` native (§1.2) or
   record the deviation and why; share one discriminator pass between detection and decode.

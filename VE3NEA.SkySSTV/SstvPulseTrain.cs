@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace VE3NEA.SkySSTV
 {
@@ -16,62 +17,92 @@ namespace VE3NEA.SkySSTV
     { Time = time; Power = power; Freq = freq; DurMs = durMs; Used = false; }
   }
 
-  /// <summary>Lifecycle of a pulse-train hypothesis (plan §4.1).</summary>
-  public enum SstvTrainState { Candidate, Active, Retired }
+  /// <summary>Lifecycle of a pulse-train hypothesis (plan §4.1). <see cref="VisOnly"/> is the initial state
+  /// of a VIS-seeded train that has not yet caught a sync pulse.</summary>
+  public enum SstvTrainState { Candidate, Active, Retired, VisOnly }
 
   /// <summary>
   /// One MHT hypothesis (plan §4.1/§6.1, ported from Hopper's <c>TPulseTrain</c>): a candidate SSTV sync train
   /// of a specific <see cref="SstvMode"/>, seeded by a period-consistent 3-pulse triplet and tracked by an
   /// <see cref="SstvSyncRegressor"/>. New pulses are <b>associated</b> through <see cref="TryAddPulse"/> — a
-  /// frequency gate plus the regressor's growing time-tolerance gate — so clutter outside the gate is ignored,
-  /// not fitted. A candidate <b>promotes</b> to active once it has enough pulses within the promote timeout,
-  /// and <b>retires</b> after a run of inactivity. The extractor (a later piece) owns the state transitions and
-  /// picks the best train per line block.
+  /// sync-duration family gate, a frequency gate, plus the regressor's growing time-tolerance gate — so clutter
+  /// outside the gate is ignored, not fitted. A candidate <b>promotes</b> to active once it has enough pulses
+  /// within the promote timeout (back-filling earlier pulses it can explain, <see cref="AddOldPulses"/>), and
+  /// <b>retires</b> after a run of inactivity. The extractor owns the state transitions and picks the best
+  /// train per line block by smoothed sync power (<see cref="GetPower"/>) with hysteresis.
   /// </summary>
-  internal sealed class SstvPulseTrain
+  internal class SstvPulseTrain
   {
     private const double FreqTolHz = 150.0;      // reject pulses off the train's tone frequency
     private const double PromoteSeconds = 4.0;   // promote-or-kill a candidate by this idle time
-    private const double RetireSeconds = 6.0;    // retire an active train after this idle time
+    private const double RetireSeconds = 6.0;    // retire an active train after this idle time (§1.10 T_gap)
+    private const double WeakPower = 2 * SstvPulseDetector.ScoreThreshold;  // a weak last pulse holds the claim longer
+    protected const int SmoothPulsesWing = 4;    // train power is smoothed over ±4 pulse slots
 
-    private readonly double promoteTimeout;
-    private readonly double retireTimeout;
+    protected readonly double fs;
+    protected readonly double nominalPeriod;
+    protected readonly double promoteTimeout;
+    protected readonly double retireTimeout;
+    protected readonly List<SstvPulse> pulses = new();
     private readonly int createdTime;            // seed time — bounds the promote window (N-of-M, retro P)
     private int lastPulseNo = int.MinValue;      // rejects a second pulse landing in the same line slot
+    private int revisionCnt;
 
     public SstvTrainState State { get; set; }
     public SstvMode Format { get; }
-    public SstvSyncRegressor Regr { get; }
-    public double Freq { get; private set; }
-    public int PulseCnt { get; private set; }
+    public SstvSyncRegressor Regr { get; protected set; }
+    public double Freq { get; protected set; }
+    public int PulseCnt => pulses.Count;
+    public IReadOnlyList<SstvPulse> Pulses => pulses;
 
-    /// <summary>Seed a train from three period-consistent pulses of <paramref name="mode"/>.</summary>
-    public SstvPulseTrain(SstvMode mode, SstvPulse p0, SstvPulse p1, SstvPulse p2, double fs)
+    /// <summary>Mean matched-filter power over the train's pulses — the mode-detection confidence.</summary>
+    public double MeanPower
     {
-      Format = mode;
-      var spec = SstvModes.Get(mode);
-      double nominalPeriod = spec.LinePeriodMs / 1000.0 * fs;
-      promoteTimeout = PromoteSeconds * fs;
-      retireTimeout = RetireSeconds * fs;
+      get
+      {
+        if (pulses.Count == 0) return 0;
+        double sum = 0;
+        foreach (var p in pulses) sum += p.Power;
+        return sum / pulses.Count;
+      }
+    }
 
+    /// <summary>Seed a train from three period-consistent pulses of <paramref name="mode"/> (ascending time).</summary>
+    public SstvPulseTrain(SstvMode mode, SstvPulse p0, SstvPulse p1, SstvPulse p2, double fs)
+      : this(mode, fs)
+    {
       Freq = (p0.Freq + p1.Freq + p2.Freq) / 3.0;
       Regr = new SstvSyncRegressor(p0.Time, nominalPeriod);
       Regr.ProcessPulse(p0.Time);
       Regr.ProcessPulse(p1.Time);
       Regr.ProcessPulse(p2.Time);
-      PulseCnt = 3;
+      pulses.Add(p0); pulses.Add(p1); pulses.Add(p2);
       createdTime = p0.Time;
       lastPulseNo = Regr.GetPulseNo(p2.Time);
       State = SstvTrainState.Candidate;
     }
 
-    /// <summary>Try to associate a pulse with this train: rejected if past the image end, off-frequency,
-    /// outside the regressor's time gate, or landing in an already-filled line slot (a duplicate would be
-    /// double-fitted and double-counted toward promotion, retro P); otherwise folded in. Returns whether it
-    /// was accepted.</summary>
-    public bool TryAddPulse(in SstvPulse pulse)
+    /// <summary>Shared field setup for the triplet and VIS constructors.</summary>
+    protected SstvPulseTrain(SstvMode mode, double fs)
+    {
+      Format = mode;
+      this.fs = fs;
+      var spec = SstvModes.Get(mode);
+      nominalPeriod = spec.LinePeriodMs / 1000.0 * fs;
+      promoteTimeout = PromoteSeconds * fs;
+      retireTimeout = RetireSeconds * fs;
+      createdTime = 0;
+      Regr = new SstvSyncRegressor(0, nominalPeriod);
+    }
+
+    /// <summary>Try to associate a pulse with this train: rejected if of the wrong sync-duration family, past
+    /// the image end, off-frequency, outside the regressor's time gate, or landing in an already-filled line
+    /// slot (a duplicate would be double-fitted and double-counted toward promotion, retro P); otherwise
+    /// folded in. Returns whether it was accepted.</summary>
+    public virtual bool TryAddPulse(in SstvPulse pulse)
     {
       var spec = SstvModes.Get(Format);
+      if (!MatchesFamily(pulse, spec)) return false;
       if (pulse.Time > Regr.GetPulseTime(spec.LineCount + 50)) return false;
       if (Math.Abs(pulse.Freq - Freq) > FreqTolHz) return false;
 
@@ -84,25 +115,198 @@ namespace VE3NEA.SkySSTV
       return true;
     }
 
-    /// <summary>Fold an accepted pulse in: update the smoothed tone frequency and the regressor.</summary>
+    /// <summary>A pulse detected by a different family's sync template (e.g. the 20 ms PD template on a
+    /// Robot train) carries a biased onset and must not be fitted. Zero DurMs (unknown) always passes.</summary>
+    protected static bool MatchesFamily(in SstvPulse pulse, SstvModeSpec spec)
+      => pulse.DurMs == 0 || Math.Abs(pulse.DurMs - spec.SyncMs) < 0.5;
+
+    /// <summary>Fold an accepted pulse in: update the smoothed tone frequency and the regressor. The pulse
+    /// list stays time-sorted (back-fill inserts at the front).</summary>
     public void AddPulse(in SstvPulse pulse)
     {
+      if (pulses.Count > 0 && pulse.Time < pulses[0].Time) pulses.Insert(0, pulse);
+      else pulses.Add(pulse);
+
       Freq = 0.97 * Freq + 0.03 * pulse.Freq;
       lastPulseNo = Regr.GetPulseNo(pulse.Time);
       Regr.ProcessPulse(pulse.Time);
-      PulseCnt++;
+    }
+
+    /// <summary>On promotion, back-fill earlier detections this train explains (Hopper <c>AddOldPulses</c>):
+    /// walk <paramref name="all"/> backwards from the current start, adopting unclaimed pulses that pass the
+    /// association gates, back to one retire-timeout before the start. If any were adopted, the regressor is
+    /// rebuilt from the new first pulse and refitted over the whole train. Returns whether the start moved.</summary>
+    public virtual bool AddOldPulses(IReadOnlyList<SstvPulse> all)
+    {
+      double startTime = Regr.FirstPulseTime;
+      bool added = false;
+      for (int i = all.Count - 1; i >= 0; i--)
+      {
+        if (all[i].Time >= startTime) continue;
+        if (all[i].Time < startTime - retireTimeout) break;
+        if (all[i].Used) continue;
+        if (TryAddPulse(all[i])) { startTime = all[i].Time; added = true; }
+      }
+      if (!added) return false;
+
+      Regr = new SstvSyncRegressor((int)startTime, nominalPeriod);
+      foreach (var p in pulses) Regr.ProcessPulse(p.Time);
+      return true;
+    }
+
+    /// <summary>Smoothed sync power near <paramref name="time"/>: the mean pulse power over the ±<see
+    /// cref="SmoothPulsesWing"/> line slots around it, rejecting the block edge cases (no pulse in the center
+    /// slot and support on only one side ⇒ before the start / past the end of the train; a center pulse with
+    /// no neighbors at all ⇒ an isolated spike). Drives the extractor's best-train-per-block choice.</summary>
+    public virtual double GetPower(int time)
+    {
+      var neighbors = new double[2 * SmoothPulsesWing + 1];
+      int centerNo = Regr.GetPulseNo(time);
+      for (int i = pulses.Count - 1; i >= 0; i--)
+      {
+        int dist = Regr.GetPulseNo(pulses[i].Time) - centerNo;
+        if (dist < -SmoothPulsesWing) break;
+        if (dist <= SmoothPulsesWing) neighbors[dist + SmoothPulsesWing] = pulses[i].Power;
+      }
+
+      bool hasLeft = false, hasRight = false;
+      for (int i = 1; i <= SmoothPulsesWing; i++)
+      {
+        hasLeft = hasLeft || neighbors[SmoothPulsesWing - i] > 0;
+        hasRight = hasRight || neighbors[SmoothPulsesWing + i] > 0;
+      }
+      if (neighbors[SmoothPulsesWing] == 0) { if (!(hasLeft && hasRight)) return 0; }
+      else { if (!(hasLeft || hasRight)) return 0; }
+
+      double sum = 0; int cnt = 0;
+      foreach (double p in neighbors)
+        if (p > 0) { sum += p; cnt++; }
+      return cnt > 0 ? sum / cnt : 0;
     }
 
     /// <summary>A candidate has enough pulses to promote to active (N-of-M over the promote window).</summary>
-    public bool HasEnoughPulses => PulseCnt >= Math.Max(6, (int)Math.Round(0.4 * promoteTimeout / Regr.NominalPeriod));
+    public virtual bool HasEnoughPulses => PulseCnt >= Math.Max(6, (int)Math.Round(0.4 * promoteTimeout / Regr.NominalPeriod));
 
     /// <summary>A candidate is due to be killed: idle too long, or — bounding the N-of-M promote window
     /// (retro P) — older than the promote timeout without having promoted. Without the age bound, clutter
     /// that trickles one associated pulse per few seconds would stay alive and eventually promote.</summary>
-    public bool IsCandidateIdle(int time)
+    public virtual bool IsCandidateIdle(int time)
       => (time - Regr.LastPulseTime) > promoteTimeout || (time - createdTime) > promoteTimeout;
 
     /// <summary>An active train has gone idle long enough to retire.</summary>
-    public bool CanRetire(int time) => (time - Regr.LastPulseTime) > retireTimeout;
+    public virtual bool CanRetire(int time) => (time - Regr.LastPulseTime) > retireTimeout;
+
+    /// <summary>Whether a retired train has stopped claiming line blocks at <paramref name="time"/>: right
+    /// after its last pulse when that pulse was strong (the transmission clearly ended there), one retire
+    /// timeout later when it was weak (the tail may just be faded).</summary>
+    public virtual bool IsRetiredAt(int time)
+    {
+      if (State != SstvTrainState.Retired) return false;
+      double retireTime = Regr.LastPulseTime;
+      if (pulses.Count > 0 && pulses[^1].Power < WeakPower) retireTime += retireTimeout;
+      return retireTime < time;
+    }
+
+    /// <summary>True (at most twice, at ~20 and ~40 pulses) when the timing estimate has improved enough
+    /// that already-extracted lines should be revised (the extractor re-marks the dirty block).</summary>
+    public bool RevisionDue()
+    {
+      bool due = revisionCnt < 2 && PulseCnt >= 20 * (revisionCnt + 1);
+      if (due) revisionCnt++;
+      return due;
+    }
+  }
+
+  /// <summary>
+  /// A VIS-seeded high-prior train (plan §4.1, Hopper's <c>TVisPulseTrain</c>): created when a valid VIS
+  /// header is decoded, anchored at the header end (= the line-0 sync onset), in state
+  /// <see cref="SstvTrainState.VisOnly"/> with no pulses yet. Because the mode and phase are already known,
+  /// it promotes on just 3 confirming pulses (vs the triplet-spawned candidate's ~11) — the "strong prior"
+  /// realization. The first pulse must land within a tight wing of the predicted grid; a period-consistent
+  /// triplet whose grid extrapolates back to the anchor may also be adopted whole
+  /// (<see cref="TryAddPulses"/>).</summary>
+  internal sealed class SstvVisPulseTrain : SstvPulseTrain
+  {
+    private const double AnchorWingMs = 7.0;     // first-pulse gate around the predicted grid
+    private const double TripletWingMs = 18.0;   // triplet-adoption gate: grid extrapolated back to the anchor
+
+    private readonly int anchorWing;
+    private readonly int tripletWing;
+
+    /// <summary>Sample index of the VIS header end = the predicted line-0 sync onset.</summary>
+    public int VisTime { get; }
+
+    public SstvVisPulseTrain(SstvMode mode, int headerEndSample, double fs) : base(mode, fs)
+    {
+      VisTime = headerEndSample;
+      anchorWing = (int)Math.Round(AnchorWingMs / 1000.0 * fs);
+      tripletWing = (int)Math.Round(TripletWingMs / 1000.0 * fs);
+      Freq = SstvTones.Sync;
+      Regr = new SstvSyncRegressor(headerEndSample, nominalPeriod);
+      State = SstvTrainState.VisOnly;
+    }
+
+    public override bool TryAddPulse(in SstvPulse pulse)
+    {
+      if (State != SstvTrainState.VisOnly && State != SstvTrainState.Candidate)
+        return base.TryAddPulse(pulse);
+
+      var spec = SstvModes.Get(Format);
+      if (!MatchesFamily(pulse, spec)) return false;
+      if (pulse.Time < VisTime - anchorWing) return false;
+
+      int pulseNo = Regr.GetPulseNo(pulse.Time);
+      if (pulseNo > spec.LineCount + 1) return false;
+      double expected = Regr.GetPulseTime(pulseNo);
+      int gate = PulseCnt == 0 ? anchorWing : (int)Regr.GetMaxError(pulseNo);
+      if (Math.Abs(pulse.Time - expected) > gate) return false;
+
+      AddPulse(pulse);
+      State = SstvTrainState.Candidate;
+      return true;
+    }
+
+    /// <summary>Adopt a period-consistent triplet if a line fit through it extrapolates back to the VIS
+    /// anchor: the extractor offers each fresh triplet here before spawning a plain candidate.</summary>
+    public bool TryAddPulses(in SstvPulse p0, in SstvPulse p1, in SstvPulse p2)
+    {
+      var fit = new SstvSyncRegressor(p0.Time, nominalPeriod);
+      fit.ProcessPulse(p0.Time);
+      fit.ProcessPulse(p1.Time);
+      fit.ProcessPulse(p2.Time);
+      if (Math.Abs(fit.GetPulseTime(fit.GetPulseNo(VisTime)) - VisTime) >= tripletWing) return false;
+
+      AddPulse(p0);
+      AddPulse(p1);
+      AddPulse(p2);
+      State = SstvTrainState.Candidate;
+      return true;
+    }
+
+    /// <summary>The VIS anchor already fixes the start; there is nothing older to explain.</summary>
+    public override bool AddOldPulses(IReadOnlyList<SstvPulse> all) => false;
+
+    /// <summary>The VIS prior stands in for the triplet-candidate's pulse count: 3 confirming pulses suffice.</summary>
+    public override bool HasEnoughPulses => PulseCnt >= 3;
+
+    /// <summary>A VIS train is given twice the normal promote window before being killed.</summary>
+    public override bool IsCandidateIdle(int time) => (time - Regr.LastPulseTime) > 2 * promoteTimeout;
+
+    /// <summary>The mode is known, so the train retires exactly at its predicted image end.</summary>
+    public override bool CanRetire(int time)
+      => Regr.GetPulseTime(SstvModes.Get(Format).LineCount - 1) < time;
+
+    public override bool IsRetiredAt(int time) => State == SstvTrainState.Retired && CanRetire(time);
+
+    /// <summary>Between the VIS header and the first few syncs the normal ±wing smoothing has no support
+    /// yet; hold the block claim with the latest pulse's power so the image start is not lost.</summary>
+    public override double GetPower(int time)
+    {
+      double power = base.GetPower(time);
+      if (power == 0 && PulseCnt > 0 && time > VisTime
+          && Regr.GetPulseNo(time) < SmoothPulsesWing + 1)
+        power = pulses[^1].Power;
+      return power;
+    }
   }
 }

@@ -24,7 +24,7 @@ namespace VE3NEA.SkySSTV
   internal sealed class SstvPulseDetector
   {
     private const double FreqWindowMs = 4.0;      // coherence window: several 1200 Hz cycles, < any sync
-    private const double ScoreThreshold = 0.18;   // bipolar score to register a pulse (clean sync ≈ 0.33+)
+    internal const double ScoreThreshold = 0.18;  // bipolar score to register a pulse (clean sync ≈ 0.33+)
     private const int RenormInterval = 4096;      // oscillator re-normalization cadence (samples)
     private const int ReanchorInterval = 1 << 20; // running-sum re-accumulation cadence (samples)
 
@@ -48,6 +48,10 @@ namespace VE3NEA.SkySSTV
     private double runBest;
     private long runBestT;
     private long lastEmitT = long.MinValue;
+
+    /// <summary>Largest bipolar matched-filter score seen so far, thresholded or not — a probe for the
+    /// P6(c) threshold experiments and the real-capture score measurements.</summary>
+    public double MaxScore { get; private set; }
 
     public SstvPulseDetector(double fs, double pulseLenMs)
     {
@@ -118,6 +122,7 @@ namespace VE3NEA.SkySSTV
       if (m < size - 1) return;                               // rings not warm yet
       long onset = m - 2 * l + 1;
       double score = (sumP - 0.5 * (sumL + sumR)) / l;
+      if (score > MaxScore) MaxScore = score;
 
       if (score > ScoreThreshold)
       {

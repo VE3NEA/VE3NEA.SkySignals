@@ -125,15 +125,14 @@ namespace VE3NEA.SkySSTV.Tests
       return Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
     }
 
-    /// <summary>Best matched-filter sync score over the first few lines of <paramref name="audio"/>.</summary>
+    /// <summary>Best matched-filter sync score over the first few lines of <paramref name="audio"/>
+    /// (the streaming detector's un-thresholded score maximum).</summary>
     private static double MaxSyncScore(double[] audio, SstvModeSpec spec)
     {
-      var filter = new SstvSyncFilter(audio, Fs);
-      int pulseLen = (int)Math.Round(spec.SyncMs / 1000.0 * Fs);
-      int limit = Math.Min(filter.MaxPos(pulseLen), (int)(5 * spec.LinePeriodMs / 1000.0 * Fs));
-      double best = 0;
-      for (int t = pulseLen; t < limit; t++) best = Math.Max(best, filter.Score(t, pulseLen));
-      return best;
+      int limit = Math.Min(audio.Length, (int)(5 * spec.LinePeriodMs / 1000.0 * Fs));
+      var detector = new SstvPulseDetector(Fs, spec.SyncMs);
+      detector.Detect(audio[..limit]);
+      return detector.MaxScore;
     }
   }
 }

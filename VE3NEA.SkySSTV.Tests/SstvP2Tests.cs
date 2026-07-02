@@ -66,40 +66,29 @@ namespace VE3NEA.SkySSTV.Tests
 
 
     // ----------------------------------------------------------------------------------------------------
-    //                                          sync correlator
+    //                                     sync-train acquisition
     // ----------------------------------------------------------------------------------------------------
 
 
     [Fact]
-    public void FindFirstSync_NoVis_LandsOnLineZero()
+    public void ExtractTrains_NoVis_AnchorsOnLineZero()
     {
+      // the MHT extraction replaces the P2 first-peak correlator: the winning train's back-filled grid
+      // must extrapolate to the line-0 sync onset even though the detector's own first emittable onset
+      // sits one template length into the stream (the driver's lead-in pad covers it).
       var spec = SstvModes.Get(SstvMode.Robot36);
       var iq = SstvEncoder.Encode(new RgbImage(spec.Width, spec.Height), SstvMode.Robot36,
         new SstvEncoderOptions { IncludeVis = false });
-      double[] disc = SstvDecoder.Discriminator(iq, new SstvDecodeOptions());
+      var o = new SstvDecodeOptions();
+      double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), Fs, o);
 
-      int sync = SstvSyncCorrelator.FindFirstSync(disc, Fs, spec, 0, disc.Length);
-      output.WriteLine($"first sync onset = {sync}");
-      sync.Should().BeInRange(0, MsToSamples(spec.SyncMs),
-        "a signal that begins on its line-0 sync pulse acquires at (or within one sync of) sample 0");
-    }
-
-    [Fact]
-    public void CoherenceTrack_PeaksAtLinePeriod()
-    {
-      var spec = SstvModes.Get(SstvMode.Robot36);
-      var iq = SstvEncoder.Encode(new RgbImage(spec.Width, spec.Height), SstvMode.Robot36,
-        new SstvEncoderOptions { IncludeVis = false });
-      double[] disc = SstvDecoder.Discriminator(iq, new SstvDecodeOptions());
-
-      int win = MsToSamples(spec.SyncMs);
-      int period = MsToSamples(spec.LinePeriodMs);
-      double[] track = SstvSyncCorrelator.CoherenceTrack(disc, Fs, win, 0, 3 * period);
-
-      // the line-1 sync pulse recurs one line period after line 0; find the local max near that index.
-      double peak = MaxAround(track, period, win);
-      output.WriteLine($"coherence at line-1 sync ≈ {peak:0.00}");
-      peak.Should().BeGreaterThan(0.25, "the 1200 Hz sync pulse recurs strongly every line period");
+      var train = SstvDecoder.ExtractTrains(sync, Fs).BestTrain();
+      train.Should().NotBeNull("a clean image carries an unmistakable sync train");
+      train!.Format.Should().Be(SstvMode.Robot36);
+      int first = (int)Math.Round(train.Regr.GetPulseTime(0));
+      output.WriteLine($"train first-pulse onset = {first}, pulses = {train.PulseCnt}");
+      first.Should().BeInRange(-MsToSamples(spec.SyncMs), MsToSamples(spec.SyncMs),
+        "a signal that begins on its line-0 sync pulse anchors within one sync of sample 0");
     }
 
 

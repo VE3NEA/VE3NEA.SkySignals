@@ -5,13 +5,14 @@ using MathNet.Numerics;
 namespace VE3NEA.SkySSTV
 {
   /// <summary>
-  /// P2 decoder (plan §3, §4, §7): recover an image from an FM-on-FM IQ stream with <b>real timing
-  /// acquisition</b> — the VIS header (plan §4) or, absent it, the first 1200 Hz sync pulse (plan §7)
-  /// locates the image start; Kalman slant tracking is still P3. The chain is
-  /// <c>channel FIR → FM discriminator → analytic-signal brightness → instantaneous frequency →
+  /// Decoder (plan §3, §4, §4.1, §7): recover an image from an FM-on-FM IQ stream with <b>real timing
+  /// acquisition</b> — the VIS header (plan §4) or, absent it, the winning MHT pulse train (plan §4.1)
+  /// locates the image start; per-line timing and slant come from the train's RLS period/phase regression
+  /// (<see cref="SstvSyncRegressor"/> — missed pulses coast for free). The chain is
+  /// <c>channel FIR → FM discriminator → mix + complex low-pass brightness → instantaneous frequency →
   /// per-pixel matched integrator</c>, then a per-layout YCrCb→RGB reconstruction. Reuses the wrapped
-  /// VE3NEA.Dsp natives (BlackmanSinc kernels, SIMD LiquidFir, FFTW) for the filters; the discriminator,
-  /// tone banks and integrator are trivial inline loops.
+  /// VE3NEA.Dsp natives (BlackmanSinc kernels, SIMD LiquidFir, FFTW) for the filters; the discriminator
+  /// and integrator are trivial inline loops.
   ///
   /// Brightness is the subcarrier's instantaneous frequency, so it is independent of FM deviation and
   /// amplitude (plan §1.4). All three color layouts are implemented — Robot36, Robot72 and PD.
@@ -19,8 +20,9 @@ namespace VE3NEA.SkySSTV
   public static class SstvDecoder
   {
     /// <summary>Decode <paramref name="iq"/> in <paramref name="mode"/> to an image. By default the start
-    /// timing is acquired from the VIS header or first sync pulse; set <see cref="SstvDecodeOptions.Acquire"/>
-    /// false to decode at the fixed <see cref="SstvDecodeOptions.StartSample"/>.</summary>
+    /// timing is acquired from the VIS header or the winning sync train; set
+    /// <see cref="SstvDecodeOptions.Acquire"/> false to decode at the fixed
+    /// <see cref="SstvDecodeOptions.StartSample"/>.</summary>
     public static RgbImage Decode(Complex32[] iq, SstvMode mode, SstvDecodeOptions? options = null)
     {
       var o = options ?? new SstvDecodeOptions();
@@ -28,23 +30,97 @@ namespace VE3NEA.SkySSTV
       double fs = o.SampleRate;
 
       double[] disc = Discriminator(iq, o);                  // outer FM demod → f_doppler + dev·audio(t), Hz
-      double[] sync = SyncAudio(disc, fs, o);                // Stage-2 band-limit for all timing statistics
-      int start = o.Acquire ? AcquireStart(sync, fs, spec, o) : o.StartSample;
-      double[] lineOnset = LineOnsets(sync, fs, spec, o, start);
+
+      // the MHT pulse-train extraction supplies acquisition (burst start) and per-line timing (plan §4.1)
+      SstvPulseTrain? train = null;
+      SstvVisResult vis = default;
+      if (o.Acquire || o.Track)
+      {
+        double[] sync = SyncAudio(disc, fs, o);              // Stage-2 band-limit for all timing statistics
+        if (o.Acquire) vis = SstvVisDetector.Detect(sync, fs, 0, o.AcquireSearchSamples);
+        var seed = vis.Found && vis.Mode == mode ? vis : default;
+        train = ExtractTrains(sync, fs, seed).BestTrain(mode);
+      }
+
+      int start = !o.Acquire ? o.StartSample
+        : vis.Found ? vis.HeaderEndSample                    // stop bit and line-0 sync are both 1200 Hz — trust VIS
+        : train != null ? (int)Math.Round(train.Regr.GetPulseTime(0))
+        : o.StartSample;
+
+      var (lineOnset, corr) = LineOnsets(train, fs, spec, o, start);
       double[] brightness = Brightness(disc, fs, o);
-      return Reconstruct(brightness, spec, o, lineOnset);
+      return Reconstruct(brightness, spec, o, lineOnset, corr);
     }
 
-    /// <summary>Per-transmitted-line sync-onset samples. With <see cref="SstvDecodeOptions.Track"/> KF1
-    /// measures each line's 1200 Hz sync and corrects slant + coasts fades (plan §1.6/§7); otherwise the
-    /// lines are laid at the fixed nominal period from <paramref name="start"/>.</summary>
-    private static double[] LineOnsets(double[] sync, double fs, SstvModeSpec spec, SstvDecodeOptions o, int start)
+    /// <summary>Per-transmitted-line sync-onset samples + the slant/clock correction (retro item F). With
+    /// <see cref="SstvDecodeOptions.Track"/> the lines sit on the winning train's RLS grid — slant-corrected
+    /// and coasting through fades (plan §1.6/§4.1); otherwise (or when no train was found) they are laid at
+    /// the fixed nominal period from <paramref name="start"/>.</summary>
+    private static (double[] onsets, double corr) LineOnsets(SstvPulseTrain? train, double fs,
+      SstvModeSpec spec, SstvDecodeOptions o, int start)
     {
-      if (o.Track) return SstvSyncTracker.Track(sync, fs, spec, start);
-      double nominal = spec.LinePeriodMs / 1000.0 * fs;
       var onset = new double[spec.LineCount];
+      if (o.Track && train != null)
+      {
+        int line0 = train.Regr.GetPulseNo(start);
+        for (int line = 0; line < spec.LineCount; line++)
+          onset[line] = train.Regr.GetPulseTime(line0 + line);
+        return (onset, train.Regr.CorrFactor);
+      }
+      double nominal = spec.LinePeriodMs / 1000.0 * fs;
       for (int line = 0; line < spec.LineCount; line++) onset[line] = start + line * nominal;
-      return onset;
+      return (onset, 1.0);
+    }
+
+    /// <summary>Run the per-family streaming sync detectors over the Stage-2 audio and feed the MHT
+    /// extractor (plan §4.1). A found <paramref name="vis"/> seeds the high-prior train. The audio is
+    /// front-padded so a sync at sample 0 still has a warm left template flank, and the two detectors'
+    /// differing emission latencies are re-ordered so the extractor sees pulses in onset order.</summary>
+    internal static SstvPulseTrainExtractor ExtractTrains(double[] sync, double fs, SstvVisResult vis = default)
+    {
+      var extractor = new SstvPulseTrainExtractor(fs);
+      if (vis.Found && vis.Mode is SstvMode vm) extractor.AddVisTrain(vm, vis.HeaderEndSample);
+
+      var families = new List<double>();
+      foreach (var spec in SstvModes.All)
+        if (!families.Contains(spec.SyncMs)) families.Add(spec.SyncMs);
+      var detectors = new SstvPulseDetector[families.Count];
+      for (int i = 0; i < families.Count; i++) detectors[i] = new SstvPulseDetector(fs, families[i]);
+
+      int pad = (int)Math.Round(0.05 * fs);                  // lead-in: > 2× the longest sync template
+      int maxLatency = (int)Math.Round(0.10 * fs);           // bound on detector emission lag past an onset
+      int blockSize = (int)Math.Round(0.25 * fs);
+
+      var raw = new List<SstvPulse>();
+      var pending = new List<SstvPulse>();
+      var deliver = new List<SstvPulse>();
+      int total = pad + sync.Length;
+      for (int blockStart = 0; blockStart < total; blockStart += blockSize)
+      {
+        int blockEnd = Math.Min(total, blockStart + blockSize);
+        raw.Clear();
+        foreach (var det in detectors)
+          for (int i = blockStart; i < blockEnd; i++)
+            det.Process(i < pad ? 0.0 : sync[i - pad], raw);
+        foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.Freq, p.DurMs));
+        pending.Sort((a, b) => a.Time.CompareTo(b.Time));
+
+        // deliver only pulses no later emission can precede, so the extractor sees onset order
+        int safeTime = blockEnd - pad - maxLatency;
+        deliver.Clear();
+        int cnt = 0;
+        while (cnt < pending.Count && pending[cnt].Time <= safeTime) deliver.Add(pending[cnt++]);
+        pending.RemoveRange(0, cnt);
+        extractor.Process(deliver, blockEnd - pad);
+      }
+
+      raw.Clear();
+      foreach (var det in detectors) det.Flush(raw);
+      foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.Freq, p.DurMs));
+      pending.Sort((a, b) => a.Time.CompareTo(b.Time));
+      extractor.Process(pending, sync.Length);
+      extractor.Finish(sync.Length);
+      return extractor;
     }
 
     /// <summary>Locate the SSTV header/first-sync in the discriminated audio and return the sample index of
@@ -139,18 +215,6 @@ namespace VE3NEA.SkySSTV
       return brightness;
     }
 
-    /// <summary>Acquire the image start (line-0 sync onset): a valid VIS header supplies it directly (the
-    /// sample after the stop bit); otherwise the first 1200 Hz sync pulse does; failing both, the fixed
-    /// <see cref="SstvDecodeOptions.StartSample"/> is used.</summary>
-    private static int AcquireStart(double[] sync, double fs, SstvModeSpec spec, SstvDecodeOptions o)
-    {
-      var vis = SstvVisDetector.Detect(sync, fs, 0, o.AcquireSearchSamples);
-      if (vis.Found) return vis.HeaderEndSample;             // stop bit and line-0 sync are both 1200 Hz — trust VIS
-      int first = SstvSyncCorrelator.FindFirstSync(sync, fs, spec, 0, o.AcquireSearchSamples);
-      return first >= 0 ? first : o.StartSample;
-    }
-
-
     // ----------------------------------------------------------------------------------------------------
     //                                          front-end stages
     // ----------------------------------------------------------------------------------------------------
@@ -220,15 +284,20 @@ namespace VE3NEA.SkySSTV
       }
     }
 
-    private static RgbImage Reconstruct(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o, double[] lineOnset)
+    /// <summary><paramref name="corr"/> is the RLS slant/clock correction (period / nominal): it scales the
+    /// intra-line segment and pixel widths so a sample-clock error does not shear pixels within a line
+    /// (retro item F; Hopper's <c>TimeScale = samplesPerMs·CorrFactor</c>).</summary>
+    private static RgbImage Reconstruct(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o,
+      double[] lineOnset, double corr)
       => spec.Layout == SstvColorLayout.Pd
-         ? ReconstructPd(brightness, spec, o, lineOnset)
-         : ReconstructRobot(brightness, spec, o, lineOnset);
+         ? ReconstructPd(brightness, spec, o, lineOnset, corr)
+         : ReconstructRobot(brightness, spec, o, lineOnset, corr);
 
-    private static RgbImage ReconstructRobot(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o, double[] lineOnset)
+    private static RgbImage ReconstructRobot(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o,
+      double[] lineOnset, double corr)
     {
       int w = spec.Width, h = spec.Height;
-      double fs = o.SampleRate;
+      double fs = o.SampleRate * corr;                       // clock-corrected pixel time scale (retro F)
       var y = new double[h * w];
       var cr = new double[h * w];
       var cb = new double[h * w];
@@ -277,10 +346,11 @@ namespace VE3NEA.SkySSTV
 
     /// <summary>PD layout: each transmitted line is sync → porch → Y(even row) → R-Y → B-Y → Y(odd row),
     /// no separators, and the one chroma pair is shared by the two luma rows (plan §1.8, §2).</summary>
-    private static RgbImage ReconstructPd(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o, double[] lineOnset)
+    private static RgbImage ReconstructPd(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o,
+      double[] lineOnset, double corr)
     {
       int w = spec.Width, h = spec.Height;
-      double fs = o.SampleRate;
+      double fs = o.SampleRate * corr;                       // clock-corrected pixel time scale (retro F)
       var y = new double[h * w];
       var cr = new double[h * w];
       var cb = new double[h * w];
