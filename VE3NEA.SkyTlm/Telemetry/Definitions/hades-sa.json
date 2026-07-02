@@ -1,0 +1,342 @@
+{
+  "id": "hades-sa",
+  "norad": [68446],
+  "bitOrder": "msb",
+  "endian": "le",
+  "dispatch": {
+    "field": "type",
+    "cases": {
+      "1": "power",
+      "2": "temps",
+      "3": "status",
+      "4": "power_ranges",
+      "5": "temp_ranges",
+      "8": "deploy",
+      "9": "ext_power",
+      "10": "SSDV",
+      "11": "CODEC2",
+      "12": "ephemeris",
+      "13": "PN9 random data",
+      "14": "time_series",
+      "15": "bbs"
+    }
+  },
+  "layouts": {
+    "_header": {
+      "fields": [
+        { "name": "type", "bits": 4, "hidden": true },
+        { "name": "address", "bits": 4, "hidden": true }
+      ]
+    },
+
+    "SSDV": {
+      "extends": "_header",
+      "fields": [
+        { "name": "image id", "bits": 8 },
+        { "name": "packet id", "bits": 16, "endian": "be" },
+        { "name": "width id", "bits": 8, "scale": 16 },
+        { "name": "height id", "bits": 8, "scale": 16 },
+        { "name": "flags", "bits": 8 },
+        { "name": "mcuOffset", "bits": 8 },
+        { "name": "mcuIndex", "bits": 16, "endian": "be" },
+        // 251-byte SSDV packet: 10-byte header + 205-byte payload, then the trailing
+        // 4-byte checksum and 32-byte Reed-Solomon FEC at fixed offsets from the start.
+        { "name": "checksum", "pos": 215, "bytes": 4, "type": "bytes" },
+        { "name": "FEC", "pos": 219, "bytes": 32, "type": "bytes" }
+      ]
+    },
+    "CODEC2": {
+      "extends": "_header",
+      "fields": [
+        { "name": "frame number", "bits": 8 }
+      ]
+    },
+    "PN9 random data": { "fields": [] },
+
+    "power": {
+      "extends": "_header",
+      "fields": [
+        { "name": "sclock", "bits": 32, "units": "s" },
+        { "name": "spa", "bits": 8, "units": "mW" },
+        { "name": "spb", "bits": 8, "units": "mW" },
+        { "name": "spc", "bits": 8, "units": "mW" },
+        { "name": "spd", "bits": 8, "units": "mW" },
+        { "name": "spi", "bits": 16, "units": "mW" },
+        { "name": "vbusadc_vbatadc_hi", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "vbatadc_lo_vcpuadc_hi", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "vcpuadc_lo_vbus2", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "vbus3_vbat2_hi", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "vbat2_lo_ibat_hi", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "ibat_lo_icpu_hi", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "icpu_lo_ipl", "bits": 16, "endian": "le", "hidden": true },
+        { "name": "vbus1", "expr": "(vbusadc_vbatadc_hi >> 4) * 1400 / 1000", "decimals": 0, "units": "mV" },
+        { "name": "vbat1", "expr": "((vbusadc_vbatadc_hi << 8) & 0x0f00 | (vbatadc_lo_vcpuadc_hi >> 8) & 0x0fff) * 1400 / 1000", "decimals": 0, "units": "mV" },
+        { "name": "vcpu", "expr": "1210 * 4096 / ((vbatadc_lo_vcpuadc_hi << 4) & 0x0ff0 | vcpuadc_lo_vbus2 >> 12)", "decimals": 0, "units": "mV" },
+        { "name": "vbus2", "expr": "(vcpuadc_lo_vbus2 & 0x0fff) * 4", "decimals": 0, "units": "mV" },
+        { "name": "vbus3", "expr": "(vbus3_vbat2_hi >> 4) * 4", "decimals": 0, "units": "mV" },
+        { "name": "vbat2", "expr": "((vbus3_vbat2_hi << 8) & 0x0f00 | vbat2_lo_ibat_hi >> 8) * 4", "decimals": 0, "units": "mV" },
+        { "name": "ibat", "expr": "((vbat2_lo_ibat_hi << 8) & 0x0f00 | (ibat_lo_icpu_hi >> 8) & 0x0fff) > 2047 ? ((vbat2_lo_ibat_hi << 8) & 0x0f00 | (ibat_lo_icpu_hi >> 8) & 0x0fff) - 4096 : ((vbat2_lo_ibat_hi << 8) & 0x0f00 | (ibat_lo_icpu_hi >> 8) & 0x0fff)", "decimals": 0, "units": "mA" },
+        { "name": "icpu", "expr": "(ibat_lo_icpu_hi << 4) & 0x0ff0 | icpu_lo_ipl >> 12", "decimals": 0, "units": "mA" },
+        { "name": "ipl", "expr": "icpu_lo_ipl & 0x0fff", "decimals": 0, "units": "mA" },
+        { "name": "peaksignal", "bits": 8, "scale": 0.5, "decimals": 1, "units": "dBm" },
+        { "name": "modasignal", "bits": 8, "scale": 0.5, "decimals": 1, "units": "dBm" },
+        { "name": "lastcmdsignal", "bits": 8, "scale": 0.5, "decimals": 1, "units": "dB" },
+        { "name": "lastcmdnoise", "bits": 8, "scale": 0.5, "decimals": 1, "units": "dB" }
+      ]
+    },
+
+    "temps": {
+      "extends": "_header",
+      "fields": [
+        { "name": "sclock", "bits": 32, "units": "s" },
+        { "name": "tpa", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "tpb", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "tpc", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "tpd", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "tpe", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "teps", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "ttx", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "ttx2", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "trx", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "tcpu", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } }
+      ]
+    },
+
+    "status": {
+      "extends": "_header",
+      "fields": [
+        { "name": "sclock", "bits": 32, "units": "s" },
+        { "name": "uptime", "bits": 32, "units": "s" },
+        { "name": "nrun", "bits": 16 },
+        { "name": "npayload", "bits": 8 },
+        { "name": "nwire", "bits": 8 },
+        { "name": "ntransponder", "bits": 8 },
+        { "name": "npayloadFails", "bits": 4 },
+        { "name": "lstrst", "bits": 4 },
+        { "name": "bate", "bits": 4 },
+        { "name": "mote", "bits": 4 },
+        { "name": "systems_status", "bits": 8 },
+        { "name": "nTasksNotExecuted", "bits": 8 },
+        { "name": "antennaDeployed", "bits": 8 },
+        { "name": "nExtEepromErrors", "bits": 8 },
+        { "name": "failedTaskID", "bits": 8 },
+        { "name": "messaging_enabled", "bits": 8 },
+        { "name": "strfwd0", "bits": 8 },
+        { "name": "strfwd1", "bits": 16 },
+        { "name": "strfwd2", "bits": 16 },
+        { "name": "strfwd3", "bits": 8 },
+        { "name": "rx_percentage", "bits": 8, "units": "%" },
+        { "name": "telemetry_percentage", "bits": 8, "units": "%" },
+        { "name": "transponder_percentage", "bits": 8, "units": "%" },
+        { "name": "ptt_hp_percentage", "bits": 8, "units": "%" },
+        { "name": "ptt_lp_percentage", "bits": 8, "units": "%" },
+        { "name": "ple_percentage", "bits": 8, "units": "%" },
+        { "name": "bwe_percentage", "bits": 8, "units": "%" },
+        { "name": "vbat_higher_than_vbus_percentage", "bits": 8, "units": "%" },
+        { "name": "payload_frames", "bits": 8 },
+        { "name": "payload_params", "bits": 8 },
+        { "name": "current_image_id", "bits": 8 }
+      ]
+    },
+
+    "power_ranges": {
+      "extends": "_header",
+      "fields": [
+        { "name": "sclock", "bits": 32, "units": "s" },
+        { "name": "minvbus1", "bits": 12, "units": "mV" },
+        { "name": "minvbat1", "bits": 12, "units": "mV" },
+        { "name": "minvcpu", "bits": 12, "units": "mV" },
+        { "name": "free1", "bits": 4, "hidden": true },
+        { "name": "minvbus2", "bits": 8, "units": "mV" },
+        { "name": "minvbus3", "bits": 8, "units": "mV" },
+        { "name": "minvbat2", "bits": 8, "units": "mV" },
+        { "name": "minibat", "bits": 8, "units": "mA" },
+        { "name": "minicpu", "bits": 8, "units": "mA" },
+        { "name": "minipl", "bits": 8, "units": "mA" },
+        { "name": "maxvbus1", "bits": 12, "units": "mV" },
+        { "name": "maxvbat1", "bits": 12, "units": "mV" },
+        { "name": "maxvcpu", "bits": 12, "units": "mV" },
+        { "name": "free2", "bits": 4, "hidden": true },
+        { "name": "maxvbus2", "bits": 8, "units": "mV" },
+        { "name": "maxvbus3", "bits": 8, "units": "mV" },
+        { "name": "maxvbat2", "bits": 8, "units": "mV" },
+        { "name": "maxibat", "bits": 8, "units": "mA" },
+        { "name": "maxicpu", "bits": 8, "units": "mA" },
+        { "name": "maxipl", "bits": 8, "units": "mA" },
+        { "name": "ibat_rx_charging", "bits": 8, "units": "mA" },
+        { "name": "ibat_rx_discharging", "bits": 8, "units": "mA" },
+        { "name": "ibat_tx_low_power_charging", "bits": 8, "units": "mA" },
+        { "name": "ibat_tx_low_power_discharging", "bits": 8, "units": "mA" },
+        { "name": "ibat_tx_high_power_charging", "bits": 8, "units": "mA" },
+        { "name": "ibat_tx_high_power_discharging", "bits": 8, "units": "mA" }
+      ]
+    },
+
+    "temp_ranges": {
+      "extends": "_header",
+      "fields": [
+        { "name": "sclock", "bits": 32, "units": "s" },
+        { "name": "mintpa", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "mintpb", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "mintpc", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "mintpd", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "mintpe", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "minteps", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "minttx", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "minttx2", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "mintrx", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "mintcpu", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtpa", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtpb", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtpc", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtpd", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtpe", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxteps", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxttx", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxttx2", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtrx", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } },
+        { "name": "maxtcpu", "bits": 8, "scale": 0.5, "offset": -40, "decimals": 1, "units": "°C", "special": { "255": "ERROR" } }
+      ]
+    },
+
+    "deploy": {
+      "extends": "_header",
+      "fields": [
+        { "name": "v1oc", "bits": 16 },
+        { "name": "v1", "bits": 16 },
+        { "name": "i1", "bits": 16 },
+        { "name": "i1pk", "bits": 16 },
+        { "name": "r1", "bits": 16 },
+        { "name": "v2oc", "bits": 16 },
+        { "name": "v2", "bits": 16 },
+        { "name": "r2", "bits": 16 },
+        { "name": "t", "bits": 32 },
+        { "name": "td", "bits": 16 },
+        { "name": "state_begin", "bits": 8, "type": "bool" },
+        { "name": "state_end", "bits": 8, "type": "bool" },
+        { "name": "state_now", "bits": 8, "type": "bool" },
+        { "name": "enable", "bits": 8, "type": "bool" },
+        { "name": "counter", "bits": 8 },
+        { "name": "tmp", "bits": 8 }
+      ]
+    },
+
+    "ephemeris": {
+      "extends": "_header",
+      "fields": [
+        { "name": "UTC", "bits": 32, "transform": "unixtime" },
+        { "name": "adr", "bits": 16 },
+        { "name": "ful", "bits": 32, "hidden": true },
+        { "name": "fdl", "bits": 32, "hidden": true },
+        { "name": "tle.epoch", "bits": 32 },
+        { "name": "tle.xndt2o", "bits": 32 },
+        { "name": "tle.xndd6o", "bits": 32 },
+        { "name": "tle.bstar", "bits": 32 },
+        { "name": "tle.xincl", "bits": 32 },
+        { "name": "tle.xnodeo", "bits": 32 },
+        { "name": "tle.eo", "bits": 32 },
+        { "name": "tle.omegao", "bits": 32 },
+        { "name": "tle.xmo", "bits": 32 },
+        { "name": "tle.xno", "bits": 32 },
+        { "name": "lat", "bits": 16 },
+        { "name": "lon", "bits": 16 },
+        { "name": "alt", "bits": 16 },
+        { "name": "cnt", "bits": 8, "hidden": true }
+      ]
+    },
+
+    "time_series": {
+      "extends": "_header",
+      "fields": [
+        { "name": "sclock", "bits": 32, "units": "s" },
+        { "name": "variable", "bits": 8, "enum": {
+            "0": "peak signal", "1": "noise", "2": "vbat1", "3": "tcpu",
+            "4": "tpa", "5": "(tpa+tpb+tpc+tpd)/4" } },
+        // 30 one-byte samples, oldest first, 3-minute spacing → named by their T-minus minute (T-87 … T-0).
+        // Temperature variables (tcpu/tpa/mean panel temp) share the panel-temp calibration raw/2 - 40 °C;
+        // the other variables (peak signal/noise/vbat1) have no known per-sample calibration → raw counts.
+        { "name": "T-", "bits": 8, "repeat": 30, "indexExpr": "(29 - i) * 3",
+          "if": "variable >= 3", "expr": "x * 0.5 - 40", "decimals": 1, "units": "°C" },
+        { "name": "T-", "bits": 8, "repeat": 30, "indexExpr": "(29 - i) * 3",
+          "if": "variable < 3" }
+      ]
+    },
+
+    "bbs": {
+      "extends": "_header",
+      "fields": [
+        { "name": "entry", "repeat": 5, "fields": [
+          { "name": "callsign", "bytes": 6, "type": "str" },
+          { "name": "message", "bytes": 7, "type": "str" },
+          { "name": "codec2_frames", "bits": 8 }
+        ] }
+      ]
+    },
+
+    "ext_power": {
+      "extends": "_header",
+      "fields": [
+        { "name": "v0_SPA", "bits": 16, "units": "raw" },
+        { "name": "i0_SPA", "bits": 16, "units": "raw" },
+        { "name": "p0_SPA", "bits": 16, "units": "raw" },
+        { "name": "vp0_SPA", "bits": 16, "units": "raw" },
+        { "name": "ip0_SPA", "bits": 16, "units": "raw" },
+        { "name": "pp0_SPA", "bits": 16, "units": "raw" },
+        { "name": "v1_SPB", "bits": 16, "units": "raw" },
+        { "name": "i1_SPB", "bits": 16, "units": "raw" },
+        { "name": "p1_SPB", "bits": 16, "units": "raw" },
+        { "name": "vp1_SPB", "bits": 16, "units": "raw" },
+        { "name": "ip1_SPB", "bits": 16, "units": "raw" },
+        { "name": "pp1_SPB", "bits": 16, "units": "raw" },
+        { "name": "v2_SPC", "bits": 16, "units": "raw" },
+        { "name": "i2_SPC", "bits": 16, "units": "raw" },
+        { "name": "p2_SPC", "bits": 16, "units": "raw" },
+        { "name": "vp2_SPC", "bits": 16, "units": "raw" },
+        { "name": "ip2_SPC", "bits": 16, "units": "raw" },
+        { "name": "pp2_SPC", "bits": 16, "units": "raw" },
+        { "name": "v3_SPD", "bits": 16, "units": "raw" },
+        { "name": "i3_SPD", "bits": 16, "units": "raw" },
+        { "name": "p3_SPD", "bits": 16, "units": "raw" },
+        { "name": "vp3_SPD", "bits": 16, "units": "raw" },
+        { "name": "ip3_SPD", "bits": 16, "units": "raw" },
+        { "name": "pp3_SPD", "bits": 16, "units": "raw" },
+        { "name": "v4_SUN", "bits": 16, "units": "raw" },
+        { "name": "i4_SUN", "bits": 16, "units": "raw" },
+        { "name": "p4_SUN", "bits": 16, "units": "raw" },
+        { "name": "vp4_SUN", "bits": 16, "units": "raw" },
+        { "name": "ip4_SUN", "bits": 16, "units": "raw" },
+        { "name": "pp4_SUN", "bits": 16, "units": "raw" },
+        { "name": "v5_BAT", "bits": 16, "units": "raw" },
+        { "name": "i5_BAT", "bits": 16, "units": "raw" },
+        { "name": "p5_BAT", "bits": 16, "units": "raw" },
+        { "name": "vp5_BAT", "bits": 16, "units": "raw" },
+        { "name": "ip5_BAT", "bits": 16, "units": "raw" },
+        { "name": "pp5_BAT", "bits": 16, "units": "raw" },
+        { "name": "v6_BATP", "bits": 16, "units": "raw" },
+        { "name": "i6_BATP", "bits": 16, "units": "raw" },
+        { "name": "p6_BATP", "bits": 16, "units": "raw" },
+        { "name": "vp6_BATP", "bits": 16, "units": "raw" },
+        { "name": "ip6_BATP", "bits": 16, "units": "raw" },
+        { "name": "pp6_BATP", "bits": 16, "units": "raw" },
+        { "name": "v7_BATN", "bits": 16, "units": "raw" },
+        { "name": "i7_BATN", "bits": 16, "units": "raw" },
+        { "name": "p7_BATN", "bits": 16, "units": "raw" },
+        { "name": "vp7_BATN", "bits": 16, "units": "raw" },
+        { "name": "ip7_BATN", "bits": 16, "units": "raw" },
+        { "name": "pp7_BATN", "bits": 16, "units": "raw" },
+        { "name": "v8_CPU", "bits": 16, "units": "raw" },
+        { "name": "i8_CPU", "bits": 16, "units": "raw" },
+        { "name": "p8_CPU", "bits": 16, "units": "raw" },
+        { "name": "vp8_CPU", "bits": 16, "units": "raw" },
+        { "name": "ip8_CPU", "bits": 16, "units": "raw" },
+        { "name": "pp8_CPU", "bits": 16, "units": "raw" },
+        { "name": "v9_PL", "bits": 16, "units": "raw" },
+        { "name": "i9_PL", "bits": 16, "units": "raw" },
+        { "name": "p9_PL", "bits": 16, "units": "raw" },
+        { "name": "vp9_PL", "bits": 16, "units": "raw" },
+        { "name": "ip9_PL", "bits": 16, "units": "raw" },
+        { "name": "pp9_PL", "bits": 16, "units": "raw" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net10.0-windows to match FskDemod (it references WinForms/VE3NEA.Dsp). -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>VE3NEA.SkyTlm.Tests</RootNamespace>
+    <AssemblyName>VE3NEA.SkyTlm.Tests</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- FluentAssertions 7.x is the last Apache-2.0 release (v8+ is commercial). -->
+    <PackageReference Include="FluentAssertions" Version="7.0.0" />
+    <PackageReference Include="FsCheck.Xunit" Version="2.16.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The pipeline + internal DSP stages under test live in the library (InternalsVisibleTo). The WAV
+         reader (WavIqReader) and the corpus param-sidecar reader also live there now (VE3NEA.SkyTlm.IO). -->
+    <ProjectReference Include="..\VE3NEA.SkyTlm\VE3NEA.SkyTlm.csproj" />
+  </ItemGroup>
+
+</Project>

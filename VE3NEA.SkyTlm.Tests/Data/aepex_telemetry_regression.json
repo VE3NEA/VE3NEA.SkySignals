@@ -1,0 +1,18 @@
+{
+  "description": "AEPEX telemetry decode regression: a real CRC-OK off-air frame (captured from a SkyRoof recording via the headless StreamingPipeline decoder) pinned to a few expected aepex_sw_stat fields. Guards the C2 ksy->JSON converter's CCSDS-dispatch path (tools/ksy_to_json.py -> Telemetry/Definitions/68506_AEPEX.json) + TelemetryParser. The pinned fields prove the full CCSDS chain: 16-byte skip past AX.25 header + pid, the 6-byte primary-header bitstruct, dispatch on the b10 application_process_id (=1 -> aepex_sw_stat), the conditional secondary header (if secondary_header_flag), and the big-endian payload ints + bit flags.",
+  "frames": [
+    {
+      "norad": 68506, "sat": "AEPEX", "recording": "2026-06-07_14_46_19 @37.35s",
+      "hex": "9882A6A040404082A0B04040404103F00801EFD000ED31B87945001002E90000003002B9040A040A05010003000120B3030101000000000000010000000000000100000000000000000000000000EA900000EA91000059370000593800009D1A00009D1B000000D0000000D100000000000000000000072708170C5008F304E301C300C301430AD5080208AE009308B6006D07210A4B08030728010D055E00A7038D0035000000530002000200020002000200020002000200000200AE00A77742060466036403E40F070100FFCED8F9019E01000073FD3CFFFF804FFFF59F930001FF1AD901EC1C120B527F90D506B7028F4416001C2FD00000000000000000A2691403",
+      "layout": "aepex_sw_stat",
+      "expect": {
+        "sec_time_stamp_seconds": "834173253",
+        "sw_cmd_recv_count": "745",
+        "sw_cmd_succ_count": "697",
+        "sw_eps_pwr_state_uhf": "ON",
+        "sw_mode_system_mode": "1",
+        "sw_time_since_rx": "73907"
+      }
+    }
+  ]
+}

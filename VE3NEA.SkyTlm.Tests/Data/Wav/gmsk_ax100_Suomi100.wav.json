@@ -1,0 +1,5 @@
+{
+  "baud": 9600,
+  "modulation": "GMSK",
+  "framing": "AX100ASM"
+}

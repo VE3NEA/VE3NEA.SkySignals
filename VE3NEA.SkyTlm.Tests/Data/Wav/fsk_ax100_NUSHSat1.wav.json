@@ -1,0 +1,6 @@
+{
+  "baud": 1200,
+  "modulation": "FSK",
+  "framing": "AX100ASM",
+  "deviation": 575
+}

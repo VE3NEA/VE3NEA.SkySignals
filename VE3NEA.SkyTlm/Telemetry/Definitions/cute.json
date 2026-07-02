@@ -1,0 +1,1035 @@
+{
+  "id": "cute",
+  "norad": [49263],
+  "bitOrder": "msb",
+  "endian": "be",
+  "dispatch": {
+    "field": "application_process_id",
+    "cases": {
+      "86": "cute_bct_soh_t",
+      "511": "cute_payload"
+    }
+  },
+  "layouts": {
+    "_header": {
+      "fields": [
+        {
+          "name": "ccsds_version",
+          "bits": 3,
+          "hidden": true,
+          "skip": 16
+        },
+        {
+          "name": "packet_type",
+          "type": "bool",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "secondary_header_flag",
+          "type": "bool",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "is_stored_data",
+          "type": "bool",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "application_process_id",
+          "bits": 10,
+          "hidden": true
+        },
+        {
+          "name": "grouping_flag",
+          "bits": 2,
+          "hidden": true
+        },
+        {
+          "name": "sequence_count",
+          "bits": 14,
+          "hidden": true
+        },
+        {
+          "name": "packet_length",
+          "bits": 16,
+          "hidden": true
+        },
+        {
+          "name": "secondary_header",
+          "if": "secondary_header_flag",
+          "fields": [
+            {
+              "name": "sec_time_stamp_seconds",
+              "bits": 32
+            },
+            {
+              "name": "sec_sub_seconds",
+              "bits": 8
+            },
+            {
+              "name": "sec_padding",
+              "bits": 8
+            }
+          ]
+        }
+      ]
+    },
+    "cute_bct_soh_t": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "soh_l0_wdt_2sec_cnt",
+          "bits": 3
+        },
+        {
+          "name": "soh_l0_reset_armed",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "soh_l0_wdt_stat",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "soh_l0_wdt_en",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "soh_l0_table_select",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "soh_l0_boot_relay",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "soh_l0_l0_acpt_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_l0_rjct_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_hw_sec_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_padding_0",
+          "bits": 64
+        },
+        {
+          "name": "soh_l0_time_tag",
+          "bits": 32
+        },
+        {
+          "name": "soh_l0_padding_1",
+          "bits": 32
+        },
+        {
+          "name": "soh_l0_pld_tlm_ack_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_pld_cmd_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_pld_tlm_to_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_pld_tlm_nak_cnt",
+          "bits": 8
+        },
+        {
+          "name": "soh_l0_spare_end",
+          "bits": 64
+        },
+        {
+          "name": "soh_command_tlm_cmd_status",
+          "bits": 8
+        },
+        {
+          "name": "soh_command_tlm_realtime_cmd_accept_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_command_tlm_realtime_cmd_reject_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_command_tlm_stored_cmd_accept_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_command_tlm_stored_cmd_reject_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_command_tlm_macros_executing_pack1",
+          "bits": 8
+        },
+        {
+          "name": "soh_command_tlm_macros_executing_pack2",
+          "bits": 8
+        },
+        {
+          "name": "soh_general_scrub_status_overall",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "soh_general_image_booted",
+          "bits": 8
+        },
+        {
+          "name": "soh_general_image_auto_failover",
+          "bits": 8
+        },
+        {
+          "name": "soh_time_tai_seconds",
+          "bits": 32
+        },
+        {
+          "name": "soh_time_time_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_refs_position_wrt_eci1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_refs_position_wrt_eci2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_refs_position_wrt_eci3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_refs_velocity_wrt_eci1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_refs_velocity_wrt_eci2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_refs_velocity_wrt_eci3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_refs_refs_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_det_q_body_wrt_eci1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_q_body_wrt_eci2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_q_body_wrt_eci3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_q_body_wrt_eci4",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_body_rate1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_body_rate2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_body_rate3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_det_bad_att_timer",
+          "bits": 32
+        },
+        {
+          "name": "soh_att_det_bad_rate_timer",
+          "bits": 32
+        },
+        {
+          "name": "soh_att_det_reinit_count",
+          "bits": 32
+        },
+        {
+          "name": "soh_att_det_attitude_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_det_meas_att_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_det_meas_rate_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_det_tracker_used",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_cmd_hr_cycle_safe_mode",
+          "bits": 32
+        },
+        {
+          "name": "soh_att_cmd_rotisserie_rate",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_cmd_adcs_mode",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_cmd_safe_mode_reason",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_cmd_recommend_sun_point",
+          "bits": 8
+        },
+        {
+          "name": "soh_rw_drive_filtered_speed_rpm1",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_rw_drive_filtered_speed_rpm2",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_rw_drive_filtered_speed_rpm3",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_tracker_operating_mode",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker_star_id_step",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker_att_status",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker_num_attitude_stars",
+          "bits": 8
+        },
+        {
+          "name": "soh_att_ctrl_position_error1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_ctrl_position_error2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_ctrl_position_error3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "soh_att_ctrl_time_into_search",
+          "bits": 16
+        },
+        {
+          "name": "soh_att_ctrl_wait_timer",
+          "bits": 16
+        },
+        {
+          "name": "soh_att_ctrl_sun_point_angle_error",
+          "bits": 16
+        },
+        {
+          "name": "soh_att_ctrl_sun_point_state",
+          "bits": 8
+        },
+        {
+          "name": "soh_momentum_momentum_vector_body1",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_momentum_momentum_vector_body2",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_momentum_momentum_vector_body3",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_momentum_duty_cycle1",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "soh_momentum_duty_cycle2",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "soh_momentum_duty_cycle3",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "soh_momentum_torque_rod_mode1",
+          "bits": 8
+        },
+        {
+          "name": "soh_momentum_torque_rod_mode2",
+          "bits": 8
+        },
+        {
+          "name": "soh_momentum_torque_rod_mode3",
+          "bits": 8
+        },
+        {
+          "name": "soh_momentum_mag_source_used",
+          "bits": 8
+        },
+        {
+          "name": "soh_momentum_momentum_vector_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_css_sun_vector_body1",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_css_sun_vector_body2",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_css_sun_vector_body3",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_css_sun_vector_status",
+          "bits": 8
+        },
+        {
+          "name": "soh_css_sun_sensor_used",
+          "bits": 8
+        },
+        {
+          "name": "soh_mag_mag_vector_body1",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_mag_mag_vector_body2",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_mag_mag_vector_body3",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_mag_mag_vector_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_imu_new_packet_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_imu_imu_vector_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_clock_sync_hr_run_count",
+          "bits": 32
+        },
+        {
+          "name": "soh_clock_sync_hr_exec_time_ms",
+          "bits": 8
+        },
+        {
+          "name": "soh_analogs_box1_temp",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_analogs_bus_voltage",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_analogs_battery_voltage",
+          "bits": 16
+        },
+        {
+          "name": "soh_analogs_battery_current",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "soh_tracker2_operating_mode",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker2_star_id_step",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker2_att_status",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker2_num_attitude_stars",
+          "bits": 8
+        },
+        {
+          "name": "soh_gps_gps_lock_count",
+          "bits": 16
+        },
+        {
+          "name": "soh_gps_gps_valid",
+          "bits": 8
+        },
+        {
+          "name": "soh_gps_gps_enable",
+          "bits": 8
+        },
+        {
+          "name": "soh_event_check_latched_resp_fire_pack1",
+          "bits": 8
+        },
+        {
+          "name": "soh_event_check_latched_resp_fire_pack2",
+          "bits": 8
+        },
+        {
+          "name": "soh_radio_sd_minute_cur",
+          "bits": 32
+        },
+        {
+          "name": "soh_radio_sd_percent_used_total",
+          "bits": 8
+        },
+        {
+          "name": "soh_radio_sd_ok",
+          "bits": 8
+        },
+        {
+          "name": "soh_radio_sd_fault_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_radio_sdr_tx_tx_frames",
+          "bits": 32
+        },
+        {
+          "name": "soh_radio_sdr_tx_temp",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "soh_radio_sdr_tx_comm_error",
+          "bits": 8
+        },
+        {
+          "name": "soh_radio_sq_channel",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "soh_radio_sq_trap_count",
+          "bits": 8
+        },
+        {
+          "name": "soh_radio_sq_temp",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker_ctrl_aid_status1",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker_ctrl_aid_status2",
+          "bits": 8
+        },
+        {
+          "name": "soh_tracker_ctrl_star_id_status",
+          "bits": 8
+        }
+      ]
+    },
+    "cute_payload": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "pld_ccsds_version",
+          "bits": 3,
+          "hidden": true
+        },
+        {
+          "name": "pld_packet_type",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "pld_secondary_header_flag",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "payload_apid",
+          "bits": 11
+        },
+        {
+          "name": "pld_sequence_flags",
+          "bits": 2,
+          "hidden": true
+        },
+        {
+          "name": "pld_sequence_counter",
+          "bits": 14,
+          "hidden": true
+        },
+        {
+          "name": "pld_packet_length",
+          "bits": 16,
+          "hidden": true
+        },
+        {
+          "name": "sw_stat",
+          "if": "payload_apid == 1",
+          "fields": [
+            {
+              "name": "shCoarse",
+              "bits": 32
+            },
+            {
+              "name": "shFine",
+              "bits": 16
+            },
+            {
+              "name": "pldSwVerMaj",
+              "bits": 8
+            },
+            {
+              "name": "pldSwVerMin",
+              "bits": 8
+            },
+            {
+              "name": "pldSwVerPatch",
+              "bits": 8
+            },
+            {
+              "name": "sdState_pad",
+              "bits": 6,
+              "hidden": true
+            },
+            {
+              "name": "sdCard1",
+              "type": "bool",
+              "bits": 1,
+              "enum": { "0": "DEAD", "1": "ALIVE" }
+            },
+            {
+              "name": "sdCard0",
+              "type": "bool",
+              "bits": 1,
+              "enum": { "0": "DEAD", "1": "ALIVE" }
+            },
+            {
+              "name": "zynqTemp",
+              "bits": 16,
+              "expr": "(x - 35520.15604681404) / 130.039011703511",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "zynqVccInt",
+              "bits": 16,
+              "expr": "x / 21739.1304347826",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "zynqVccAux",
+              "bits": 16,
+              "expr": "x / 21739.1304347826",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "zynqVccBram",
+              "bits": 16,
+              "expr": "x / 21739.1304347826",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "zynqVccPint",
+              "bits": 16,
+              "expr": "x / 21739.1304347826",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "zynqVccPAux",
+              "bits": 16,
+              "expr": "x / 21739.1304347826",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "zynq_vccPdr0",
+              "bits": 16,
+              "expr": "x / 21739.1304347826",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "zynqStatus",
+              "bits": 8
+            },
+            {
+              "name": "spare8",
+              "bits": 8,
+              "hidden": true
+            },
+            {
+              "name": "procTemp",
+              "bits": 16,
+              "type": "int",
+              "expr": "x / 256.0",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "ccdP5",
+              "bits": 16,
+              "expr": "x / 620.4551659097114",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "ccdP15",
+              "bits": 16,
+              "expr": "x / 223.5870972357927",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "ccdP32",
+              "bits": 16,
+              "expr": "x / 112.8099029045165",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "ccdN5",
+              "bits": 16,
+              "expr": "(x - 2305.604898505892) / 318.9131440052302",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "spare16",
+              "bits": 16,
+              "hidden": true
+            },
+            {
+              "name": "cmdRecvCount",
+              "bits": 16
+            },
+            {
+              "name": "cmdRjctCount",
+              "bits": 16
+            },
+            {
+              "name": "cmdSuccCount",
+              "bits": 16
+            },
+            {
+              "name": "cmdSuccOp",
+              "bits": 16,
+              "enum": {
+                "0": "NOOP", "1": "ARM", "2": "CMD_RST_STATS", "3": "CMD_XSUM",
+                "4": "CMD_ECHO_STATE", "48": "LOG_ROUTE", "49": "LOG_STATE",
+                "50": "LOG_RST_STATS", "52": "LOG_RESET_READ", "53": "LOG_ISSUE",
+                "54": "LOG_DUMP_INFO", "55": "LOG_SET_PUBLISH", "80": "MEM_DUMP",
+                "81": "MEM_LOAD", "82": "MEM_ERASE", "83": "MEM_XSUM", "84": "MEM_ABORT",
+                "85": "MEM_RESET", "86": "MEM_LOAD_DWORD", "87": "MEM_LOAD_WORD",
+                "88": "MEM_LOAD_BYTE", "96": "PKT_ISSUE", "97": "PKT_SET_RATE",
+                "98": "PKT_SET_STREAM", "99": "PKT_SET_PRIORITY", "100": "PKT_QUERY_APID",
+                "101": "PKT_SET_DELAY", "112": "TIME_RESET", "128": "TBL_DUMP",
+                "129": "TBL_LOAD", "130": "TBL_LOAD_START", "131": "TBL_COMMIT",
+                "132": "TBL_ABORT", "133": "TBL_VERIFY", "144": "OS_RESET",
+                "145": "OS_SEND_HK", "160": "FS_MKDIR", "161": "FS_RMDIR",
+                "162": "FS_RENAME", "163": "FS_DIRLIST", "164": "FS_RM", "165": "FS_DUMP",
+                "166": "FS_DEV_STAT", "167": "FS_LOAD", "168": "FS_COMMIT",
+                "169": "FS_FORMAT", "170": "FS_COPY", "171": "FS_SD_STATE", "176": "TEC_ENA",
+                "177": "TEC_DIS", "178": "TEC_SET_SLEW_RATE", "179": "TEC_SET_TEMP",
+                "180": "TEC_READ_REG", "181": "TEC_WRITE_REG", "182": "TEC_WRITE_DAC",
+                "184": "TEC_SELECT_RTC", "192": "CCD_EXPOSE", "193": "CCD_ABORT",
+                "194": "CCD_SHUTTER_OVER", "195": "CCD_SHUTTER_OPEN", "196": "CCD_SHUTTER_CLOSE",
+                "197": "CCD_SET_ID", "198": "CCD_COPY_IMG_SLOT", "199": "CCD_COPY_REF_SLOT",
+                "200": "CCD_ADD_REF", "201": "CCD_MULT_REF", "202": "CCD_LOAD_REF",
+                "203": "CCD_REPLAY", "204": "CCD_DUMP", "205": "CCD_ENA", "206": "CCD_DIS",
+                "207": "CCD_SET_DAC", "208": "IMAGE_PROCESS", "209": "IMAGE_ABORT",
+                "224": "MODE_STANDBY", "225": "MODE_SCIENCE", "240": "CCD_STORE_REF"
+              }
+            },
+            {
+              "name": "cmdRjctOp",
+              "bits": 16,
+              "enum": {
+                "0": "NOOP", "1": "ARM", "2": "CMD_RST_STATS", "3": "CMD_XSUM",
+                "4": "CMD_ECHO_STATE", "48": "LOG_ROUTE", "49": "LOG_STATE",
+                "50": "LOG_RST_STATS", "52": "LOG_RESET_READ", "53": "LOG_ISSUE",
+                "54": "LOG_DUMP_INFO", "55": "LOG_SET_PUBLISH", "80": "MEM_DUMP",
+                "81": "MEM_LOAD", "82": "MEM_ERASE", "83": "MEM_XSUM", "84": "MEM_ABORT",
+                "85": "MEM_RESET", "86": "MEM_LOAD_DWORD", "87": "MEM_LOAD_WORD",
+                "88": "MEM_LOAD_BYTE", "96": "PKT_ISSUE", "97": "PKT_SET_RATE",
+                "98": "PKT_SET_STREAM", "99": "PKT_SET_PRIORITY", "100": "PKT_QUERY_APID",
+                "101": "PKT_SET_DELAY", "112": "TIME_RESET", "128": "TBL_DUMP",
+                "129": "TBL_LOAD", "130": "TBL_LOAD_START", "131": "TBL_COMMIT",
+                "132": "TBL_ABORT", "133": "TBL_VERIFY", "144": "OS_RESET",
+                "145": "OS_SEND_HK", "160": "FS_MKDIR", "161": "FS_RMDIR",
+                "162": "FS_RENAME", "163": "FS_DIRLIST", "164": "FS_RM", "165": "FS_DUMP",
+                "166": "FS_DEV_STAT", "167": "FS_LOAD", "168": "FS_COMMIT",
+                "169": "FS_FORMAT", "170": "FS_COPY", "171": "FS_SD_STATE", "176": "TEC_ENA",
+                "177": "TEC_DIS", "178": "TEC_SET_SLEW_RATE", "179": "TEC_SET_TEMP",
+                "180": "TEC_READ_REG", "181": "TEC_WRITE_REG", "182": "TEC_WRITE_DAC",
+                "184": "TEC_SELECT_RTC", "192": "CCD_EXPOSE", "193": "CCD_ABORT",
+                "194": "CCD_SHUTTER_OVER", "195": "CCD_SHUTTER_OPEN", "196": "CCD_SHUTTER_CLOSE",
+                "197": "CCD_SET_ID", "198": "CCD_COPY_IMG_SLOT", "199": "CCD_COPY_REF_SLOT",
+                "200": "CCD_ADD_REF", "201": "CCD_MULT_REF", "202": "CCD_LOAD_REF",
+                "203": "CCD_REPLAY", "204": "CCD_DUMP", "205": "CCD_ENA", "206": "CCD_DIS",
+                "207": "CCD_SET_DAC", "208": "IMAGE_PROCESS", "209": "IMAGE_ABORT",
+                "224": "MODE_STANDBY", "225": "MODE_SCIENCE", "240": "CCD_STORE_REF"
+              }
+            },
+            {
+              "name": "cmdFailCode",
+              "bits": 8,
+              "enum": {
+                "0": "SUCCESS", "1": "MODE", "2": "ARM", "3": "SOURCE", "4": "OPCODE",
+                "5": "METHOD", "6": "LENGTH", "7": "RANGE", "8": "CHECKSUM", "9": "PKT_TYPE"
+              }
+            },
+            {
+              "name": "armState_pad",
+              "bits": 6,
+              "hidden": true
+            },
+            {
+              "name": "armSc",
+              "type": "bool",
+              "bits": 1,
+              "enum": { "0": "OFF", "1": "ARMED" }
+            },
+            {
+              "name": "armDbg",
+              "type": "bool",
+              "bits": 1,
+              "enum": { "0": "OFF", "1": "ARMED" }
+            },
+            {
+              "name": "logWriteCount",
+              "bits": 16
+            },
+            {
+              "name": "logDropCount",
+              "bits": 16
+            },
+            {
+              "name": "ccdEnaState",
+              "bits": 8,
+              "enum": { "0": "DIS", "1": "ENA" }
+            },
+            {
+              "name": "ccdCtrlState",
+              "bits": 8,
+              "enum": {
+                "0": "IDLE", "1": "ERASE", "2": "OPEN", "3": "EXPOSE", "4": "READOUT",
+                "5": "REPLAY", "6": "PROCESS", "7": "ENA", "8": "DIS"
+              }
+            },
+            {
+              "name": "ccdShutter",
+              "bits": 8,
+              "enum": { "0": "CLOSED", "1": "OPEN" }
+            },
+            {
+              "name": "shutterOverride",
+              "bits": 8,
+              "enum": { "0": "DIS", "1": "ENA" }
+            },
+            {
+              "name": "frameId",
+              "bits": 32
+            },
+            {
+              "name": "osCpuUsage",
+              "bits": 16
+            },
+            {
+              "name": "osCpuMax",
+              "bits": 16
+            },
+            {
+              "name": "timePPSCount",
+              "bits": 16
+            },
+            {
+              "name": "timeRecvCount",
+              "bits": 16
+            },
+            {
+              "name": "timeMissCount",
+              "bits": 16
+            },
+            {
+              "name": "fswMode",
+              "bits": 8,
+              "enum": { "0": "STANDBY", "1": "SCIENCE" }
+            },
+            {
+              "name": "tecState",
+              "bits": 8,
+              "enum": { "0": "DIS", "1": "ENA" }
+            },
+            {
+              "name": "tecSlewRate",
+              "type": "float",
+              "bits": 32,
+              "decimals": 3
+            },
+            {
+              "name": "tecSetpoint",
+              "type": "float",
+              "bits": 32,
+              "decimals": 3
+            },
+            {
+              "name": "tecCcdRtdTemp",
+              "bits": 16,
+              "expr": "(x - 3276.7) / 12.615295",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "tecScRtd5Temp",
+              "bits": 16,
+              "expr": "(x - 3276.7) / 12.615295",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "tecScRtd4Temp",
+              "bits": 16,
+              "expr": "(x - 3276.7) / 12.615295",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "tecScRtd3Temp",
+              "bits": 16,
+              "expr": "(x - 3276.7) / 12.615295",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "tecScRtd2Temp",
+              "bits": 16,
+              "expr": "(x - 3276.7) / 12.615295",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "tecScRtd1Temp",
+              "bits": 16,
+              "expr": "(x - 3276.7) / 12.615295",
+              "decimals": 2,
+              "units": "°C"
+            },
+            {
+              "name": "tecShutter",
+              "bits": 16,
+              "expr": "x / 13106.8",
+              "decimals": 3
+            },
+            {
+              "name": "tecVolt",
+              "bits": 16,
+              "expr": "x / 5234.636746976763",
+              "decimals": 3,
+              "units": "V"
+            },
+            {
+              "name": "tecAvgCurr",
+              "bits": 16
+            },
+            {
+              "name": "tecCurr",
+              "bits": 16
+            },
+            {
+              "name": "imgState",
+              "bits": 8
+            },
+            {
+              "name": "imgCurrProcType",
+              "bits": 8,
+              "enum": {
+                "0": "SKIP", "1": "RAW", "2": "BIN2D", "3": "BIAS", "4": "DARK",
+                "5": "OUTSPEC", "6": "SPEC1D", "7": "TRIM2D", "8": "XDISP"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

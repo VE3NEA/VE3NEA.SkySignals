@@ -1,0 +1,41 @@
+{
+  "description": "CUTE (NORAD 49263) telemetry decode regression: real CRC-OK off-air frames captured from 2026-06-30_14_06_24_CUTE.iq.wav via the headless StreamingPipeline decoder (FSK 9600 Bd, dev 4800, AX.25 G3RUH), pinned to expected fields. Guards the CCSDS-over-AX.25 dispatch in Telemetry/Definitions/cute.json and the TelemetryParser: 16-byte AX.25 skip, the 6-byte primary header bitstruct, dispatch on the 10-bit application_process_id (86 -> cute_bct_soh_t, 511 -> cute_payload), the conditional outer secondary header, the nested inner CCSDS header, the inner-APID gate (if payload_apid==1 -> the sw_stat body), and the big-endian scale/expr calibrations + enums of cute_pld_sw_stat (Zynq/CCD rails, opcode enums, float32 TEC fields).",
+  "frames": [
+    {
+      "norad": 49263,
+      "sat": "CUTE",
+      "type": 86,
+      "layout": "cute_bct_soh_t",
+      "hex": "8486A84040406086AAA88A4040E103F00856DD3600E81528D0FE02000500002DBEEFDEADDEADBEEFE671F6F3BEEFDEADA53B00000000000000000000001900C3020008000000F931CD3101FB9973EB0ACB2C7710082561F6DAFE0D4B04B05BCB0AD73A012569BF8C285D52CABBB91EB550BF3F7D000025C7FFFCD1E7000080AE0000117D0000000000000016010001FF0000000100AF0101000F4DF9560B830202020000007347000027D5FFFF5E2A0001001B2D9307000F000A000706213C0303030501E0000000E99801012E62178D0331013201000636650708284AFA17D8FC3202010200000000010008FFFFFFFF0000CE0000000F2201410005010101",
+      "expect": {
+        "soh_l0_wdt_en": "ON",
+        "soh_l0_boot_relay": "ON",
+        "soh_l0_reset_armed": "OFF",
+        "soh_time_time_valid": "1",
+        "soh_refs_refs_valid": "1",
+        "soh_att_det_attitude_valid": "1",
+        "soh_command_tlm_realtime_cmd_accept_count": "25",
+        "soh_command_tlm_stored_cmd_accept_count": "195"
+      }
+    },
+    {
+      "norad": 49263,
+      "sat": "CUTE",
+      "type": 511,
+      "layout": "cute_payload",
+      "hex": "8486A84040406086AAA88A4040E103F009FFDD8000771528D19700000801FBD3006B31D6C33D010C02000103975C56959841567A5654982D7E6001010D200BCE0D000DF9028C0000002C0000002C00610000000000350000010000000000000000A901D73C1B3C19006F0100BDCCCCCD412000000CAC0CED0D0A0C950C850C7D3E41000415ED00040000000018F4",
+      "expect": {
+        "payload_apid": "1",
+        "pldSwVerMaj": "2",
+        "pldSwVerMin": "0",
+        "pldSwVerPatch": "1",
+        "zynqVccInt": "1.020",
+        "zynqVccAux": "1.793",
+        "ccdP5": "4.871",
+        "ccdP32": "31.708",
+        "cmdSuccOp": "PKT_SET_RATE",
+        "fswMode": "SCIENCE"
+      }
+    }
+  ]
+}

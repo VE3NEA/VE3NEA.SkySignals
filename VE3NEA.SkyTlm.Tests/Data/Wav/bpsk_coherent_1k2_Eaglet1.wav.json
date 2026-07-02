@@ -1,0 +1,6 @@
+{
+  "baud": 1200,
+  "modulation": "BPSK",
+  "framing": "AX25G3RUH",
+  "differential": false
+}

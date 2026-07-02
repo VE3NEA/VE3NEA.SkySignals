@@ -1,0 +1,104 @@
+{
+  "description": "USP telemetry decode regression: real CRC-OK off-air frames captured from SkyRoof recordings via the headless decoder, each with a few expected uhf_beacon (message 0x4246) fields. Guards the construct->JSON converter output (Telemetry/Definitions/usp.json) + TelemetryParser against drift. UmKA-1 is included: it is USP-framed, which is why the old bespoke byte-0 decoder produced garbage (31743 C, 1970 timestamps). Includes a tm_adcs_beacon (0xF210) frame validated against the independent SatsDecoder construct oracle, which pins the UNIXTimestampUsAdapter 8-byte Time field (the converter previously dropped it, shifting every subsequent field).",
+  "frames": [
+    {
+      "norad": 57172,
+      "sat": "UmKA-1",
+      "recording": "2026-04-19_12_19_50 @81.69s",
+      "hex": "A46688888C4060A4A66860A6406300F046420200010019000504FF7B2215251EDDFEE4699C1D03008025000026004C1F0121DE040001002E001F043014320FCB030000AC030D010000290000000000F4FF0C000C00E7FF002008001C1F63940F000170A45A9604",
+      "layout": "uhf_beacon",
+      "expect": {
+        "Time": "2026-04-19 16:12:13 UTC",
+        "UpTime": "204188",
+        "RxBitrate": "9600",
+        "InputVoltage": "8012"
+      }
+    },
+    {
+      "norad": 57187,
+      "sat": "Svyatobor-1",
+      "recording": "2026-06-18_22_23_01 @28.28s",
+      "hex": "A464829C8C4060A4A66C60A6406300F0464202000100190000FDFF86220E820EE3A7346A5C480100600900002800F81E0021ED0400010030003E08CE14081300003C009701DC0000002F0000000000000071FF71FF5EFF90FF00400000DC1EB44801002E43965A8704",
+      "layout": "uhf_beacon",
+      "expect": {
+        "Time": "2026-06-19 02:22:27 UTC",
+        "UpTime": "84060",
+        "RxBitrate": "2400",
+        "InputVoltage": "7928"
+      }
+    },
+    {
+      "norad": 57182,
+      "sat": "Monitor-4",
+      "recording": "2026-06-18_23_36_58 @113.06s",
+      "hex": "A464829C8C4060A4A66A6EA6406300F04642020001001900F9F7FF7B2308C90ECDB9346A087F0000802500002800EC1E0021ED0400010030002811AF15AC150100EF0000003D0000002F00000000000000DAFDAFFD7DFDAFFD00400000D01E2B7F0000587B955AA704",
+      "layout": "uhf_beacon",
+      "expect": {
+        "Time": "2026-06-19 03:38:53 UTC",
+        "UpTime": "32520",
+        "RxBitrate": "9600",
+        "InputVoltage": "7916"
+      }
+    },
+    {
+      "norad": 67290,
+      "sat": "SAKHACUBE-CHOLBON",
+      "recording": "2026-06-06_23_02_04 @9.15s",
+      "hex": "A460A2848E4060A4A66270A6406300F04642020001001900F8F6FF6F210E000E32DF246A78A90800600900002600CC1E0021DE040001002E00E803470035008C0318000F00DCFF0000240000000000FAFD1FFE2CFEBBFD30200000B41EC0AB080048969D5A9B04",
+      "layout": "uhf_beacon",
+      "expect": {
+        "Time": "2026-06-07 03:02:10 UTC",
+        "UpTime": "567672",
+        "RxBitrate": "2400",
+        "InputVoltage": "7884"
+      }
+    },
+    {
+      "norad": 98449,
+      "sat": "Luca",
+      "recording": "2026-06-06_23_28_44 @138.84s",
+      "hex": "A464829C8C4060A4A67260A6406300F04642020001001900F700FF792119570E1AD9246A82700000802500002800D01E0021ED040001003000070009000F00000002000100CEFF0000300000000000000018FA95FB5DFA95FA00400000EC1EA1700000ED6C955A9704",
+      "layout": "uhf_beacon",
+      "expect": {
+        "Time": "2026-06-07 02:36:10 UTC",
+        "UpTime": "28802",
+        "RxBitrate": "9600",
+        "InputVoltage": "7888"
+      }
+    },
+    {
+      "norad": 61772,
+      "sat": "HyperView-1G",
+      "recording": "2026-06-18_10_11_55 (RS-66S) @63.20s",
+      "hex": "A464829C8C4060A4A66C6CA6406500F046420300010019000200FF77210EAC0EE9FC336AD4A10903600900002800081F00",
+      "layout": "uhf_beacon",
+      "expect": {
+        "Time": "2026-06-18 14:12:57 UTC",
+        "UpTime": "50962900",
+        "RxBitrate": "2400",
+        "InputVoltage": "7944"
+      }
+    },
+    {
+      "norad": 57172,
+      "sat": "UmKA-1",
+      "recording": "frames_20260629.txt @21:33:06 (tm_adcs_beacon)",
+      "hex": "A46688888C4060A4A66860A6406300F010F2050001007D00FC2B698E6E550600D2840000921C5B3E7830A43DB1B778BFAEDE7EBD66246C3FEC4F5B40106907C083A4E9C7BE894446BE9AE2553FF15BABBEDD09B4BFB0447640B5B6A33E837B2D483B1A4C353F53DA1FBFAFAFA83E7A961FC0E134CC3E0FFA05C085AF2F2B42EA5089C212B1F548080A000000000000000000C2EFEF",
+      "layout": "tm_adcs_beacon",
+      "expect": {
+        "Time": "2026-06-30 01:33:04 UTC",
+        "uptime": "34002",
+        "eci_quat_w": "0.213976",
+        "eci_AV_x": "0.92243",
+        "eci_policy": "Triad",
+        "latitude": "42.796566",
+        "longitude": "-68.658035",
+        "altitude": "503176.5625",
+        "ballistics_policy": "Propagator",
+        "adcs_task_type": "None",
+        "wheel_rpm_x_plus": "0",
+        "eci_invalid": "ON"
+      }
+    }
+  ]
+}

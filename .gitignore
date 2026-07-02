@@ -1,0 +1,18 @@
+# Build output
+bin/
+obj/
+
+# Test artifacts
+TestResults/
+*.trx
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# Session journal
+SESSION.md

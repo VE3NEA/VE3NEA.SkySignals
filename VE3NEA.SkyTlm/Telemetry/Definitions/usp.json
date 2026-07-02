@@ -1,0 +1,4093 @@
+{
+  "id": "usp",
+  "norad": [57172, 57187, 61772, 57182, 98449, 67290, 57217],
+  "bitOrder": "msb",
+  "endian": "le",
+  "dispatch": {
+    "field": "message",
+    "cases": {
+      "14": "regular_common",
+      "15": "regular_x",
+      "16": "regular_y",
+      "17": "regular_z",
+      "128": "psu_regular0",
+      "129": "psu_regular1",
+      "130": "psu_regular2",
+      "131": "psu_regular3",
+      "132": "psu_regular4",
+      "133": "psu_regular5",
+      "280": "ack",
+      "281": "nack",
+      "282": "Info",
+      "1088": "regular_temperature",
+      "2560": "get_Payload_telemetry",
+      "2832": "ratesens_regular_x",
+      "2833": "ratesens_regular_y",
+      "2834": "ratesens_regular_z",
+      "2835": "magnsens_regular_x",
+      "2836": "magnsens_regular_y",
+      "2837": "magnsens_regular_z",
+      "2849": "Vector_X",
+      "2850": "Vector_Y",
+      "2851": "Vector_Z",
+      "2852": "Brightness",
+      "3059": "common_telemetry",
+      "16897": "vhf_settings",
+      "16918": "beacon",
+      "16919": "extended_beacon",
+      "16922": "time_request",
+      "16966": "uhf_beacon",
+      "21552": "detector_transmits",
+      "21561": "data_massive_addr_rpl",
+      "21562": "data_event_addr_rpl",
+      "21563": "data_monitor_addr_rpl",
+      "21564": "data_massive_rpl",
+      "21565": "data_event_rpl",
+      "21566": "data_monitor_rpl",
+      "43985": "get_Payload_FW_MSG",
+      "43988": "no_monitor_data",
+      "43989": "no_event_data",
+      "43990": "no_massive_data",
+      "43993": "compl_monitor_data",
+      "43994": "compl_event_data",
+      "43995": "compl_massive_data",
+      "43997": "get_Payload_CURRENT_CONFIG",
+      "56865": "regular_telemetry",
+      "56866": "extended_telemetry",
+      "56868": "acknowledge",
+      "56869": "overcurrent",
+      "56871": "switch_status",
+      "57125": "regular_telemetry6u",
+      "60705": "ps_regular_telemetry_5ch",
+      "61956": "tm_adcs_beacon_old",
+      "61968": "tm_adcs_beacon",
+      "61970": "tm_adcs_beacon_6_wheels",
+      "64289": "ch_adc_X1",
+      "64290": "ch_adc_X2",
+      "64291": "ch_adc_Y1",
+      "64292": "ch_adc_Y2",
+      "64545": "temp_cur_X1",
+      "64546": "temp_cur_X2",
+      "64547": "temp_cur_Y1",
+      "64548": "temp_cur_Y2",
+      "65505": "version_sw"
+    }
+  },
+  "layouts": {
+    "_header": {
+      "fields": [
+        {
+          "name": "message",
+          "bits": 16,
+          "endian": "le",
+          "skip": 16,
+          "hidden": true
+        },
+        {
+          "name": "sender",
+          "bits": 16,
+          "endian": "le",
+          "hidden": true
+        },
+        {
+          "name": "receiver",
+          "bits": 16,
+          "endian": "le",
+          "hidden": true
+        },
+        {
+          "name": "size",
+          "bits": 16,
+          "endian": "le",
+          "hidden": true
+        }
+      ]
+    },
+    "regular_common": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "regular_x": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "regular_y": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "regular_z": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "psu_regular0": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "psu_regular1": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "psu_regular2": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        }
+      ]
+    },
+    "psu_regular3": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "psu_regular4": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "psu_regular5": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "current",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "voltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "voltage_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "current_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "ack": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "value",
+          "bits": 16,
+          "endian": "le"
+        }
+      ]
+    },
+    "nack": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "value",
+          "bits": 16,
+          "endian": "le"
+        }
+      ]
+    },
+    "Info": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "SW_VER",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "SERIAL",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CANTEL",
+          "bits": 8,
+          "enum": {
+            "0": "OFF",
+            "1": "SUN",
+            "2": "ADC",
+            "3": "ADC-compressed"
+          }
+        },
+        {
+          "name": "UARTTEL",
+          "bits": 8
+        },
+        {
+          "name": "ADC_REF",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "THRESHOLD",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "SET_STAT",
+          "bits": 32,
+          "endian": "le",
+          "enum": {
+            "0": "MEM",
+            "134218240": "DEFAULT"
+          }
+        },
+        {
+          "name": "LM70_STAT",
+          "bits": 32,
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "VECT_STAT",
+          "bits": 32,
+          "endian": "le"
+        }
+      ]
+    },
+    "regular_temperature": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "temperature0",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "temperature1",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "temperature1_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "temperature0_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "get_Payload_telemetry": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "FL",
+          "bits": 8
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "T_Plate",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "T_CPU",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "CurSens1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CurSens2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "NRst",
+          "bits": 8
+        },
+        {
+          "name": "TimeRst",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "CH1Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH2Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH3Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH4Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH5Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH6Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "_pad0",
+          "bits": 16,
+          "hidden": true
+        },
+        {
+          "name": "PtrEnd1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrCrt1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrEnd2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrCrt2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrEnd3",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrCrt3",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "LastEvent_CH1_1",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH1_2",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH1_3",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH2_1",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH2_2",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH2_3",
+          "bits": 8
+        }
+      ]
+    },
+    "ratesens_regular_x": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "velocity",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "counter",
+          "bits": 7
+        }
+      ]
+    },
+    "ratesens_regular_y": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "velocity",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "counter",
+          "bits": 7
+        }
+      ]
+    },
+    "ratesens_regular_z": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "velocity",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "counter",
+          "bits": 7
+        }
+      ]
+    },
+    "magnsens_regular_x": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "field",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "nT"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "counter",
+          "bits": 7
+        }
+      ]
+    },
+    "magnsens_regular_y": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "field",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "nT"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "counter",
+          "bits": 7
+        }
+      ]
+    },
+    "magnsens_regular_z": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "field",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "nT"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "counter",
+          "bits": 7
+        }
+      ]
+    },
+    "Vector_X": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "vector",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_Reserv",
+          "bits": 7,
+          "hidden": true
+        }
+      ]
+    },
+    "Vector_Y": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "vector",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_Reserv",
+          "bits": 7,
+          "hidden": true
+        }
+      ]
+    },
+    "Vector_Z": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "vector",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "temperature",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_Reserv",
+          "bits": 7,
+          "hidden": true
+        }
+      ]
+    },
+    "Brightness": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Sum",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "_Reserved",
+          "bits": 16,
+          "hidden": true
+        }
+      ]
+    },
+    "common_telemetry": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Data",
+          "bytes": 48,
+          "type": "bytes"
+        }
+      ]
+    },
+    "vhf_settings": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Magic",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "Frequency",
+          "bits": 32,
+          "endian": "le",
+          "units": "Hz"
+        },
+        {
+          "name": "BitRate",
+          "bits": 32,
+          "endian": "le",
+          "units": "bit/s"
+        },
+        {
+          "name": "DAC1Setting",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "DAC2Setting",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "TPacketMode",
+          "bits": 8
+        },
+        {
+          "name": "EnableBeacon",
+          "bits": 8
+        },
+        {
+          "name": "BeaconInterval",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "SSID",
+          "bits": 8
+        },
+        {
+          "name": "EarthSSID",
+          "bits": 8
+        },
+        {
+          "name": "TLocation",
+          "bits": 8
+        },
+        {
+          "name": "UNIcanID",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "EnableBridge",
+          "bits": 8
+        },
+        {
+          "name": "BeaconStartupDelay",
+          "bits": 16,
+          "endian": "le"
+        }
+      ]
+    },
+    "beacon": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Usb1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Usb2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Usb3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Isb1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Isb2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Isb3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Iab",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Ich1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Ich2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Ich3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Ich4",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "t1_pw",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "t2_pw",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "t3_pw",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "t4_pw",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "Uab_crit",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Uab_min",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater2_manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater1_manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater2_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater1_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Tab_max",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Tab_min",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved0",
+          "bits": 3,
+          "hidden": true
+        },
+        {
+          "name": "Additional_channel_3_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Additional_channel_2_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Additional_channel_1_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "FSB",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "charger",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved1",
+          "bits": 8,
+          "hidden": true
+        },
+        {
+          "name": "Uab",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "reg_tel_id",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "Nres",
+          "bits": 8
+        },
+        {
+          "name": "FL",
+          "bits": 8
+        },
+        {
+          "name": "t_amp",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "t_uhf",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "RSSIrx",
+          "bits": 8,
+          "scale": -1.0,
+          "units": "dBm"
+        },
+        {
+          "name": "RSSIidle",
+          "bits": 8,
+          "scale": -1.0,
+          "units": "dBm"
+        },
+        {
+          "name": "Pf",
+          "bits": 8,
+          "type": "int",
+          "units": "dBm"
+        },
+        {
+          "name": "Pb",
+          "bits": 8,
+          "type": "int",
+          "units": "dBm"
+        },
+        {
+          "name": "Nres_uhf",
+          "bits": 8
+        },
+        {
+          "name": "FL_uhf",
+          "bits": 8
+        },
+        {
+          "name": "Time_uhf",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "UpTime",
+          "bits": 32,
+          "endian": "le",
+          "units": "s"
+        },
+        {
+          "name": "Current",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Uuhf",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        }
+      ]
+    },
+    "extended_beacon": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "t_mb",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "Mx",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "My",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "Mz",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "Vx",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "Vy",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "Vz",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "Nres",
+          "bits": 8
+        },
+        {
+          "name": "Rcon",
+          "bits": 8
+        },
+        {
+          "name": "FL",
+          "bits": 8
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "FL_PL",
+          "bits": 8
+        },
+        {
+          "name": "TimeSend",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "T_Plate",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "T_CPU",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "°C"
+        },
+        {
+          "name": "CurSens1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CurSens2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "NRst",
+          "bits": 8
+        },
+        {
+          "name": "TimeRst",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "CH1Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH2Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH3Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH4Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH5Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CH6Rate",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrEnd1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrCrt1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrEnd2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrCrt2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrEnd3",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "PtrCrt3",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "LastEvent_CH1_1",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH1_2",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH1_3",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH2_1",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH2_2",
+          "bits": 8
+        },
+        {
+          "name": "LastEvent_CH2_3",
+          "bits": 8
+        }
+      ]
+    },
+    "time_request": {
+      "extends": "_header",
+      "fields": []
+    },
+    "uhf_beacon": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "t_amp",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "t_uhf",
+          "bits": 8,
+          "type": "int",
+          "units": "°C"
+        },
+        {
+          "name": "RSSIrx",
+          "bits": 8,
+          "scale": -1.0,
+          "units": "dBm"
+        },
+        {
+          "name": "RSSIidle",
+          "bits": 8,
+          "scale": -1.0,
+          "units": "dBm"
+        },
+        {
+          "name": "Pf",
+          "bits": 8,
+          "type": "int",
+          "units": "dBm"
+        },
+        {
+          "name": "Pb",
+          "bits": 8,
+          "type": "int",
+          "units": "dBm"
+        },
+        {
+          "name": "uhf_reset_counter",
+          "bits": 8
+        },
+        {
+          "name": "FL",
+          "bits": 8
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "UpTime",
+          "bits": 32,
+          "endian": "le",
+          "units": "s"
+        },
+        {
+          "name": "RxBitrate",
+          "bits": 32,
+          "endian": "le",
+          "units": "bit/s"
+        },
+        {
+          "name": "CurrentConsumption",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "InputVoltage",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "_Reserved",
+          "bits": 1,
+          "type": "bool",
+          "hidden": true
+        },
+        {
+          "name": "BackupScheduleActive",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ResetOccurredDuringExecution",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "NumActiveSchedules",
+          "bits": 5
+        }
+      ]
+    },
+    "detector_transmits": {
+      "extends": "_header",
+      "fields": []
+    },
+    "data_massive_addr_rpl": {
+      "extends": "_header",
+      "fields": []
+    },
+    "data_event_addr_rpl": {
+      "extends": "_header",
+      "fields": []
+    },
+    "data_monitor_addr_rpl": {
+      "extends": "_header",
+      "fields": []
+    },
+    "data_massive_rpl": {
+      "extends": "_header",
+      "fields": []
+    },
+    "data_event_rpl": {
+      "extends": "_header",
+      "fields": []
+    },
+    "data_monitor_rpl": {
+      "extends": "_header",
+      "fields": []
+    },
+    "get_Payload_FW_MSG": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Modification",
+          "bits": 8
+        },
+        {
+          "name": "Version",
+          "bits": 8
+        },
+        {
+          "name": "Release_Number",
+          "bits": 8
+        }
+      ]
+    },
+    "no_monitor_data": {
+      "extends": "_header",
+      "fields": []
+    },
+    "no_event_data": {
+      "extends": "_header",
+      "fields": []
+    },
+    "no_massive_data": {
+      "extends": "_header",
+      "fields": []
+    },
+    "compl_monitor_data": {
+      "extends": "_header",
+      "fields": []
+    },
+    "compl_event_data": {
+      "extends": "_header",
+      "fields": []
+    },
+    "compl_massive_data": {
+      "extends": "_header",
+      "fields": []
+    },
+    "get_Payload_CURRENT_CONFIG": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "cur_seg2_write",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg2_last_transmitted",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg2_min",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg2_max",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg2_num",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg3_write",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg3_last_transmitted",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg3_min",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg3_max",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg3_num",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg4_write",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg4_last_transmitted",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg4_min",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg4_max",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "cur_seg4_num",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "time_start_massive_write",
+          "bits": 32,
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "status_massive_write_enable",
+          "bits": 8
+        },
+        {
+          "name": "time_monitor_x100ms",
+          "bits": 8,
+          "scale": 0.01,
+          "units": "ms"
+        },
+        {
+          "name": "can_device_id",
+          "bits": 8
+        },
+        {
+          "name": "can_station_id",
+          "bits": 8
+        },
+        {
+          "name": "can_tranciever_id",
+          "bits": 8
+        },
+        {
+          "name": "TimeRst",
+          "bits": 32,
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "NRst",
+          "bits": 8
+        },
+        {
+          "name": "max_zagruz",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "ch1_summ_threshold",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "ch2_summ_threshold",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "num_counter_channels",
+          "bits": 8
+        },
+        {
+          "name": "time_save_configure",
+          "bits": 16,
+          "endian": "le",
+          "units": "s"
+        },
+        {
+          "name": "data_correct",
+          "bits": 8
+        }
+      ]
+    },
+    "regular_telemetry": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "VTG_S1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "VTG_S2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "VTG_S3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "CUR_S1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_S2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_S3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_BAT",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_S1O",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_S2O",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_S3O",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_S4O",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "TMP_BAT1",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_BAT2",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_BAT3",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_BAT4",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "VTG_BAT_CRIT",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "VTG_BAT_MIN",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "HEATER2_Manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "HEATER1_Manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "HEATER2_ON",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "HEATER1_ON",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "TMP_MAX",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "TMP_MIN",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "CHANNEL4_ON",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "CHANNEL3_ON",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "CHANNEL2_ON",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "CHANNEL1_ON",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ICH_FAULT_4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ICH_FAULT_3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ICH_FAULT_2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ICH_FAULT_1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_pad0",
+          "bits": 3,
+          "hidden": true
+        },
+        {
+          "name": "Additional_channel_3_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Additional_channel_2_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Additional_channel_1_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "FSB",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "CHAGER",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_pad1",
+          "bits": 8,
+          "hidden": true
+        },
+        {
+          "name": "VBAT",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "REC_ID",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "launch_number",
+          "bits": 8
+        },
+        {
+          "name": "reset_reason",
+          "bits": 8
+        }
+      ]
+    },
+    "extended_telemetry": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "CHRG_LIM",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "TMP_MIN",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_MAX",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "VTG_BAT",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "TIME_BAT",
+          "bits": 16,
+          "endian": "le",
+          "units": "ms"
+        },
+        {
+          "name": "CUR_LIM1",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CUR_LIM2",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CUR_LIM3",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "CUR_LIM4",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "DEV_ADDR",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "SRC_ADDR",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "TEL_PER",
+          "bits": 16,
+          "endian": "le",
+          "units": "ms"
+        },
+        {
+          "name": "ETEL_PER",
+          "bits": 16,
+          "endian": "le",
+          "units": "s"
+        },
+        {
+          "name": "REC_ID",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "ST_DELAY",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "SW_VER",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "DEPLOY_START_TIMER",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "DEPLOY_STOP_TIMER",
+          "bits": 8
+        },
+        {
+          "name": "DEPLOY_MODE",
+          "bits": 8
+        }
+      ]
+    },
+    "acknowledge": {
+      "extends": "_header",
+      "fields": []
+    },
+    "overcurrent": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Channel",
+          "bits": 8
+        }
+      ]
+    },
+    "switch_status": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Ch0Status",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "Ch1Status",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "Ch2Status",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "Ch3Status",
+          "bits": 16,
+          "endian": "le"
+        }
+      ]
+    },
+    "regular_telemetry6u": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Usb1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Usb2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Usb3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Isb1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Isb2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Isb3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Iab",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "Uab",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Uab1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "Uab2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "t1_pw",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "t2_pw",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "capacity",
+          "bits": 8
+        },
+        {
+          "name": "ch8_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch7_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch6_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch5_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch4_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch3_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch2_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch1_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch16_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch15_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch14_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch13_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch12_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch11_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch10_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch9_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch24_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch23_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch22_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch21_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch20_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch19_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch18_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch17_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved",
+          "bits": 2,
+          "hidden": true
+        },
+        {
+          "name": "ch30_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch29_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch28_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch27_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch26_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ch25_status",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Uab_crit",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Uab_min",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater2_manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater1_manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater2_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater1_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Tab_max",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Tab_min",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved0",
+          "bits": 3,
+          "hidden": true
+        },
+        {
+          "name": "AuxCH3_enabled_flag",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "AuxCH2_enabled_flag",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "AuxCH1_enabled_flag",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "FSB",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "charger",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved1",
+          "bits": 8,
+          "hidden": true
+        },
+        {
+          "name": "reg_tel_id",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "ps_reset_counter",
+          "bits": 8
+        },
+        {
+          "name": "FL",
+          "bits": 8
+        }
+      ]
+    },
+    "ps_regular_telemetry_5ch": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "VTG_SOL1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "VTG_SOL2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "VTG_SOL3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "CUR_SOL1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_SOL2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_SOL3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_BAT",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_PCH1",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_PCH2",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_PCH3",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_PCH4",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "CUR_PCH5",
+          "bits": 16,
+          "endian": "le",
+          "units": "mA"
+        },
+        {
+          "name": "TMP_BAT1",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_BAT2",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_BAT3",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "TMP_BAT4",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        },
+        {
+          "name": "Uab_crit",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Uab_min",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater2_manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater1_manual",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater2_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "heater1_on",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Tab_max",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Tab_min",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit5",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "Ich_limit1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved0",
+          "bits": 1,
+          "type": "bool",
+          "hidden": true
+        },
+        {
+          "name": "AuxCH3_enabled_flag",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "AuxCH2_enabled_flag",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "AuxCH1_enabled_flag",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "FSB",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "charger",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon5",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "channelon4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved1",
+          "bits": 8,
+          "hidden": true
+        },
+        {
+          "name": "VBAT",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "mV"
+        },
+        {
+          "name": "REC_ID",
+          "bits": 32,
+          "endian": "le"
+        },
+        {
+          "name": "Time",
+          "bits": 32,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime"
+        },
+        {
+          "name": "ps_reset_counter",
+          "bits": 8
+        },
+        {
+          "name": "reset_reason",
+          "bits": 8
+        }
+      ]
+    },
+    "tm_adcs_beacon_old": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Time",
+          "bits": 64,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime_us"
+        },
+        {
+          "name": "eci_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_ave_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_ave_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_ave_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "eci_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator AVS shifts",
+            "3": "Triad",
+            "4": "Triad AVS shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star_tracker AVS shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ"
+          }
+        },
+        {
+          "name": "orb_time",
+          "bits": 64,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime_us"
+        },
+        {
+          "name": "orb_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_ave_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_ave_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_ave_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "orb_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator AVS shifts",
+            "3": "Triad",
+            "4": "Triad AVS shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star_tracker AVS shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ"
+          }
+        },
+        {
+          "name": "forced_time",
+          "bits": 64,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime_us"
+        },
+        {
+          "name": "forced_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_ave_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_ave_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_ave_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "forced_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "forced_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator AVS shifts",
+            "3": "Triad",
+            "4": "Triad AVS shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star_tracker AVS shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ"
+          }
+        },
+        {
+          "name": "ss_invalids",
+          "bits": 16,
+          "endian": "le"
+        },
+        {
+          "name": "wheel_invalids",
+          "bits": 8
+        },
+        {
+          "name": "_reserved",
+          "bits": 6,
+          "hidden": true
+        },
+        {
+          "name": "avs_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "mfs_invalid",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "tm_adcs_beacon": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Time",
+          "bits": 64,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime_us"
+        },
+        {
+          "name": "uptime",
+          "bits": 32,
+          "endian": "le",
+          "units": "s"
+        },
+        {
+          "name": "eci_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_AV_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "eci_AV_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_AV_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "eci_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator + AV shifts",
+            "3": "Triad",
+            "4": "Triad + AV shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star tracker + AV shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ",
+            "10": "Kalman WQP"
+          }
+        },
+        {
+          "name": "orb_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_AV_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "orb_AV_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_AV_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "orb_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator + AV shifts",
+            "3": "Triad",
+            "4": "Triad + AV shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star tracker + AV shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ",
+            "10": "Kalman WQP"
+          }
+        },
+        {
+          "name": "eci_forced_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_AV_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "eci_forced_AV_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_AV_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "eci_forced_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator + AV shifts",
+            "3": "Triad",
+            "4": "Triad + AV shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star tracker + AV shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ",
+            "10": "Kalman WQP"
+          }
+        },
+        {
+          "name": "latitude",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "longitude",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "altitude",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "m"
+        },
+        {
+          "name": "auto_control_policy",
+          "bits": 2,
+          "enum": {
+            "0": "Disabled",
+            "1": "Enabled set 1",
+            "2": "Enabled set 2"
+          }
+        },
+        {
+          "name": "auto_ballistics_polity",
+          "bits": 2,
+          "enum": {
+            "0": "Disabled",
+            "1": "Enabled"
+          }
+        },
+        {
+          "name": "gnss_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ballistics_policy",
+          "bits": 3,
+          "enum": {
+            "0": "Propagator",
+            "1": "GNSS",
+            "2": "GNSS + estimation by speed"
+          }
+        },
+        {
+          "name": "adcs_task_type",
+          "bits": 8,
+          "enum": {
+            "0": "Idle",
+            "1": "B_dot",
+            "2": "Orientation ECI + unload wheels",
+            "3": "Orientation ORB + unload wheels",
+            "4": "Battery recharging",
+            "5": "Orientation ECI",
+            "6": "Orientation ORB",
+            "7": "Watch ECI point",
+            "8": "Watch LLA point",
+            "9": "Watch Sun",
+            "10": "None"
+          }
+        },
+        {
+          "name": "adcs_task_quantity",
+          "bits": 8
+        },
+        {
+          "name": "wheel_rpm_x_plus",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "rpm"
+        },
+        {
+          "name": "wheel_rpm_x_minus",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "wheel_rpm_y_plus",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "wheel_rpm_y_minus",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "ss_invalid_x_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_x_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_active",
+          "bits": 6
+        },
+        {
+          "name": "mfs_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "avs_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "star_tracker_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_extra",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_z_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_z_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_y_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_y_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "reset_reason",
+          "bits": 4
+        },
+        {
+          "name": "wheel_invalid_y_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_y_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_x_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_x_plus",
+          "bits": 1,
+          "type": "bool"
+        }
+      ]
+    },
+    "tm_adcs_beacon_6_wheels": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "Time",
+          "bits": 64,
+          "type": "int",
+          "endian": "le",
+          "transform": "unixtime_us"
+        },
+        {
+          "name": "uptime",
+          "bits": 32,
+          "endian": "le",
+          "units": "s"
+        },
+        {
+          "name": "eci_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_AV_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "eci_AV_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_AV_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "eci_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator + AV shifts",
+            "3": "Triad",
+            "4": "Triad + AV shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star tracker + AV shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ",
+            "10": "Kalman WQP"
+          }
+        },
+        {
+          "name": "orb_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_AV_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "orb_AV_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_AV_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "orb_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "orb_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator + AV shifts",
+            "3": "Triad",
+            "4": "Triad + AV shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star tracker + AV shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ",
+            "10": "Kalman WQP"
+          }
+        },
+        {
+          "name": "eci_forced_quat_w",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_quat_vect_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_quat_vect_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_quat_vect_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_AV_x",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg/s"
+        },
+        {
+          "name": "eci_forced_AV_y",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_AV_z",
+          "bits": 32,
+          "type": "float",
+          "endian": "le"
+        },
+        {
+          "name": "eci_forced_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "eci_forced_policy",
+          "bits": 7,
+          "enum": {
+            "0": "None",
+            "1": "Integrator",
+            "2": "Integrator + AV shifts",
+            "3": "Triad",
+            "4": "Triad + AV shifts",
+            "5": "Kalman BWS",
+            "6": "Star tracker",
+            "7": "Star tracker + AV shifts",
+            "8": "Kalman Q",
+            "9": "Kalman WQ",
+            "10": "Kalman WQP"
+          }
+        },
+        {
+          "name": "latitude",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "longitude",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "deg"
+        },
+        {
+          "name": "altitude",
+          "bits": 32,
+          "type": "float",
+          "endian": "le",
+          "units": "m"
+        },
+        {
+          "name": "auto_control_policy",
+          "bits": 2,
+          "enum": {
+            "0": "Disabled",
+            "1": "Enabled set 1",
+            "2": "Enabled set 2"
+          }
+        },
+        {
+          "name": "auto_ballistics_polity",
+          "bits": 2,
+          "enum": {
+            "0": "Disabled",
+            "1": "Enabled"
+          }
+        },
+        {
+          "name": "gnss_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ballistics_policy",
+          "bits": 3,
+          "enum": {
+            "0": "Propagator",
+            "1": "GNSS",
+            "2": "GNSS + estimation by speed"
+          }
+        },
+        {
+          "name": "adcs_task_type",
+          "bits": 8
+        },
+        {
+          "name": "adcs_task_quantity",
+          "bits": 8
+        },
+        {
+          "name": "wheel_rpm_1",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "units": "rpm"
+        },
+        {
+          "name": "wheel_rpm_2",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "wheel_rpm_3",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "wheel_rpm_4",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "wheel_rpm_5",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "wheel_rpm_6",
+          "bits": 16,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "ss_invalid_x_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_x_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_active",
+          "bits": 6
+        },
+        {
+          "name": "mfs_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "avs_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "star_tracker_invalid",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_extra",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_z_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_z_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_y_minus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "ss_invalid_y_plus",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "_reserved",
+          "bits": 2,
+          "hidden": true
+        },
+        {
+          "name": "wheel_invalid_6",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_5",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_4",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_3",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_2",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "wheel_invalid_1",
+          "bits": 1,
+          "type": "bool"
+        },
+        {
+          "name": "reset_reason",
+          "bits": 8
+        }
+      ]
+    },
+    "ch_adc_X1": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_X1",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "Temp_Ext",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        }
+      ]
+    },
+    "ch_adc_X2": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_X2",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "Temp_Int",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        }
+      ]
+    },
+    "ch_adc_Y1": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_Y1",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "ADC_Ext",
+          "bits": 16,
+          "endian": "le",
+          "units": "°C"
+        }
+      ]
+    },
+    "ch_adc_Y2": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_Y2",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "ADC_Int",
+          "bits": 16,
+          "endian": "le",
+          "units": "°C"
+        }
+      ]
+    },
+    "temp_cur_X1": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_X1",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "Temp_Ext",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        }
+      ]
+    },
+    "temp_cur_X2": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_X2",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "Temp_Int",
+          "bits": 16,
+          "type": "int",
+          "endian": "le",
+          "scale": 0.01,
+          "units": "°C"
+        }
+      ]
+    },
+    "temp_cur_Y1": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_Y1",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "ADC_Ext",
+          "bits": 16,
+          "endian": "le",
+          "units": "°C"
+        }
+      ]
+    },
+    "temp_cur_Y2": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "ADC_Y2",
+          "bits": 32,
+          "type": "int",
+          "endian": "le"
+        },
+        {
+          "name": "ADC_Int",
+          "bits": 16,
+          "endian": "le",
+          "units": "°C"
+        }
+      ]
+    },
+    "version_sw": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "major",
+          "bits": 8
+        },
+        {
+          "name": "minor",
+          "bits": 8
+        },
+        {
+          "name": "extra",
+          "bits": 8
+        }
+      ]
+    }
+  }
+}

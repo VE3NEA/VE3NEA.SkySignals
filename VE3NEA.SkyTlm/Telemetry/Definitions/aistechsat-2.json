@@ -1,0 +1,1013 @@
+{
+  "id": "aistechsat-2",
+  "norad": [43768],
+  "bitOrder": "msb",
+  "endian": "be",
+  "dispatch": {
+    "field": "beacon_id",
+    "cases": {
+      "1": "obc",
+      "2": "eps",
+      "3": "ttc_gssb",
+      "4": "aocs",
+      "5": "temperatures"
+    }
+  },
+  "layouts": {
+    "_header": {
+      "fields": [
+        {
+          "name": "beacon_id",
+          "bytes": 2,
+          "pos": 28,
+          "hidden": true
+        }
+      ]
+    },
+    "obc": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "P_OBC_BOOT_CAUSE",
+          "bytes": 4
+        },
+        {
+          "name": "P_OBC_BOOT_COUNT",
+          "bytes": 2,
+          "units": "reboots"
+        },
+        {
+          "name": "P_OBC_CLOCK",
+          "bytes": 4,
+          "transform": "unixtime"
+        },
+        {
+          "name": "P_OBC_CURFLASH",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_OBC_FS_MOUNTED",
+          "bytes": 1
+        },
+        {
+          "name": "P_OBC_RAM_IMAGE",
+          "bytes": 1,
+          "type": "int"
+        },
+        {
+          "name": "P_OBC_TEMP_A",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_OBC_TEMP_B",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_OBC_TICKS",
+          "bytes": 4,
+          "units": "ticks"
+        },
+        {
+          "name": "P_OBC_MAG_X",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_OBC_MAG_Y",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_OBC_MAG_Z",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_OBC_OBC_MEMFREE",
+          "bytes": 4,
+          "units": "bytes"
+        },
+        {
+          "name": "P_OBC_OBC_BUFFERFREE",
+          "bytes": 4,
+          "units": "bytes"
+        },
+        {
+          "name": "P_OBC_OBC_UPTIME",
+          "bytes": 4,
+          "units": "s"
+        },
+        {
+          "name": "P_OBC_GYRO_X",
+          "bytes": 4,
+          "type": "float",
+          "units": "deg/s"
+        },
+        {
+          "name": "P_OBC_GYRO_Y",
+          "bytes": 4,
+          "type": "float",
+          "units": "deg/s"
+        },
+        {
+          "name": "P_OBC_GYRO_Z",
+          "bytes": 4,
+          "type": "float",
+          "units": "deg/s"
+        },
+        {
+          "name": "P_OBC_GYRO_TEMP",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_OBC_FLASH_TOTAL",
+          "bytes": 8,
+          "type": "int",
+          "units": "bytes"
+        },
+        {
+          "name": "P_OBC_FLASH_USED",
+          "bytes": 8,
+          "type": "int",
+          "units": "bytes"
+        },
+        {
+          "name": "P_OBC_FLASH_FREE",
+          "bytes": 8,
+          "type": "int",
+          "units": "bytes"
+        },
+        {
+          "name": "P_OBC_GPIO_TEST",
+          "bytes": 1
+        },
+        {
+          "name": "P_OBC_GPIO_SW",
+          "bytes": 1
+        },
+        {
+          "name": "P_OBC_GPIO_PWR",
+          "bytes": 1
+        },
+        {
+          "name": "P_OM_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_OM_SW_VERSION",
+          "bytes": 32,
+          "type": "str"
+        },
+        {
+          "name": "P_OP_TR_CONN",
+          "bytes": 1
+        },
+        {
+          "name": "P_OP_TR_CONN_ACTIVE",
+          "bytes": 1
+        }
+      ]
+    },
+    "eps": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_0",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_1",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_2",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_3",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_4",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_5",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_6",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_OFF_DELTA_7",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_0",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_1",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_2",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_3",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_4",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_5",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_6",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_OUTPUT_ON_DELTA_7",
+          "bytes": 2,
+          "units": "ms"
+        },
+        {
+          "name": "P_EPS_WDT_CSP_PINGS_LEFT_0",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_WDT_CSP_PINGS_LEFT_1",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_BOOTCAUSE",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_CURSUN",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CURIN_0",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CURIN_1",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CURIN_2",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CUROUT_0",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CUROUT_1",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CUROUT_2",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CUROUT_3",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CUROUT_4",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CUROUT_5",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_CURSYS",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_EPS_TEMP_0",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_1",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_2",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_3",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_4",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_5",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_BATTMODE",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_PPTMODE",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_COUNTER_BOOT",
+          "bytes": 4,
+          "units": "reboots"
+        },
+        {
+          "name": "P_EPS_LATCHUP_0",
+          "bytes": 2,
+          "units": "latchups"
+        },
+        {
+          "name": "P_EPS_LATCHUP_1",
+          "bytes": 2,
+          "units": "latchups"
+        },
+        {
+          "name": "P_EPS_LATCHUP_2",
+          "bytes": 2,
+          "units": "latchups"
+        },
+        {
+          "name": "P_EPS_LATCHUP_3",
+          "bytes": 2,
+          "units": "latchups"
+        },
+        {
+          "name": "P_EPS_LATCHUP_4",
+          "bytes": 2,
+          "units": "latchups"
+        },
+        {
+          "name": "P_EPS_LATCHUP_5",
+          "bytes": 2,
+          "units": "latchups"
+        },
+        {
+          "name": "P_EPS_COUNTER_WDT_CSP_0",
+          "bytes": 4
+        },
+        {
+          "name": "P_EPS_COUNTER_WDT_CSP_1",
+          "bytes": 4
+        },
+        {
+          "name": "P_EPS_COUNTER_WDT_GND",
+          "bytes": 4
+        },
+        {
+          "name": "P_EPS_COUNTER_WDT_I2C",
+          "bytes": 4
+        },
+        {
+          "name": "P_EPS_OUTPUT_0",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_1",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_2",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_3",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_4",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_5",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_6",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_OUTPUT_7",
+          "bytes": 1
+        },
+        {
+          "name": "P_EPS_WDT_GND_TIME_LEFT",
+          "bytes": 4,
+          "units": "s"
+        },
+        {
+          "name": "P_EPS_WDT_I2C_TIME_LEFT",
+          "bytes": 4,
+          "units": "s"
+        },
+        {
+          "name": "P_EPS_VBATT",
+          "bytes": 2,
+          "units": "mV"
+        },
+        {
+          "name": "P_EPS_VBOOST_V_0",
+          "bytes": 2,
+          "units": "mV"
+        },
+        {
+          "name": "P_EPS_VBOOST_V_1",
+          "bytes": 2,
+          "units": "mV"
+        },
+        {
+          "name": "P_EPS_VBOOST_V_2",
+          "bytes": 2,
+          "units": "mV"
+        },
+        {
+          "name": "P_EPS_WDTCSPC_0",
+          "bytes": 4
+        },
+        {
+          "name": "P_EPS_WDTCSPC_1",
+          "bytes": 4
+        }
+      ]
+    },
+    "ttc_gssb": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "P_GSSB_NX_REBOOT_COUNT",
+          "bytes": 1,
+          "units": "reboots"
+        },
+        {
+          "name": "P_GSSB_NX_CURRENT_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_NX_ANTENNA_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_NX_ATTEMPTS_TOTAL",
+          "bytes": 2,
+          "units": "attempts"
+        },
+        {
+          "name": "P_GSSB_NY_REBOOT_COUNT",
+          "bytes": 1,
+          "units": "reboots"
+        },
+        {
+          "name": "P_GSSB_NY_CURRENT_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_NY_ANTENNA_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_NY_ATTEMPTS_TOTAL",
+          "bytes": 2,
+          "units": "attempts"
+        },
+        {
+          "name": "P_GSSB_PX_REBOOT_COUNT",
+          "bytes": 1,
+          "units": "reboots"
+        },
+        {
+          "name": "P_GSSB_PX_CURRENT_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_PX_ANTENNA_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_PX_ATTEMPTS_TOTAL",
+          "bytes": 2,
+          "units": "attempts"
+        },
+        {
+          "name": "P_GSSB_PY_REBOOT_COUNT",
+          "bytes": 1,
+          "units": "reboots"
+        },
+        {
+          "name": "P_GSSB_PY_CURRENT_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_PY_ANTENNA_STATE",
+          "bytes": 1
+        },
+        {
+          "name": "P_GSSB_PY_ATTEMPTS_TOTAL",
+          "bytes": 2,
+          "units": "attempts"
+        },
+        {
+          "name": "P_TTC_TEMP_BRD",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_TTC_LAST_RFERR",
+          "bytes": 2,
+          "type": "int",
+          "units": "Hz"
+        },
+        {
+          "name": "P_TTC_LAST_RSSI",
+          "bytes": 2,
+          "type": "int",
+          "units": "dBm"
+        },
+        {
+          "name": "P_TTC_TOT_RX_BYTES",
+          "bytes": 4,
+          "units": "bytes"
+        },
+        {
+          "name": "P_TTC_RX_BYTES",
+          "bytes": 4,
+          "units": "bytes"
+        },
+        {
+          "name": "P_TTC_TOT_RX_COUNT",
+          "bytes": 4,
+          "units": "packets"
+        },
+        {
+          "name": "P_TTC_RX_COUNT",
+          "bytes": 4,
+          "units": "packets"
+        },
+        {
+          "name": "P_TTC_TOT_TX_BYTES",
+          "bytes": 4,
+          "units": "bytes"
+        },
+        {
+          "name": "P_TTC_TX_BYTES",
+          "bytes": 4,
+          "units": "bytes"
+        },
+        {
+          "name": "P_TTC_TOT_TX_COUNT",
+          "bytes": 4,
+          "units": "packets"
+        },
+        {
+          "name": "P_TTC_TX_COUNT",
+          "bytes": 4,
+          "units": "packets"
+        },
+        {
+          "name": "P_TTC_TEMP_PA",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_TTC_BOOT_CAUSE",
+          "bytes": 1
+        },
+        {
+          "name": "P_TTC_BGND_RSSI",
+          "bytes": 2,
+          "type": "int",
+          "units": "dBm"
+        },
+        {
+          "name": "P_TTC_ACTIVE_CONF",
+          "bytes": 1
+        },
+        {
+          "name": "P_TTC_BOOT_COUNT",
+          "bytes": 2,
+          "units": "reboots"
+        },
+        {
+          "name": "P_TTC_LAST_CONTACT",
+          "bytes": 1
+        },
+        {
+          "name": "P_TTC_TX_DUTY",
+          "bytes": 1
+        }
+      ]
+    },
+    "aocs": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "P_AOCS_EXTMAG_VALID",
+          "bytes": 1
+        },
+        {
+          "name": "P_AOCS_EXTMAG_X",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_EXTMAG_Y",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_EXTMAG_Z",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_POS_DEV_X",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_POS_DEV_Y",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_POS_DEV_Z",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_POS_X",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_POS_Y",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_POS_Z",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GPS_VALID",
+          "bytes": 1
+        },
+        {
+          "name": "P_AOCS_GYRO_VALID",
+          "bytes": 1
+        },
+        {
+          "name": "P_AOCS_GYRO_X",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GYRO_Y",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GYRO_Z",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_MAG_X",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_MAG_Y",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_MAG_Z",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_MAG_VALID",
+          "bytes": 1
+        },
+        {
+          "name": "P_AOCS_STATUS_RUN",
+          "bytes": 1,
+          "type": "int"
+        },
+        {
+          "name": "P_AOCS_ACS_MODE",
+          "bytes": 1,
+          "type": "int"
+        },
+        {
+          "name": "P_AOCS_ADS_MODE",
+          "bytes": 1,
+          "type": "int"
+        },
+        {
+          "name": "P_AOCS_EPHEM_MODE",
+          "bytes": 1,
+          "type": "int"
+        },
+        {
+          "name": "P_AOCS_BDOT_DETUMB",
+          "bytes": 1
+        },
+        {
+          "name": "P_AOCS_BOOT_CAUSE",
+          "bytes": 1
+        },
+        {
+          "name": "P_AOCS_BOOT_COUNT",
+          "bytes": 2,
+          "units": "reboots"
+        },
+        {
+          "name": "P_AOCS_CURGSSB1",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_AOCS_CURGSSB2",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_AOCS_CURPWM",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_AOCS_CURGPS",
+          "bytes": 2,
+          "units": "mA"
+        },
+        {
+          "name": "P_AOCS_CURWDE",
+          "bytes": 2,
+          "units": "mA"
+        }
+      ]
+    },
+    "temperatures": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "P_AOCS_SUNS_TEMP_PX",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_SUNS_TEMP_NX",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_SUNS_TEMP_PY",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_SUNS_TEMP_NY",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_SUNS_TEMP_PZ",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "NOT_USED_0",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_EXTMAG_TEMP_32",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_FSS_TEMP_PX",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_FSS_TEMP_NX",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_FSS_TEMP_PY",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_FSS_TEMP_NY",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_FSS_TEMP_PZ",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "NOT_USED_1",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "NOT_USED_2",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "NOT_USED_3",
+          "bytes": 4,
+          "type": "float"
+        },
+        {
+          "name": "P_AOCS_GYRO_TEMP_32",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_TEMP_A",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_AOCS_TEMP_B",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_0",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_1",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_2",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_3",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_4",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_EPS_TEMP_5",
+          "bytes": 2,
+          "type": "int",
+          "units": "degC"
+        },
+        {
+          "name": "P_OBC_TEMP_A",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_OBC_TEMP_B",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_OBC_GYRO_TEMP",
+          "bytes": 4,
+          "type": "float",
+          "units": "degC"
+        },
+        {
+          "name": "P_TTC_TEMP_BRD",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        },
+        {
+          "name": "P_TTC_TEMP_PA",
+          "bytes": 2,
+          "type": "int",
+          "scale": 0.1,
+          "decimals": 1,
+          "units": "degC"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 64-bit only: VE3NEA.Dsp P/Invokes x64 native FFTW/liquid-dsp DLLs, so the whole repo is x64-only. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>VE3NEA.SkyTlm</RootNamespace>
+    <AssemblyName>VE3NEA.SkyTlm</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The test project unit-tests the pure internal DSP stages of GmskDemodulator directly. -->
+    <InternalsVisibleTo Include="VE3NEA.SkyTlm.Tests" />
+    <!-- The headless profiling bench subscribes to the internal BurstDecoded event, like the tests. -->
+    <InternalsVisibleTo Include="VE3NEA.SkyTlm.Bench" />
+    <!-- The FskDemod WinForms app (separate repo) reads StreamingPipeline's internal live-inspection members
+         to visualize online operation; its test project drives the resolver + internal-gate diagnostics. -->
+    <InternalsVisibleTo Include="FskDemod" />
+    <InternalsVisibleTo Include="FskDemod.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    <!-- Pinned to the versions VE3NEA.Dsp (vendored below) was built against, so its runtime
+         dependencies resolve from this project's output. MathNet + Serilog are also used directly. -->
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="CSCore" Version="1.2.1.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Hand-made telemetry field-decoder definitions (plan: docs/roadmap/telemetry_field_decoder_plan.md),
+         embedded so TelemetryRegistry loads them by resource name with no copy-to-output / runtime path. -->
+    <EmbeddedResource Include="Telemetry\Definitions\*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- VE3NEA.Dsp now lives in this solution as a source project. A project reference flows its compile
+       reference and its native P/Invoke DLLs (fftw/liquid/fec/mingw, carried in VE3NEA.Dsp\Vendor) both
+       here and transitively to the Tests and Bench projects that reference this library. -->
+  <ItemGroup>
+    <ProjectReference Include="..\VE3NEA.Dsp\VE3NEA.Dsp.csproj" />
+  </ItemGroup>
+
+</Project>

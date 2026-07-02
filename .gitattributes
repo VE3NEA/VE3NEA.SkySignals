@@ -1,0 +1,6 @@
+# Binary IQ corpus fixtures tracked via Git LFS to keep history light.
+*.wav filter=lfs diff=lfs merge=lfs -text
+
+# Vendored native + managed DSP DLLs are binary.
+*.dll binary
+*.pdb binary

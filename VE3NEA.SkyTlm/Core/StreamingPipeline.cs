@@ -1,0 +1,1062 @@
+using MathNet.Numerics;
+using Serilog;
+using VE3NEA;                 // shared DSP helpers (Fft, BlackmanHarrisWindow, Median, NativeFftw)
+using VE3NEA.SkyTlm.Dsp;        // DSP stages + LearnedShape (expected-shape template)
+
+namespace VE3NEA.SkyTlm.Core
+{
+  /// <summary>
+  /// One decoded burst, surfaced to the WinForms debug view as it happens (see <see cref="StreamingPipeline.BurstDecoded"/>).
+  /// <see cref="Burst"/> spans are <b>absolute</b> stream-sample indices, so the inspector can re-derotate/re-trace
+  /// against the original samples exactly as the batch path does. <paramref name="MatchedFraction"/> /
+  /// <paramref name="MeanFrameMatch"/> are the per-frame shape statistics behind <paramref name="Validated"/>.
+  /// </summary>
+  public sealed record StreamingBurstReport(
+    int Index, long StartSample, int Length, double TimeSeconds, bool Validated,
+    Burst Burst, SoftSymbols Soft, GmskTrace? Trace, IReadOnlyList<Frame> Frames,
+    LearnedShape MeasuredShape, double[] CorrelationLagHz, double[] Correlation,
+    double MatchedFraction, double MeanFrameMatch, int ShapedFrames);
+
+  /// <summary>Tunables for <see cref="StreamingPipeline"/>.</summary>
+  public sealed record StreamingOptions
+  {
+    /// <summary>Worst-case residual carrier offset; the matched detector slides the template over ±this.</summary>
+    public double CfoMaxHz { get; init; } = 2000;
+
+    /// <summary>Schmitt onset, in noise-sigma units of the averaged matched statistic (CFAR: each CFO shift
+    /// is normalized by its own analytic noise deviation, so the false-alarm rate is independent of the
+    /// template width, the baud rate and the noise level). The max-over-shifts of pure noise sits near
+    /// 2.5–3σ; 5.5σ leaves a comfortable margin at ~50 STFT frames/s.</summary>
+    public double OnSigma { get; init; } = 5.5;
+
+    /// <summary>Schmitt release, in the same units. Must sit above the noise max-over-shifts level (~3σ),
+    /// or hangover keeps re-arming on noise and bursts never close.</summary>
+    public double OffSigma { get; init; } = 4.0;
+
+    /// <summary>Level-relative segmentation: a burst closes when the averaged statistic falls below this
+    /// fraction of its peak (0.25 ≈ −6 dB), not just below <see cref="OffSigma"/>; and symmetrically, a jump
+    /// to more than 1/this over the burst's running level <b>splits</b> the segment so the stronger signal
+    /// starts its own. A telemetry burst embedded in weaker persistent in-band interference (a CW beacon, an
+    /// SSTV transmission) then gets a tight segment of its own — decoding it from one long merged window
+    /// fails, because the window's CFO estimate and symbol timing are dominated by the interferer.</summary>
+    public double ReleaseFraction { get; init; } = 0.25;
+
+    /// <summary>Reject spans shorter than this.</summary>
+    public double MinBurstMs { get; init; } = 30;
+
+    /// <summary>Bridge brief fades within a burst.</summary>
+    public double HangoverMs { get; init; } = 80;
+
+    /// <summary>Pad each side of a burst so the preamble/tail isn't clipped.</summary>
+    public double GuardMs { get; init; } = 20;
+
+    /// <summary>Force-flush a burst that runs longer than this (capped flush). Bounds memory and keeps a
+    /// continuous carrier producing frames in windows instead of buffering forever.</summary>
+    public double MaxBurstSeconds { get; init; } = 8.0;
+
+    /// <summary>Rolling window the streaming noise floor is estimated over (the online stand-in for the batch
+    /// detector's whole-signal statistic). Long enough to be stable, short enough to track a changing floor.</summary>
+    public double NoiseWindowSeconds { get; init; } = 3.0;
+
+    /// <summary>Noncoherent temporal integration: the per-shift matched statistic is averaged over this many
+    /// consecutive STFT frames (~21 ms each at 48 kHz) <i>before</i> the max-over-shifts and the Schmitt
+    /// trigger. √N less statistic variance, so weak bursts clear the onset threshold reliably.</summary>
+    public int DetectorAvgFrames { get; init; } = 6;
+
+    /// <summary>Per-frame shape threshold: a signal-bearing STFT frame whose noise-subtracted spectrum has at
+    /// least this Pearson correlation with the template (at the frame's best CFO shift) counts as "shaped like
+    /// the expected modulation".</summary>
+    public double PerFrameMatchMin { get; init; } = 0.35;
+
+    /// <summary>Primary burst validation: at least this fraction of the burst's signal-bearing frames must be
+    /// shaped (<see cref="PerFrameMatchMin"/>). Per-frame shape is the digital-vs-analog discriminator: SSTV's
+    /// scanning FM line and a CW spike look nothing like the template <i>instantaneously</i>, even though their
+    /// burst-averaged spectra can mimic it (measured: real GMSK ≥0.39 vs SSTV ≤0.02 at the 0.5 threshold).</summary>
+    public double MinMatchedFraction { get; init; } = 0.25;
+
+    /// <summary>The fraction gate also needs at least this many shaped frames in absolute terms — a 2-frame
+    /// noise or impulse blip trivially scores frac 1/1, while any real telemetry burst (≥ ~0.3 s) has dozens
+    /// of signal-bearing frames.</summary>
+    public int MinShapedFrames { get; init; } = 5;
+
+    /// <summary>Secondary (high-confidence) validation: a burst whose burst-averaged spectrum correlates with
+    /// the template at least this strongly (<see cref="CpmTemplate.Match"/>, log power) is accepted even if the
+    /// per-frame fraction falls short — averaging over the burst recovers the shape of a very weak signal whose
+    /// individual frames are too noisy to score. <c>null</c> (default) picks per modulation via
+    /// <see cref="EffectiveMinShapeScore"/>: 0.85 for bell shapes (SSTV's smeared average can reach ≈0.8
+    /// against a bell), 0.55 for two-tone FSK (no analog signal mimics two symmetric tones).</summary>
+    public double? MinShapeScore { get; init; }
+
+    /// <summary>The <see cref="MinShapeScore"/> actually applied for <paramref name="m"/>.</summary>
+    public double EffectiveMinShapeScore(Modulation m) =>
+      MinShapeScore ?? (m is Modulation.GMSK or Modulation.GFSK ? 0.85 : 0.55);
+
+    /// <summary>When <c>false</c>, surface <i>every</i> detected burst (flagged validated/rejected) — for
+    /// visual inspection of bursts the gate would normally suppress. Default <c>true</c>: only validated
+    /// bursts are reported and only their frames returned. A CRC-valid frame always validates its burst
+    /// (proof of digital signal beats any shape score).</summary>
+    public bool GateByShape { get; init; } = true;
+
+    /// <summary>When <c>true</c>, demodulate even segments whose detector statistics already preclude every
+    /// validation path (noise/impulse blips), so they can be surfaced for inspection. Default <c>false</c>:
+    /// such segments skip the (expensive) demodulator — the only gate they could still pass is a CRC frame,
+    /// and segments this far below every shape bar have never produced one. The UI sets this together with
+    /// <see cref="GateByShape"/> = false.</summary>
+    public bool DecodeRejected { get; init; } = false;
+
+    /// <summary>Demodulator tunables. Defaults to <see cref="Demodulators.DefaultGmskOptions"/> so a burst
+    /// decodes identically whether it arrives via a file or the live stream.</summary>
+    public GmskDemodOptions GmskOptions { get; init; } = Demodulators.DefaultGmskOptions;
+  }
+
+  /// <summary>
+  /// Online (streaming) pipeline — the production decode path. The caller pushes consecutive blocks of
+  /// IQ samples (any size) via <see cref="Push(System.ReadOnlySpan{Complex32})"/> and receives the
+  /// CRC-checked <see cref="Frame"/>s that completed within each block; <see cref="Flush"/> drains a burst still
+  /// in progress at end-of-stream. Decoding is strictly per-burst: nothing is demodulated between bursts.
+  ///
+  /// <para><b>Detection</b> is a matched per-frame statistic on a coarse STFT. Each frame's noise-subtracted
+  /// in-band spectrum is correlated with the expected modulation shape (the broad analytic
+  /// <see cref="ModulationTemplate"/> — Gaussian lobes at ±dev, or the GMSK bell) slid over the ±CfoMaxHz
+  /// search span. Each shift is normalized by its analytic noise deviation (CFAR), averaged per shift over
+  /// <see cref="StreamingOptions.DetectorAvgFrames"/> frames, then maxed over shifts; a Schmitt trigger in
+  /// noise-sigma units with hangover and min-length segments bursts. Integrating over the signal band only
+  /// (instead of the whole search band) plus the temporal averaging buys several dB of sensitivity over a
+  /// whole-band energy sum at the same false-alarm rate — that is what catches weak bursts.</para>
+  ///
+  /// <para><b>Validation</b> separates digital bursts from analog interlopers <i>per frame</i>: SSTV is a
+  /// narrow wandering FM line and CW a bare spike in any single frame, so their spectra correlate poorly with
+  /// the template even when their burst-averaged spectra look template-like. A burst is validated when enough
+  /// of its signal-bearing frames are shaped (<see cref="StreamingOptions.MinMatchedFraction"/>), when its
+  /// averaged spectrum matches with high confidence (<see cref="StreamingOptions.MinShapeScore"/>, the
+  /// weak-burst fallback), or when it yields a CRC-valid frame — every detected burst is demodulated, so an
+  /// embedded telemetry frame inside e.g. an SSTV span is never lost to the gate.</para>
+  ///
+  /// <para>Each burst's samples (plus guard) accumulate in a sliding buffer and are decoded whole when the
+  /// burst ends or hits the <see cref="StreamingOptions.MaxBurstSeconds"/> cap, via the existing
+  /// CFO → demod → deframe path. Signal parameters (baud/modulation/framing/deviation) are fixed at
+  /// construction — online there is no .iq.wav sidecar or SatNOGS lookup; the caller supplies the known
+  /// transmitter's <see cref="SignalParams"/>.</para>
+  ///
+  /// <para>Not thread-safe: drive one instance from a single producer.</para>
+  /// </summary>
+  public sealed class StreamingPipeline : IDisposable
+  {
+    private readonly SignalParams p;
+    // the caller's original params object (before any internal `with` copy): the locked blind-FSK deviation is
+    // written back here so the caller can display the deviation actually used instead of the initial one.
+    private readonly SignalParams resolvedTarget;
+    private readonly StreamingOptions o;
+    private readonly double fs;
+
+    private const int Fft = StftPsd.FftSize;   // 2048
+    private const int Hop = Fft / 2;           // 50% overlap, matching BurstDetector
+
+    /// <summary>Averaged-spectrum match below which a junk-classified segment is not even worth
+    /// demodulating for the CRC-rescue path (see the hopeless-segment skip in <see cref="DecodeBurst"/>).</summary>
+    private const double CrcRescueMinMatch = 0.3;
+
+    /// <summary>Equivalent noise bandwidth of the Blackman-Harris window in bins: neighbouring periodogram
+    /// bins are correlated, inflating the variance of any sum over bins by this factor (σ by its √).</summary>
+    private const double WindowEnbw = 2.0;
+
+    // --- detector (per-frame STFT power + matched statistic) ---
+    private readonly Fft<Complex32> fft;
+    private readonly float[] window;
+    private readonly float[] q;               // in-band bin powers for the current frame
+    private readonly float[] excess;          // q minus the rolling per-bin noise floor, DC-notched
+    private readonly double binHz, occHalfHz;
+    private readonly int occBins;
+    private readonly float[] oobRing;         // recent out-of-band frame powers (rolling noise floor)
+    private readonly float[] oobScratch;
+    private int oobCount, oobHead;
+    private readonly int warmupFrames;
+    private readonly int minFrames, hangFrames, guard, keepFrames, maxBurstSamples;
+
+    // matched template on the detector grid, support bins only (t ≥ 5% of peak). Per shift s the statistic is
+    // z(s) = Σ excess·(t − t̄) / (npb·√(Σ(t−t̄)²)·√ENBW) — DC-removed (so a flat colored-noise pedestal cancels)
+    // and normalized to unit noise variance at every shift and any template width.
+    private readonly int[] supIdx;            // support bin indices (template centred at occBins)
+    private readonly float[] supT;            // template value at each support bin
+    private readonly int cfoBins;             // CFO search span in bins (shifts −cfoBins..+cfoBins)
+    private readonly int nShifts;
+    private readonly double[] shiftTSum;      // σt over the in-band part of the support, per shift (0 = skip)
+    private readonly double[] shiftT2Sqrt;    // √(Σt²) over the same, per shift
+    private readonly int[] matchN;            // matchAtShift per-shift template stats (depend only on the shift):
+    private readonly double[] matchTSum;      //   in-range support count, Σt, and Σ(t−mean)²
+    private readonly double[] matchTVar;
+    private readonly double[][] zRing;        // last DetectorAvgFrames per-shift z rows
+    private readonly double[] zSum;           // per-shift running sum over the ring
+    private readonly double[] frameBestZ;     // per-frame best z of the ring frames (for onset back-dating)
+    private int zHead, zCount;
+
+    // --- demod / deframe (built once for the fixed params) ---
+    private readonly IDemodulator? demod;
+    // linear-PSK only (non-null ⇔ this is BPSK): one demodulator per sub-mode. Which one runs is fixed by
+    // signalParams.Differential (resolved from the SatNOGS precoding; coherent unless stated differential).
+    private readonly BpskDemodulator? bpskCoherent;
+    private readonly BpskDemodulator? bpskDifferential;
+    private readonly IDeframer? deframer;
+    private readonly LearnedShape template;   // expected-shape template for the averaged-spectrum match (UI + secondary gate)
+    private readonly double minShapeScore;    // per-modulation effective secondary threshold
+    private readonly CfoEstimator cfo;        // CFO + shape from the (already-computed) averaged STFT power
+
+    // --- per-burst averaged power spectrum (the SAME STFT frames the detector runs on, summed over the
+    //     burst) — reused for CFO + shape validation so we don't recompute a separate FFT pass ---
+    private readonly double[] burstPsdSum;
+    private int burstPsdCount;
+    private double noisePerBin;               // current rolling per-bin noise floor (for noise subtraction)
+
+    // --- sliding sample buffer ---
+    private Complex32[] buf = new Complex32[Fft * 4];
+    private int len;                 // valid samples in buf
+    private long bufBaseAbs;         // absolute stream index of buf[0] (multiple of Hop)
+    private int nextFrameOffset;     // offset in buf of next frame to process (multiple of Hop)
+
+    // --- Schmitt-trigger burst state ---
+    private bool inBurst;
+    private long startFrameAbs, lastAboveAbs;
+    private double burstPeakZ;       // peak averaged statistic within the burst (for peak-relative release)
+    private double burstLevelZ;      // slow EMA of the averaged statistic within the burst (for step-up split)
+
+    // --- decode-overlap state (frames straddling public segment boundaries) ---
+    private readonly int overlapSamples;
+    private readonly int tailSamples;                  // post-burst decode extension: one max frame on air
+    private long lastSegStartAbs = long.MinValue / 4;  // detected span of the previously closed segment
+    private long lastSegEndAbs = long.MinValue / 4;
+    private bool lastSegDigital;                       // previous segment passed the per-frame shape gate
+    private readonly Queue<PendingDecode> pending = new();  // closed bursts awaiting their tail samples
+    private readonly List<RecentFrame> recentFrames = new();  // emitted frames, for overlap dedup
+    private double burstWSum;        // Σ best-shift matched power over the burst's signal-bearing frames
+    private int burstSigFrames;      // frames whose own matched z cleared the release threshold
+    private int burstShapedFrames;   // …of which the per-frame Pearson matched the template
+    private double burstMatchSum;    // Σ per-frame Pearson over the signal-bearing frames
+    private int burstCounter;
+    private long framesSeen;
+
+    // --- blind-FSK session cache (non-null from the first CRC-valid blind decode onward) ---
+    private double? learnedDeviationHz;
+    private IDemodulator? learnedDemod;
+
+    // placeholder LearnedShape for blind bursts: ValidHalfBaud = 0 causes CpmTemplate.Match/Correlation to
+    // short-circuit to 0 / empty without crashing; the blind path never runs the shape gate.
+    private static readonly LearnedShape BlindDummyShape = new LearnedShape
+    {
+      DeviationHz = 0, BandwidthHz = 0, ValidHalfBaud = 0,
+      Profile = new float[LearnedShape.GridPoints], Count = 0
+    };
+
+    // --- live inspection surface (consumed by the WinForms debug view; see publicsVisibleTo) ---
+    /// <summary>The most recently decoded burst's spectral metadata (span is segment-local, 0-based).</summary>
+    public Burst? LastBurst { get; private set; }
+    /// <summary>Absolute stream time (s) of the most recently decoded burst's start.</summary>
+    public double LastBurstTimeSeconds { get; private set; }
+    /// <summary>Soft symbols of the most recently decoded burst.</summary>
+    public SoftSymbols? LastSoftSymbols { get; private set; }
+    /// <summary>Demod trace (matched-filter waveform + strobes) of the last burst, for the eye view; null for non-CPM demods.</summary>
+    public GmskTrace? LastTrace { get; private set; }
+    /// <summary>Whether a burst is currently being accumulated.</summary>
+    public bool InBurst => inBurst;
+    /// <summary>Current rolling per-bin noise-floor power (linear).</summary>
+    public double NoiseRefPower { get; private set; }
+    /// <summary>Total samples consumed from the stream so far.</summary>
+    public long SamplesProcessed => bufBaseAbs + nextFrameOffset;
+    /// <summary>Frames emitted by the most recent <see cref="Push(System.ReadOnlySpan{Complex32})"/> call.</summary>
+    public IReadOnlyList<Frame> LastPushFrames { get; private set; } = Array.Empty<Frame>();
+
+    public event Action<Frame>? FrameDecoded;
+    /// <summary>Raised once per decoded burst (after demod, whether or not it deframed), for the live inspector.</summary>
+    public event Action<StreamingBurstReport>? BurstDecoded;
+
+    public StreamingPipeline(SignalParams p, StreamingOptions? options = null)
+    {
+      if (p == null) throw new ArgumentNullException(nameof(p));
+      resolvedTarget = p;   // hold the caller's object; run-time resolutions are written back here for display
+      // wide-h GFSK/GMSK is really unfiltered 2-FSK; normalize the label up front (see Demodulators.IsWideFsk)
+      // so the detector template, the shape gate and the demod all treat it as FSK. This is the pipeline-side
+      // home of the GFSK→FSK reclassification that used to live in the param resolver (now shared with SkyRoof).
+      if (Demodulators.IsWideFsk(p)) p = p with { Modulation = Modulation.FSK };
+      this.p = p;
+      o = options ?? new StreamingOptions();
+      fs = p.SampleRate;
+      if (fs <= 0) throw new ArgumentException("SignalParams.SampleRate must be positive for streaming.", nameof(p));
+
+      binHz = fs / Fft;
+      occHalfHz = StftPsd.OccupiedHalfHz(p, o.CfoMaxHz);
+      occBins = (int)Math.Ceiling(occHalfHz / binHz);
+      window = global::VE3NEA.Dsp.BlackmanHarrisWindow(Fft);
+      q = new float[2 * occBins + 1];
+      excess = new float[q.Length];
+      fft = new Fft<Complex32>(Fft, NativeFftw.FftwFlags.Estimate);
+
+      double frameMs = Hop / fs * 1000.0;
+      minFrames = Math.Max(1, (int)Math.Round(o.MinBurstMs / frameMs));
+      hangFrames = Math.Max(1, (int)Math.Round(o.HangoverMs / frameMs));
+      guard = (int)Math.Round(o.GuardMs / 1000.0 * fs);
+      maxBurstSamples = Math.Max(Fft, (int)Math.Round(o.MaxBurstSeconds * fs));
+
+      int noiseFrames = Math.Max(8, (int)Math.Round(o.NoiseWindowSeconds * 1000.0 / frameMs));
+      oobRing = new float[noiseFrames];
+      oobScratch = new float[noiseFrames];
+      warmupFrames = Math.Min(noiseFrames, 16);   // collect a little noise history before triggering
+
+      demod = Demodulators.Create(p, o.GmskOptions);
+      if (p.Modulation == Modulation.BPSK)
+      {
+        bpskCoherent = new BpskDemodulator(new BpskDemodOptions { Differential = false, Manchester = p.Manchester == true });
+        bpskDifferential = new BpskDemodulator(new BpskDemodOptions { Differential = true, Manchester = p.Manchester == true });
+      }
+      deframer = Deframing.DeframerFactory.Create(p);
+      template = CpmTemplate.Synthesize(p);   // cached; the modeled spectrum for the averaged-spectrum match
+      minShapeScore = o.EffectiveMinShapeScore(p.Modulation);
+      // estimator on the SAME FFT grid as the detector (Fft), so the averaged detection power spectrum feeds
+      // its CFO/shape methods directly — no second FFT pass.
+      cfo = new CfoEstimator(fs, o.CfoMaxHz, p, fftSize: Fft);
+      burstPsdSum = new double[2 * occBins + 1];
+
+      // matched template sampled onto the detector grid; only its support (≥5% of peak) enters the per-shift
+      // statistic, so noise outside the signal band contributes nothing (the sensitivity win over a
+      // whole-band energy sum). This is the broad ANALYTIC shape (Gaussian lobes at ±dev / the bell), not the
+      // synthesized CPM spectrum: at integer h the synthesized FSK spectrum is almost line-spectral, and a
+      // few-bin support makes the per-shift statistic too noisy — while the real per-frame tones are
+      // broadened well past it anyway (Doppler rate, oscillator drift, the window's own resolution).
+      int L = q.Length;
+      var t = new float[L];
+      float tmax = 0;
+      for (int j = 0; j < L; j++)
+      {
+        t[j] = (float)ModulationTemplate.ShapeValue((j - occBins) * binHz, p);
+        if (t[j] > tmax) tmax = t[j];
+      }
+      int nSup = 0;
+      for (int j = 0; j < L; j++) if (t[j] >= 0.05f * tmax) nSup++;
+      supIdx = new int[nSup];
+      supT = new float[nSup];
+      for (int j = 0, k = 0; j < L; j++)
+        if (t[j] >= 0.05f * tmax) { supIdx[k] = j; supT[k] = t[j]; k++; }
+      double supTSum = 0;
+      foreach (var v in supT) supTSum += v;
+
+      cfoBins = (int)Math.Ceiling(o.CfoMaxHz / binHz);
+      nShifts = 2 * cfoBins + 1;
+
+      // per-shift template norms over the in-band part of the support. Shifts that push more than half the
+      // template mass out of band are disabled (Σt = 0): normalizing by a small in-band remainder would
+      // inflate the noise variance and pin spurious maxima to the CFO rails.
+      shiftTSum = new double[nShifts];
+      shiftT2Sqrt = new double[nShifts];
+      for (int si = 0; si < nShifts; si++)
+      {
+        int s = si - cfoBins;
+        double ts = 0, t2 = 0;
+        for (int k = 0; k < nSup; k++)
+        {
+          int j = supIdx[k] + s;
+          if ((uint)j >= (uint)L) continue;
+          ts += supT[k];
+          t2 += (double)supT[k] * supT[k];
+        }
+        bool valid = ts >= 0.5 * supTSum && t2 > 0;
+        shiftTSum[si] = valid ? ts : 0;
+        shiftT2Sqrt[si] = valid ? Math.Sqrt(t2) : 0;
+      }
+
+      // per-shift template mean/variance for the MatchAtShift Pearson — recomputing them per call doubled
+      // that function's work for values that depend only on the shift.
+      matchN = new int[nShifts];
+      matchTSum = new double[nShifts];
+      matchTVar = new double[nShifts];
+      for (int si = 0; si < nShifts; si++)
+      {
+        int s = si - cfoBins;
+        int cnt = 0; double ts = 0, t2 = 0;
+        for (int k = 0; k < nSup; k++)
+        {
+          int j = supIdx[k] + s;
+          if ((uint)j >= (uint)L) continue;
+          cnt++; ts += supT[k]; t2 += (double)supT[k] * supT[k];
+        }
+        matchN[si] = cnt;
+        matchTSum[si] = ts;
+        matchTVar[si] = cnt > 0 ? t2 - ts * ts / cnt : 0;
+      }
+
+      int navg = Math.Max(1, o.DetectorAvgFrames);
+      zRing = new double[navg][];
+      for (int i = 0; i < navg; i++) zRing[i] = new double[nShifts];
+      zSum = new double[nShifts];
+      frameBestZ = new double[navg];
+
+      // trim() must retain enough frame history to back-date a burst start by the averaging delay + guard.
+      keepFrames = (int)Math.Ceiling((double)guard / Hop) + (navg - 1);
+      // post-burst soft-bit extension: one worst-case frame on air, so a frame that starts inside the burst
+      // is decoded to completion. Detection/parameter estimation never look past the burst end.
+      tailSamples = deframer != null ? (int)Math.Ceiling(deframer.MaxFrameBits / p.Baud * fs) : 0;
+      // lead overlap across public segment boundaries (cap flush / step-up split / brief dropout): reach
+      // back one worst-case frame plus a timing-acquisition lead-in (a frame whose sync sits at the very
+      // edge of the window is lost while Gardner is still locking — measured: exactly one frame on HADES
+      // 06-07), so a frame cut by the boundary is decoded whole in the follow-up segment (duplicates removed
+      // by content + time). Derived from the deframer so "how long can a frame be" has one source of truth.
+      overlapSamples = tailSamples + (int)Math.Round(0.5 * fs);
+    }
+
+    /// <summary>Feed the next contiguous block of IQ samples; returns any frames that completed within it.</summary>
+    public IReadOnlyList<Frame> Push(ReadOnlySpan<Complex32> block)
+    {
+      Append(block);
+      List<Frame>? frames = null;
+
+      while (nextFrameOffset + Fft <= len)
+      {
+        long absFrame = (bufBaseAbs + nextFrameOffset) / Hop;
+        var (oob, _) = StftPsd.Frame(fft, buf, nextFrameOffset, window, binHz, occHalfHz, occBins, q);
+        ProcessFrame(absFrame, oob, ref frames);
+        nextFrameOffset += Hop;
+      }
+
+      DrainPending(ref frames);   // decode closed bursts whose tail-extension samples have now arrived
+      Trim();
+      LastPushFrames = (IReadOnlyList<Frame>?)frames ?? Array.Empty<Frame>();
+      return LastPushFrames;
+    }
+
+    /// <summary>Convenience overload for an array block.</summary>
+    public IReadOnlyList<Frame> Push(Complex32[] block) => Push((block ?? throw new ArgumentNullException(nameof(block))).AsSpan());
+
+    /// <summary>Decode a burst still in progress at end-of-stream. Call once after the last <see cref="Push"/>.</summary>
+    public IReadOnlyList<Frame> Flush()
+    {
+      List<Frame>? frames = null;
+      if (inBurst)
+      {
+        // no future samples will arrive — decode immediately with whatever is buffered.
+        CloseSpan(startFrameAbs, lastAboveAbs, startGuard: true, endGuard: true, defer: false, ref frames);
+        inBurst = false;
+      }
+      DrainPending(ref frames, force: true);
+      LastPushFrames = (IReadOnlyList<Frame>?)frames ?? Array.Empty<Frame>();
+      return LastPushFrames;
+    }
+
+    // --- detector state machine ----------------------------------------------------------------
+
+    private void ProcessFrame(long absFrame, double oob, ref List<Frame>? frames)
+    {
+      // rolling noise floor: trimmed mean of recent out-of-band frame powers (out-of-band is always noise, so we
+      // update it every frame, including during a burst).
+      oobRing[oobHead] = (float)oob;
+      oobHead = (oobHead + 1) % oobRing.Length;
+      if (oobCount < oobRing.Length) oobCount++;
+
+      double npb = RollingNoiseFloor();
+      if (npb <= 0) npb = 1e-12;
+      noisePerBin = npb;
+      NoiseRefPower = npb;
+
+      // noise-subtracted frame spectrum (NOT clamped at 0 — zero-mean under noise, which keeps the matched
+      // statistic unbiased), DC-notched so LO leakage can't masquerade as a matched carrier.
+      for (int j = 0; j < q.Length; j++) excess[j] = (float)(q[j] - npb);
+      for (int j = occBins - 1; j <= occBins + 1; j++)
+        if ((uint)j < (uint)excess.Length) excess[j] = 0;
+
+      // this frame's per-shift matched z into the averaging ring (replace the oldest row).
+      var row = zRing[zHead];
+      for (int i = 0; i < nShifts; i++) zSum[i] -= row[i];
+      (double bestZ, double bestW, int bestS) = MatchedSlide(row, npb);
+      for (int i = 0; i < nShifts; i++) zSum[i] += row[i];
+      frameBestZ[zHead] = bestZ;
+      zHead = (zHead + 1) % zRing.Length;
+      if (zCount < zRing.Length) zCount++;
+
+      // detection statistic: per-shift sum over the ring scaled back to unit noise variance, THEN max over
+      // shifts. CFO is stable across the few averaged frames, so averaging before the max keeps the noise
+      // floor of the max statistic at ~2.5–3σ regardless of template width.
+      double zStat = double.MinValue;
+      double norm = Math.Sqrt(zCount);
+      for (int i = 0; i < nShifts; i++) { double v = zSum[i] / norm; if (v > zStat) zStat = v; }
+
+      framesSeen++;
+      if (framesSeen < warmupFrames) return;   // not enough noise history to trust the threshold yet
+
+      if (!inBurst)
+      {
+        if (zStat > o.OnSigma)
+        {
+          inBurst = true;
+          startFrameAbs = OnsetFrame(absFrame);
+          lastAboveAbs = absFrame;
+          ResetBurstStats();
+          burstPeakZ = burstLevelZ = zStat;
+          NoteSignalFrame(bestZ, bestW, bestS);
+        }
+        return;
+      }
+
+      if (zStat > Math.Max(o.OnSigma, burstLevelZ / o.ReleaseFraction))
+      {
+        // step-up split: a much stronger signal turned on inside the current (weaker) burst. Close the weak
+        // segment and re-trigger, so the strong burst gets a tight segment of its own — its CFO and symbol
+        // timing must not be estimated over seconds of the weaker interferer.
+        CloseSpan(startFrameAbs, absFrame - 1, startGuard: true, endGuard: false, defer: false, ref frames);
+        startFrameAbs = OnsetFrame(absFrame);
+        lastAboveAbs = absFrame;
+        ResetBurstStats();
+        burstPeakZ = burstLevelZ = zStat;
+        NoteSignalFrame(bestZ, bestW, bestS);
+        return;
+      }
+
+      burstLevelZ += 0.1 * (zStat - burstLevelZ);   // ~10-frame (≈0.2 s) time constant
+      if (zStat > burstPeakZ) burstPeakZ = zStat;
+      if (zStat > Math.Max(o.OffSigma, burstPeakZ * o.ReleaseFraction)) lastAboveAbs = absFrame;
+      NoteSignalFrame(bestZ, bestW, bestS);
+
+      if ((absFrame - startFrameAbs) * (long)Hop >= maxBurstSamples)
+      {
+        // capped flush: emit what we have as a window (no end guard — later samples may not be in yet) and
+        // continue accumulating a fresh segment from here, so a continuous carrier keeps producing frames.
+        CloseSpan(startFrameAbs, absFrame, startGuard: true, endGuard: false, defer: false, ref frames);
+        startFrameAbs = absFrame + 1;
+        lastAboveAbs = absFrame;
+        ResetBurstStats();
+        burstPeakZ = burstLevelZ = zStat;   // the next window's release/split track their own level
+      }
+      else if (absFrame - lastAboveAbs > hangFrames)
+      {
+        // true end-of-burst: defer the decode so the soft-bit window can extend a max frame past the end.
+        CloseSpan(startFrameAbs, lastAboveAbs, startGuard: true, endGuard: true, defer: true, ref frames);
+        inBurst = false;
+      }
+    }
+
+    /// <summary>
+    /// Where the burst actually began: the averaged statistic crosses the threshold up to ring-length−1
+    /// frames after a weak burst's true onset, so walk the ring back to the earliest recent frame whose own
+    /// best z already cleared the release threshold; if none did (an onset too weak to see per frame),
+    /// back-date by the full averaging delay.
+    /// </summary>
+    private long OnsetFrame(long absFrame)
+    {
+      int n = zCount;
+      for (int back = 0; back < n; back++)
+      {
+        int slot = ((zHead - 1 - back) % n + n) % n;       // newest → oldest
+        if (back > 0 && frameBestZ[slot] <= o.OffSigma)
+          return Math.Max(0, absFrame - back + 1);
+      }
+      return Math.Max(0, absFrame - (n - 1));
+    }
+
+    /// <summary>
+    /// Slide the template's support across the CFO span over the frame's noise-subtracted spectrum. Per
+    /// shift s: z(s) = Σ excess·(t − t̄) / (npb·√(Σ(t−t̄)²)·√ENBW) — the matched correlation normalized to unit
+    /// variance under noise (CFAR), with the bin-correlation of the analysis window folded in. The template is
+    /// DC-removed (t̄ = Σt/n subtracted over the in-band support at this shift) so it is NOT all-positive: a flat
+    /// pedestal — a colored-noise floor sitting above the wide out-of-band reference npb — integrates to
+    /// Σ(t−t̄) = 0 instead of being summed as c·Σt amplified over √(support), which otherwise storms false bursts
+    /// on colored noise; only the template's SHAPE drives the statistic. Fills <paramref name="row"/> (indexed
+    /// s+cfoBins; disabled shifts stay 0) and returns the best z, the corresponding template-weighted mean
+    /// excess power W (for SNR reporting), and the best shift.
+    /// </summary>
+    private (double bestZ, double bestW, int bestS) MatchedSlide(double[] row, double npb)
+    {
+      int L = excess.Length;
+      double bestZ = double.MinValue, bestW = 0; int bestS = 0;
+      double sqrtEnbw = Math.Sqrt(WindowEnbw);
+      for (int si = 0; si < nShifts; si++)
+      {
+        int n = matchN[si];
+        if (shiftTSum[si] <= 0 || n < 8) { row[si] = 0; continue; }
+        int s = si - cfoBins;
+        double tSum = matchTSum[si];
+        double tBar = tSum / n;
+        double varT = shiftT2Sqrt[si] * shiftT2Sqrt[si] - tSum * tSum / n;   // Σ(t − t̄)² = Σt² − (Σt)²/n
+        if (varT <= 0) { row[si] = 0; continue; }
+        double se = 0, set = 0;
+        for (int k = 0; k < supIdx.Length; k++)
+        {
+          int j = supIdx[k] + s;
+          if ((uint)j >= (uint)L) continue;
+          double e = excess[j];
+          se += e; set += e * supT[k];
+        }
+        double acc = set - tBar * se;                                         // Σ excess·(t − t̄)
+        double z = acc / (npb * Math.Sqrt(varT) * sqrtEnbw);
+        row[si] = z;
+        if (z > bestZ) { bestZ = z; bestW = set / shiftTSum[si]; bestS = s; }
+      }
+      return (bestZ, bestW, bestS);
+    }
+
+    /// <summary>
+    /// Pearson correlation of the frame's noise-subtracted spectrum with the template over the support
+    /// shifted by <paramref name="s"/> bins. Mean-subtracted on both sides, so flat noise scores ~0 — and a
+    /// narrow line (CW, or SSTV's instantaneous FM carrier) scores low against the full-width template even
+    /// when it sits right on the template's peak.
+    /// </summary>
+    private double MatchAtShift(int s)
+    {
+      int L = excess.Length;
+      int si = s + cfoBins;
+      int n = matchN[si];
+      if (n < 8) return 0;
+      double tSum = matchTSum[si], tv = matchTVar[si];
+      double se = 0, set = 0, se2 = 0;
+      for (int k = 0; k < supIdx.Length; k++)
+      {
+        int j = supIdx[k] + s;
+        if ((uint)j >= (uint)L) continue;
+        double e = excess[j];
+        se += e; set += e * supT[k]; se2 += e * e;
+      }
+      // pearson from the raw sums: Σ(e−ē)(t−t̄) = Σe·t − t̄·Σe,  Σ(e−ē)² = Σe² − (Σe)²/n.
+      double num = set - tSum / n * se;
+      double ev = se2 - se * se / n;
+      return ev > 0 && tv > 0 ? num / Math.Sqrt(ev * tv) : 0;
+    }
+
+    /// <summary>Per-burst accounting for one in-burst frame: when the frame's own matched z clears the
+    /// release threshold it is signal-bearing — accumulate it into the averaged burst PSD and score its
+    /// instantaneous spectrum against the template (the digital-vs-SSTV/CW discriminator).</summary>
+    private void NoteSignalFrame(double bestZ, double bestW, int bestS)
+    {
+      if (bestZ <= o.OffSigma) return;
+      AccumulateBurstPsd();
+      burstWSum += bestW;
+      burstSigFrames++;
+      double r = MatchAtShift(bestS);
+      burstMatchSum += r;
+      if (r >= o.PerFrameMatchMin) burstShapedFrames++;
+    }
+
+    private void ResetBurstStats()
+    {
+      ResetBurstPsd();
+      burstWSum = 0;
+      burstSigFrames = 0;
+      burstShapedFrames = 0;
+      burstMatchSum = 0;
+    }
+
+    private double RollingNoiseFloor()
+    {
+      if (oobCount == 0) return 0;
+      Array.Copy(oobRing, oobScratch, oobCount);   // valid entries occupy [0, oobCount)
+      // interquartile trimmed mean of the per-frame OOB means: same level the median estimated
+      // (the per-frame means are near-symmetric), ~half the variance — a steadier threshold reference.
+      return NoiseFloor.TrimmedMeanInPlace(oobScratch, oobCount);
+    }
+
+    private void ResetBurstPsd() { Array.Clear(burstPsdSum); burstPsdCount = 0; }
+
+    /// <summary>Add the current frame's in-band power spectrum (<see cref="q"/>) to the burst accumulator.</summary>
+    private void AccumulateBurstPsd()
+    {
+      for (int j = 0; j < burstPsdSum.Length; j++) burstPsdSum[j] += q[j];
+      burstPsdCount++;
+    }
+
+    /// <summary>Mean in-band power spectrum over the burst (the same STFT frames the detector ran on),
+    /// noise-subtracted and DC-notched — the form <see cref="CfoEstimator.AnalyzeSpectrum"/> expects.</summary>
+    private float[] BuildAveragedSpectrum()
+    {
+      int L = burstPsdSum.Length;
+      var q = new float[L];
+      if (burstPsdCount == 0) return q;
+      for (int j = 0; j < L; j++) q[j] = (float)Math.Max(0, burstPsdSum[j] / burstPsdCount - noisePerBin);
+      for (int j = occBins - 1; j <= occBins + 1; j++) if ((uint)j < (uint)L) q[j] = 0;   // notch DC/LO leakage
+      return q;
+    }
+
+    // --- per-burst decode (reuses the batch CFO → demod → deframe path) ------------------------
+
+    /// <summary>One closed burst awaiting decode: the detector has fixed the span and captured every
+    /// parameter estimate from the burst's own in-burst STFT frames (averaged PSD → CFO/shape, SNR,
+    /// per-frame shape stats). The main decode runs on [SegStartAbs, BareEndAbs); when TargetEndAbs is
+    /// further, a second tail-pass window ending there finishes a frame still in flight at the close —
+    /// the decode is deferred until those samples have arrived.</summary>
+    private sealed record PendingDecode(long SegStartAbs, long DetStartAbs, long DetEndAbs, long BareEndAbs,
+      long TargetEndAbs, float[] AvgQ, double Snr, double MatchedFrac, int ShapedFrames, double MeanMatch);
+
+    /// <summary>
+    /// Close a detected span: capture the burst's parameter estimates — <b>strictly</b> from its own
+    /// in-burst frames — then decode. At a true end-of-burst (<paramref name="defer"/>) the soft-bit decode
+    /// is deferred until <see cref="IDeframer.MaxFrameBits"/> worth of post-burst samples have arrived, so a
+    /// frame that begins near the burst end is demodulated to completion; detection and parameter estimation
+    /// never see that extension. public boundaries (cap flush, step-up split) decode immediately — the
+    /// follow-up segment's lead overlap covers them.
+    /// </summary>
+    private void CloseSpan(long startFrameAbs, long endFrameAbs, bool startGuard, bool endGuard, bool defer, ref List<Frame>? frames)
+    {
+      long sStartAbs = startFrameAbs * Hop - (startGuard ? guard : 0);
+      long sEndAbs = endFrameAbs * Hop + Fft + (endGuard ? guard : 0);
+      sStartAbs = Math.Max(sStartAbs, bufBaseAbs);
+      sEndAbs = Math.Min(sEndAbs, bufBaseAbs + this.len);
+      int len = (int)(sEndAbs - sStartAbs);
+      if (len < minFrames * Hop) return;   // too short to be a real burst (matches the batch min-length gate)
+
+      // lead overlap: a segment that follows hard on a previous segment of the SAME digital signal — a
+      // cap flush, a brief fade dropout — reaches back into that segment's tail, so a frame cut by the
+      // boundary is decoded whole here (and deduplicated against the previous segment's output). The
+      // previous segment must have passed the per-frame shape gate: extending into an SSTV/CW tail (or
+      // across a step-up split, whose predecessor is the weaker interferer) prepends a foreign signal to
+      // the demod window and ruins its timing recovery.
+      long segStartAbs = sStartAbs;
+      if (lastSegDigital && sStartAbs - lastSegEndAbs <= overlapSamples)
+        segStartAbs = Math.Max(Math.Max(lastSegStartAbs, lastSegEndAbs - overlapSamples), bufBaseAbs);
+      if (segStartAbs > sStartAbs) segStartAbs = sStartAbs;
+
+      double matchedFrac = burstSigFrames > 0 ? (double)burstShapedFrames / burstSigFrames : 0;
+      lastSegStartAbs = sStartAbs;
+      lastSegEndAbs = sEndAbs;
+      lastSegDigital = matchedFrac >= o.MinMatchedFraction && burstShapedFrames >= o.MinShapedFrames;
+
+      // averaged power spectrum from the SAME STFT frames the detector ran on (no second FFT pass), and the
+      // band-limited matched SNR: mean best-shift matched power over the signal-bearing frames vs the
+      // per-bin noise floor (≈ signal-band SNR, not diluted by the CFO search margin).
+      var avgQ = BuildAveragedSpectrum();
+      double meanW = burstSigFrames > 0 ? burstWSum / burstSigFrames : 0;
+      double snr = 10.0 * Math.Log10((Math.Max(0, meanW) + noisePerBin) / Math.Max(noisePerBin, 1e-30));
+      double meanMatch = burstSigFrames > 0 ? burstMatchSum / burstSigFrames : 0;
+
+      // tail-extend only bursts with enough signal frames to be worth it (noise blips decode bare), and
+      // only when the peak-relative release — not the absolute noise floor — closed the burst: that is the
+      // case where the signal can still be decodable past the detector's cut and a frame may be in flight.
+      // A burst that faded below OffSigma has nothing decodable in its tail.
+      long tail = defer && burstSigFrames >= o.MinShapedFrames
+                  && burstPeakZ * o.ReleaseFraction > o.OffSigma
+                  ? tailSamples : 0;
+      var pend = new PendingDecode(segStartAbs, sStartAbs, sEndAbs, sEndAbs, sEndAbs + tail,
+        avgQ, snr, matchedFrac, burstShapedFrames, meanMatch);
+      if (tail > 0) pending.Enqueue(pend);
+      else DecodePending(pend, ref frames);
+    }
+
+    /// <summary>Decode the pending segments whose tail samples have arrived (all of them when
+    /// <paramref name="force"/>, at end-of-stream).</summary>
+    private void DrainPending(ref List<Frame>? frames, bool force = false)
+    {
+      while (pending.Count > 0 && (force || bufBaseAbs + len >= pending.Peek().TargetEndAbs))
+        DecodePending(pending.Dequeue(), ref frames);
+    }
+
+    private void DecodePending(PendingDecode p, ref List<Frame>? frames)
+    {
+      long segStart = Math.Max(p.SegStartAbs, bufBaseAbs);
+      long bareEnd = Math.Min(p.BareEndAbs, bufBaseAbs + len);
+      if (bareEnd - segStart <= 0) return;
+      var seg = new Complex32[(int)(bareEnd - segStart)];
+      Array.Copy(buf, (int)(segStart - bufBaseAbs), seg, 0, seg.Length);
+
+      // tail pass: a SEPARATE demod window around the burst end plus one max frame beyond it, to finish a
+      // frame still in flight at the close. Separate, because appending post-burst noise to the main window
+      // shifts its DC/timing estimates and degrades the in-burst decode (measured: it costs CRC frames).
+      Complex32[]? tailSeg = null;
+      long tailStartAbs = 0;
+      long tail = p.TargetEndAbs - p.BareEndAbs;
+      if (tail > 0)
+      {
+        tailStartAbs = Math.Max(segStart, p.DetEndAbs - tail - (long)(0.25 * fs));  // lead-in for timing lock
+        long tailEnd = Math.Min(p.TargetEndAbs, bufBaseAbs + len);
+        if (tailEnd - tailStartAbs > Fft)
+        {
+          tailSeg = new Complex32[(int)(tailEnd - tailStartAbs)];
+          Array.Copy(buf, (int)(tailStartAbs - bufBaseAbs), tailSeg, 0, tailSeg.Length);
+        }
+      }
+
+      DecodeBurst(seg, p.AvgQ, segStart, p.DetStartAbs, (int)(p.DetEndAbs - p.DetStartAbs),
+        p.Snr, p.MatchedFrac, p.ShapedFrames, p.MeanMatch, tailSeg, tailStartAbs, ref frames);
+    }
+
+    /// <summary><paramref name="seg"/> starts at <paramref name="segStartAbs"/> (the overlap-extended decode
+    /// span); <paramref name="detStartAbs"/>/<paramref name="detLen"/> is the detected burst proper, used for
+    /// the reported span and time.</summary>
+    private void DecodeBurst(Complex32[] seg, float[] avgQ, long segStartAbs, long detStartAbs, int detLen, double snr,
+      double matchedFrac, int shapedFrames, double meanMatch, Complex32[]? tailSeg, long tailStartAbs, ref List<Frame>? frames)
+    {
+      if (demod == null) return;   // modulation we don't demodulate (CW/SSTV/PSK) — nothing to do
+      try
+      {
+        // --- three-tier deviation lookup ---
+        // 1. Curated: p.Deviation known → existing CfoEstimator template-CFO + pre-built demod (unchanged).
+        // 2. Learned: blind but dev confirmed by a prior CRC-valid frame → cached demod + carrier-only CFO.
+        // 3. Blind (cold start): BlindFskEstimator recovers dev + CFO; drop burst when gates fail (not FSK).
+        BurstSpectralInfo info;
+        LearnedShape measured;
+        double match;
+        IDemodulator activeDemod;
+        SignalParams pEffective;     // p with the resolved Deviation, used for all demod calls
+        double? burstBlindDevHz;     // non-null on the blind/learned path
+
+        if (!p.IsBlind)
+        {
+          // curated path: unchanged behavior
+          info = cfo.AnalyzeSpectrum(avgQ);
+          measured = cfo.EstimateShapeFromSpectrum(avgQ, info.CfoHz);
+          match = CpmTemplate.Match(measured, template);
+          activeDemod = bpskCoherent != null
+            ? (p.Differential == true && p.Framing != Framing.CCSDS ? bpskDifferential! : bpskCoherent)
+            : this.demod!;
+          pEffective = p;
+          burstBlindDevHz = null;
+        }
+        else if (learnedDeviationHz.HasValue)
+        {
+          // session-learned path: deviation already confirmed; find carrier only, reuse cached demod
+          double cfoHz = BlindFskEstimator.EstimateCarrierFromKnownDev(avgQ, occBins, binHz, o.CfoMaxHz, learnedDeviationHz.Value);
+          info = new BurstSpectralInfo(cfoHz, 0, 0);
+          measured = BlindDummyShape;
+          match = 0;
+          activeDemod = learnedDemod!;
+          pEffective = p with { Deviation = learnedDeviationHz.Value };
+          burstBlindDevHz = learnedDeviationHz.Value;
+        }
+        else
+        {
+          // cold-start blind path: estimate deviation + carrier from the burst's own averaged PSD.
+          // avgQ covers the wide detection band (devMax = min(3·baud, fs/2−baud/2−cfoMax)) so the
+          // estimator can see tones from h ≈ 0.3 up to h ≈ 6 when they fall within that window.
+          var est = BlindFskEstimator.Estimate(avgQ, occBins, binHz, p.Baud, o.CfoMaxHz);
+          info = new BurstSpectralInfo(est.CfoHz, 0, 0);
+          measured = BlindDummyShape;
+          match = 0;
+          if (est.IsFsk)
+          {
+            // two-tone structure confirmed: demod with the estimated deviation
+            pEffective = p with { Deviation = est.DeviationHz };
+            activeDemod = Demodulators.Create(pEffective, o.GmskOptions) ?? this.demod!;
+            burstBlindDevHz = est.DeviationHz;
+          }
+          else
+          {
+            // two-tone structure not found: spectrum is bell-shaped (h ≤ 1, like MSK) or the burst is
+            // CW / SSTV / noise.  Fall back to the baud/4 discriminator scale (null Deviation); the
+            // deframer's CRC gate filters any false positives.  Don't cache deviation — not confirmed.
+            pEffective = p;
+            activeDemod = this.demod!;
+            burstBlindDevHz = null;
+          }
+        }
+
+        // hopeless-segment skip: skip for the blind path — the FSK gate
+        // already filtered junk above; for the curated path apply the existing shape-based check.
+        bool canValidate = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)
+                           || match >= minShapeScore;
+        if (!burstBlindDevHz.HasValue && !canValidate && !o.DecodeRejected
+            && shapedFrames < o.MinShapedFrames && match < CrcRescueMinMatch)
+          return;
+
+        // segment-local burst (indices into seg) for derotation; absolute time is stamped separately.
+        var local = new Burst(0, seg.Length, fs, info.CfoHz, snr)
+        {
+          ShapeScore = match,
+          BandwidthHz = info.BandwidthHz
+        };
+
+        double timeSeconds = detStartAbs / fs;
+        int idx = burstCounter;
+        double detEndSec = (detStartAbs + detLen) / fs;
+
+        // demodulate + deframe this burst with one demodulator (main pass + tail pass) → soft symbols, optional
+        // eye trace, and the in-burst frames. Called once normally, or twice for a PSK burst whose sub-mode is
+        // still unknown (the coherent-vs-differential trial below).
+        (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeWith(IDemodulator demod)
+        {
+          GmskTrace? tr = null;
+          SoftSymbols sf;
+          if (demod is CpmFskDemodulator cpm)
+          {
+            tr = cpm.Trace(Acquisition.Derotate(seg, local), pEffective);   // keep the trace for the eye/inspection view
+            sf = tr.Symbols;
+          }
+          else sf = demod.Demodulate(seg, local, pEffective);
+
+          var frs = new List<Frame>();
+          if (deframer != null)
+          {
+            double sps = sf.SamplesPerSymbol > 0 ? sf.SamplesPerSymbol : p.SampleRate / p.Baud;
+            foreach (var f in deframer.Deframe(sf, p))
+            {
+              // frame position → absolute stream time (SoftBitOffset is a symbol index into seg; −1 = unknown).
+              double ft = f.SoftBitOffset >= 0 ? (segStartAbs + f.SoftBitOffset * sps) / fs : timeSeconds;
+              // A frame must START inside the detected burst (or its lead overlap): the tail extension exists
+              // only to FINISH frames already in flight — a sync found in the post-burst noise is discarded.
+              if (ft > detEndSec + 0.1) continue;
+              // the frame's absolute on-air span (when the deframer reports it) drives the overlap dedup.
+              long startAbs = f.SoftBitOffset >= 0 ? segStartAbs + (long)(f.SoftBitOffset * sps) : -1;
+              long endAbs = f.SoftBitEnd >= 0 ? segStartAbs + (long)(f.SoftBitEnd * sps) : -1;
+              if (IsDuplicateFrame(f.Bytes, ft, startAbs, endAbs)) continue;   // same frame re-decoded via the overlap
+              frs.Add(f with { BurstIndex = idx, TimeSeconds = ft, CfoHz = info.CfoHz, SnrDb = snr });
+            }
+
+            // tail pass: same CFO, separate window ending one max frame past the burst end — finishes a frame
+            // that was still in flight when the detector closed the burst. Only frames that START inside the
+            // detected span count; everything else in the tail is post-burst noise.
+            if (tailSeg != null)
+            {
+              var tailLocal = new Burst(0, tailSeg.Length, fs, info.CfoHz, snr);
+              SoftSymbols tailSoft = demod is CpmFskDemodulator c2
+                ? c2.Trace(Acquisition.Derotate(tailSeg, tailLocal), pEffective).Symbols
+                : demod.Demodulate(tailSeg, tailLocal, pEffective);
+              double tsps = tailSoft.SamplesPerSymbol > 0 ? tailSoft.SamplesPerSymbol : p.SampleRate / p.Baud;
+              foreach (var f in deframer.Deframe(tailSoft, p))
+              {
+                double ft = f.SoftBitOffset >= 0 ? (tailStartAbs + f.SoftBitOffset * tsps) / fs
+                                                 : detEndSec + 1;   // unknown position → not provably in-burst
+                if (ft > detEndSec + 0.1) continue;
+                long startAbs = f.SoftBitOffset >= 0 ? tailStartAbs + (long)(f.SoftBitOffset * tsps) : -1;
+                long endAbs = f.SoftBitEnd >= 0 ? tailStartAbs + (long)(f.SoftBitEnd * tsps) : -1;
+                if (IsDuplicateFrame(f.Bytes, ft, startAbs, endAbs)) continue;
+                frs.Add(f with { BurstIndex = idx, TimeSeconds = ft, CfoHz = info.CfoHz, SnrDb = snr });
+              }
+            }
+          }
+          return (sf, tr, frs);
+        }
+
+        var (soft, trace, burstFrames) = decodeWith(activeDemod);
+
+        // promotion on the first CRC-valid blind frame: gate strictly on CRC-valid, not blind
+        // confidence — a frame that passes CRC proves the deviation it used actually works.
+        if (burstBlindDevHz.HasValue && !learnedDeviationHz.HasValue && burstFrames.Any(f => f.CrcValid == true))
+        {
+          learnedDeviationHz = burstBlindDevHz.Value;
+          learnedDemod = Demodulators.Create(p with { Deviation = burstBlindDevHz.Value }, o.GmskOptions) ?? this.demod!;
+          resolvedTarget.ResolvedDeviation = burstBlindDevHz.Value;   // surface the actual deviation to the caller's UI
+          Log.Information("Blind FSK: locked deviation {Dev:F0} Hz from first CRC-valid frame", burstBlindDevHz.Value);
+        }
+
+        // validation: per-frame shape (digital vs SSTV/CW) is primary; the averaged-spectrum match rescues
+        // very weak bursts whose individual frames are too noisy to score; and a CRC-valid frame is absolute
+        // proof of digital signal — every detected burst was demodulated, so a telemetry frame embedded in
+        // e.g. an SSTV span is never lost to the gate. For blind bursts the FSK gate already validated the
+        // spectrum; CRC-valid here promotes to a confirmed decode.
+        bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)
+                         || match >= minShapeScore
+                         || burstFrames.Any(f => f.CrcValid == true)
+                         || burstBlindDevHz.HasValue;   // blind FSK burst passed the gate → surface it
+        if (o.GateByShape && !validated) return;
+
+        if (burstFrames.Count > 0) { frames ??= new List<Frame>(); frames.AddRange(burstFrames); }
+
+        // absolute-span burst (the detected span, not the overlap-extended decode span) for display.
+        var abs = new Burst((int)detStartAbs, (int)(detStartAbs + detLen), fs, info.CfoHz, snr)
+        {
+          ShapeScore = match,
+          BandwidthHz = info.BandwidthHz
+        };
+        LastBurst = abs;
+        LastBurstTimeSeconds = timeSeconds;
+        LastSoftSymbols = soft;
+        LastTrace = trace;
+        burstCounter = idx + 1;
+
+        // correlation curve behind the match (for the inspector's correlation plot), in Hz.
+        var (lagBaud, corr) = CpmTemplate.Correlation(measured, template);
+        var lagHz = new double[lagBaud.Length];
+        for (int k = 0; k < lagBaud.Length; k++) lagHz[k] = lagBaud[k] * p.Baud;
+
+        if (frames != null)
+          foreach (Frame frame in frames)
+            FrameDecoded?.Invoke(frame);
+
+        BurstDecoded?.Invoke(new StreamingBurstReport(idx, segStartAbs, seg.Length, timeSeconds, validated,
+          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames));
+      }
+      catch (Exception ex)
+      {
+        // one bad burst must not sink the live stream (mirrors the batch pipeline's per-burst guards).
+        Log.Warning(ex, "Streaming burst decode failed at sample {Start}", segStartAbs);
+      }
+    }
+
+    /// <summary>An emitted frame, kept for overlap dedup: its bytes/time and — when the deframer reported the
+    /// frame's on-air span — its absolute start/end sample (StartAbs < 0 when unknown).</summary>
+    private readonly record struct RecentFrame(byte[] Bytes, double Time, long StartAbs, long EndAbs);
+
+    /// <summary>True when this frame duplicates one already emitted (the overlap re-decode of a
+    /// boundary-straddling frame); otherwise records it. When the frame's on-air span is known
+    /// (<paramref name="startAbs"/>/<paramref name="endAbs"/> ≥ 0) it is rejected if it overlaps an
+    /// already-emitted span by more than half the shorter span — this catches a frame re-decoded in another
+    /// window even when each window's independent CFO/timing flipped a few bits (the CRC-less HADES SSDV/CODEC2
+    /// types defeat byte-equality). Framings that don't report a span (USP/AX.25/CCSDS) fall back to exact
+    /// byte-equality within ±1 s; those are CRC-gated so that already works. Entries older than 30 s are pruned.</summary>
+    private bool IsDuplicateFrame(byte[] bytes, double time, long startAbs, long endAbs)
+    {
+      recentFrames.RemoveAll(r => time - r.Time > 30.0);
+      bool havePos = startAbs >= 0 && endAbs > startAbs;
+      foreach (var r in recentFrames)
+      {
+        if (havePos && r.EndAbs > r.StartAbs)
+        {
+          if (OverlapFraction(startAbs, endAbs, r.StartAbs, r.EndAbs) > 0.5) return true;
+        }
+        else if (Math.Abs(time - r.Time) < 1.0 && r.Bytes.AsSpan().SequenceEqual(bytes)) return true;
+      }
+      recentFrames.Add(new RecentFrame(bytes, time, startAbs, endAbs));
+      return false;
+    }
+
+    /// <summary>Fraction of the shorter of the two spans [a0,a1) / [b0,b1) covered by their intersection.</summary>
+    private static double OverlapFraction(long a0, long a1, long b0, long b1)
+    {
+      long inter = Math.Min(a1, b1) - Math.Max(a0, b0);
+      if (inter <= 0) return 0;
+      long shorter = Math.Min(a1 - a0, b1 - b0);
+      return shorter > 0 ? (double)inter / shorter : 0;
+    }
+
+    // --- sliding buffer management -------------------------------------------------------------
+
+    private void Append(ReadOnlySpan<Complex32> block)
+    {
+      if (block.IsEmpty) return;
+      EnsureCapacity(len + block.Length);
+      block.CopyTo(buf.AsSpan(len));
+      len += block.Length;
+    }
+
+    private void EnsureCapacity(int needed)
+    {
+      if (buf.Length >= needed) return;
+      int cap = buf.Length;
+      while (cap < needed) cap *= 2;
+      Array.Resize(ref buf, cap);
+    }
+
+    /// <summary>Drop consumed samples from the front, keeping the guard + averaging-delay history (idle) or
+    /// the whole burst (in burst), so memory stays bounded between bursts and the buffer never trims into a
+    /// pending — or about-to-be-back-dated — burst.</summary>
+    private void Trim()
+    {
+      long cursor = bufBaseAbs + nextFrameOffset;
+      long keepFromAbs;
+      if (inBurst)
+        keepFromAbs = startFrameAbs * Hop - guard;                       // hold the whole burst + start guard
+      else
+        keepFromAbs = cursor - (long)keepFrames * Hop;                    // retain history behind the cursor
+
+      // hold the previous segment's tail while a follow-up segment could still reach back into it (overlap).
+      if (lastSegDigital && cursor - lastSegEndAbs <= overlapSamples + (long)keepFrames * Hop)
+        keepFromAbs = Math.Min(keepFromAbs, Math.Max(lastSegStartAbs, lastSegEndAbs - overlapSamples));
+
+      // hold everything a deferred (tail-extended) decode still needs.
+      if (pending.Count > 0)
+        keepFromAbs = Math.Min(keepFromAbs, pending.Peek().SegStartAbs);
+
+      keepFromAbs = Math.Max(keepFromAbs, bufBaseAbs);
+      keepFromAbs -= ((keepFromAbs % Hop) + Hop) % Hop;                    // align down to the Hop grid
+      keepFromAbs = Math.Max(keepFromAbs, bufBaseAbs);
+
+      int drop = (int)(keepFromAbs - bufBaseAbs);
+      if (drop <= 0) return;
+      Array.Copy(buf, drop, buf, 0, len - drop);
+      len -= drop;
+      bufBaseAbs += drop;
+      nextFrameOffset -= drop;
+    }
+
+    public void Dispose() { fft.Dispose(); cfo.Dispose(); }
+  }
+}

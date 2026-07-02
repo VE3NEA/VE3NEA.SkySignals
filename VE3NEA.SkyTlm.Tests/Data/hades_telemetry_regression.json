@@ -1,0 +1,59 @@
+{
+  "description": "HADES-SA telemetry decode regression: real CRC-OK off-air frames (captured from 2026-04-17_14_54_53_HADES-SA.iq.wav via the headless StreamingPipeline decoder), pinned to expected fields. This is the off-air guard for the schema-v2 features that ONLY HADES exercises in a real recording: linear scale+offset, special (sentinel) values, units, enum, a visible repeat array (time_series), the empty-BBS detection (type 15: the message store is always empty off-air, so it is rendered as a single 'empty (No data)' marker; the group/str/repeat mechanics are covered synthetically), AND the type-1 power frame's cross-byte nibble-packing + nonlinear calibration (LE u2 ADC words -> bitwise/shift expr: vbus1/vbat1 *1.4, vcpu reciprocal 1210*4096/x, vbus2/3+vbat2 *4, ibat signed 12-bit). The power calibration mirrors the satnogs-decoders hadesr.ksy `_dec` instances (same AMSAT-EA bus as HADES-SA, identical seq: sclock u4 + spa-spd u1 + spi u2 + 7 ADC u2 words); LE word reads were confirmed correct by producing physically-sane voltages (~3.9-4.3 V, vcpu ~2.8 V) and a small signed ibat, vs. garbage from a clean MSB-first 12-bit read. HADES dispatch is on the 4-bit `type` (high nibble of byte 0). Type-4 (power_ranges) and type-9 (ext_power INA) are not yet pinned (type 4 = same approach, follow-up; type 9 spec values are 'raw').",
+  "frames": [
+    {
+      "norad": 68446, "sat": "HADES-SA", "type": 1, "recording": "2026-04-17_14_54_53 @516.98s",
+      "hex": "132E1C1800485F426E3500CBB06C10D9E3B33D0FD401E8702000000000",
+      "layout": "power",
+      "feature": "cross-byte nibble-pack + nonlinear cal (bitwise/shift expr over LE ADC words)",
+      "expect": {
+        "sclock": "1580078",
+        "spa": "72",
+        "vbus1": "3959",
+        "vbat1": "3965",
+        "vcpu": "2845",
+        "vbus2": "3940",
+        "vbus3": "3948",
+        "vbat2": "3920",
+        "ibat": "-24",
+        "icpu": "18",
+        "ipl": "112"
+      }
+    },
+    {
+      "norad": 68446, "sat": "HADES-SA", "type": 5, "recording": "2026-04-17_14_54_53 @77.18s",
+      "hex": "53761A1800FF222624FF2E262AFF32FF978F8EFF808586008F",
+      "layout": "temp_ranges",
+      "feature": "scale + offset + special + units",
+      "expect": {
+        "sclock": "1579638",
+        "mintpa": "ERROR",
+        "mintpb": "-23.0",
+        "maxtpb": "35.5",
+        "maxtrx": "-40.0"
+      }
+    },
+    {
+      "norad": 68446, "sat": "HADES-SA", "type": 14, "recording": "2026-04-17_14_54_53 @236.97s",
+      "hex": "E3161B180002B0B0B0B1B1B1B0B0B0AFB0B0B0B0B0B0AFB0B0B0B0B0B0AFB1B1B0B1B0B0",
+      "layout": "time_series",
+      "feature": "enum + visible repeat array (vbat1: non-temp variable → raw counts, samples named by T-minus minute)",
+      "expect": {
+        "sclock": "1579798",
+        "variable": "vbat1",
+        "T-87": "176",
+        "T-78": "177"
+      }
+    },
+    {
+      "norad": 68446, "sat": "HADES-SA", "type": 15, "recording": "2026-04-17_14_54_53 @37.18s",
+      "hex": "F32D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D4E6F20646174614E6F20646174614E6F20646174614E6F20646174614E6F20646174610000000000",
+      "layout": "bbs",
+      "feature": "empty-BBS detection",
+      "note": "EMPTY-BBS frame: the on-board message store is empty, so the firmware fills it with filler ('-' dashes + the repeated 'No data' sentinel), NOT real BBS records. Every type-15 BBS frame in every HADES-SA recording we have (2026-04-17/06-02/06-07/06-18) is this identical filler — no real-callsign BBS frame exists off-air. The parser detects the empty store and emits a single 'bbs = empty (No data)' marker instead of slicing the filler into 15 meaningless callsign/message/count fields. The group/str/repeat parse mechanics are still covered off this path by the synthetic Hades_Type15_Bbs_GroupRepeatReproducesExplicitNames unit test.",
+      "expect": {
+        "bbs": "empty (No data)"
+      }
+    }
+  ]
+}

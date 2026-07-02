@@ -1,0 +1,18 @@
+{
+  "description": "RANDEV telemetry decode regression: a real CRC-OK off-air frame (captured from a SkyRoof recording via the headless StreamingPipeline decoder) pinned to a few expected fields. Guards the ksy->JSON converter output (tools/ksy_to_json.py -> Telemetry/Definitions/52898_RANDEV.json) + the schema-v2 TelemetryParser (computed zero-width instance fields + ternary expr) against drift. The pinned fields prove: the 15-byte AX.25 header skip (system_leading = the 0xF0 PID byte the ksy folds into the payload), a simple kaitai-instance calibration (temps, eps voltage), and the ternary EPS battery-current path.",
+  "frames": [
+    {
+      "norad": 52898, "sat": "RANDEV", "recording": "2026-06-13_17_02_38 @14.13s",
+      "hex": "82A686984040E0A4829C888AAC6103F00A3FB25DD600000000004100451111111111111111121212121212121213131313131313130101010101010101020202020202020203030303030303030000000000120394000C00110007038F0007035B000E03060003000300020002000200020003000300030003000300020003000303020185009C021C01A003970005000802EE0002F2F2093C0697069801200049025000010994099A007D00410697011D00490247000109930999F5F5F5F5000076020000818100004242F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F7F700800080000000000000000000000000",
+      "layout": "main",
+      "expect": {
+        "system_leading": "240",
+        "temp2_celcius": "6.5",
+        "eps_battery_voltage_volts": "6.95795",
+        "eps_temp_celcius": "13.996614",
+        "bat_current_ampere": "-2.214076",
+        "comm_rx_rssi_dbm": "-104.12"
+      }
+    }
+  ]
+}

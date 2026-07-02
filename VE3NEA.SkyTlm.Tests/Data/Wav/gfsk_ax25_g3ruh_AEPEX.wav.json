@@ -1,0 +1,5 @@
+{
+  "baud": 9600,
+  "modulation": "GFSK",
+  "framing": "AX25G3RUH"
+}

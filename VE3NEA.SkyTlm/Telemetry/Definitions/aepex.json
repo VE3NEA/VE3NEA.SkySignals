@@ -1,0 +1,693 @@
+{
+  "id": "aepex",
+  "norad": [68506],
+  "bitOrder": "msb",
+  "endian": "be",
+  "dispatch": {
+    "field": "application_process_id",
+    "cases": {
+      "1": "aepex_sw_stat"
+    }
+  },
+  "layouts": {
+    "_header": {
+      "fields": [
+        {
+          "name": "ccsds_version",
+          "bits": 3,
+          "hidden": true,
+          "skip": 16
+        },
+        {
+          "name": "packet_type",
+          "type": "bool",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "secondary_header_flag",
+          "type": "bool",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "is_stored_data",
+          "type": "bool",
+          "bits": 1,
+          "hidden": true
+        },
+        {
+          "name": "application_process_id",
+          "bits": 10,
+          "hidden": true
+        },
+        {
+          "name": "grouping_flag",
+          "bits": 2,
+          "hidden": true
+        },
+        {
+          "name": "sequence_count",
+          "bits": 14,
+          "hidden": true
+        },
+        {
+          "name": "packet_length",
+          "bits": 16,
+          "hidden": true
+        },
+        {
+          "name": "secondary_header",
+          "if": "secondary_header_flag",
+          "fields": [
+            {
+              "name": "sec_time_stamp_seconds",
+              "bits": 32
+            },
+            {
+              "name": "sec_sub_seconds",
+              "bits": 16
+            }
+          ]
+        }
+      ]
+    },
+    "aepex_sw_stat": {
+      "extends": "_header",
+      "fields": [
+        {
+          "name": "sw_cmd_recv_count",
+          "bits": 16
+        },
+        {
+          "name": "sw_cmd_fmt_count",
+          "bits": 16
+        },
+        {
+          "name": "sw_cmd_rjct_count",
+          "bits": 16
+        },
+        {
+          "name": "sw_cmd_succ_count",
+          "bits": 16
+        },
+        {
+          "name": "padding1",
+          "bits": 16
+        },
+        {
+          "name": "padding2",
+          "bits": 16
+        },
+        {
+          "name": "sw_cmd_fail_code",
+          "bits": 8
+        },
+        {
+          "name": "sw_cmd_xsum_state",
+          "bits": 8
+        },
+        {
+          "name": "reusable_spare_1",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_2",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_3",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_4",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_5",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_cmd_arm_state_uhf",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_cmd_arm_state_seq",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_cmd_arm_state_dbg",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_6",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_inst4",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_inst3",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_inst2",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_inst1",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_sband",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_uhf",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_eps_pwr_state_adcs",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_time_since_rx",
+          "bits": 32
+        },
+        {
+          "name": "reusable_spare_7",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_8",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_9",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_10",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_11",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_12",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "reusable_spare_13",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_bat_alive_state_battery0",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_mode_clt_count",
+          "bits": 8
+        },
+        {
+          "name": "sw_mode_system_mode",
+          "bits": 8
+        },
+        {
+          "name": "reusable_spare_14",
+          "bits": 8
+        },
+        {
+          "name": "sw_sband_pa_temp",
+          "bits": 16
+        },
+        {
+          "name": "sw_sband_pa_curr",
+          "bits": 16
+        },
+        {
+          "name": "reusable_spare_15",
+          "bits": 8
+        },
+        {
+          "name": "sw_uhf_alive",
+          "bits": 8
+        },
+        {
+          "name": "sw_uhf_temp",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "reusable_spare_16",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_state_auto",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_state_op1",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_state_op2",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_state_op3",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_stop_code_auto",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_stop_code_op1",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_stop_code_op2",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_stop_code_op3",
+          "bits": 8
+        },
+        {
+          "name": "sw_seq_exec_buf_auto",
+          "bits": 16
+        },
+        {
+          "name": "sw_seq_exec_buf_op1",
+          "bits": 16
+        },
+        {
+          "name": "sw_seq_exec_buf_op2",
+          "bits": 16
+        },
+        {
+          "name": "sw_seq_exec_buf_op3",
+          "bits": 16
+        },
+        {
+          "name": "sw_store_partition_write_misc",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_read_misc",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_write_adcs",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_read_adcs",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_write_beacon",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_read_beacon",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_write_log",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_read_log",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_write_sci",
+          "bits": 32
+        },
+        {
+          "name": "sw_store_partition_read_sci",
+          "bits": 32
+        },
+        {
+          "name": "sw_fp_resp_count",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_bus_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_3p3_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_2p5_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_1p8_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_1p0_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_3p3_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_1p8_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_1p0_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_cdh_temp",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_cdh_3p3_ref",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_sa1_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_sa1_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_sa2_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_sa2_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_bat1_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_eps_temp",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_eps_3p3_ref",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_eps_bus_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_eps_bus_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_xact_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_xact_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_uhf_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_uhf_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_sband_v",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_sband_i",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_axis1_volt",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_axis1_curr",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_axis2_volt",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_axis2_curr",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_axis3_volt",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_axis3_curr",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_afire_volt",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_afire_curr",
+          "bits": 16
+        },
+        {
+          "name": "sw_ana_ifb_therm1",
+          "bits": 16
+        },
+        {
+          "name": "sw_adcs_alive",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_eclipse",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_att_valid",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_adcs_ref_valid",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_adcs_time_valid",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_adcs_mode",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_adcs_recommend_sun_point",
+          "type": "bool",
+          "bits": 1
+        },
+        {
+          "name": "sw_adcs_sun_point_state",
+          "bits": 3
+        },
+        {
+          "name": "reusable_spare_17",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_analogs_voltage_2p5",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_analogs_voltage_1p8",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_analogs_voltage_1p0",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_analogs_det_temp",
+          "bits": 8,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_analogs_motor1_temp",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_analogs_motor2_temp",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_analogs_motor3_temp",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_analogs_digital_bus_v",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_cmd_acpt",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_cmd_fail",
+          "bits": 8
+        },
+        {
+          "name": "sw_adcs_sun_vec1",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_sun_vec2",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_sun_vec3",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_wheel_sp1",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_wheel_sp2",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_wheel_sp3",
+          "bits": 16,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_rt1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_rt2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_rt3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_quat1",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_quat2",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_quat3",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "sw_adcs_body_quat4",
+          "bits": 32,
+          "type": "int"
+        },
+        {
+          "name": "des_met_time_seconds",
+          "bits": 32
+        },
+        {
+          "name": "sw_im_id",
+          "bits": 8
+        },
+        {
+          "name": "payload_alive_axis1",
+          "bits": 8
+        },
+        {
+          "name": "payload_alive_axis2",
+          "bits": 8
+        },
+        {
+          "name": "payload_alive_axis3",
+          "bits": 8
+        },
+        {
+          "name": "payload_alive_afire",
+          "bits": 8
+        },
+        {
+          "name": "reusable_spare_18",
+          "bits": 8
+        },
+        {
+          "name": "reusable_spare_19",
+          "bits": 8
+        },
+        {
+          "name": "reusable_spare_20",
+          "bits": 8
+        },
+        {
+          "name": "checksum",
+          "bits": 32
+        }
+      ]
+    }
+  }
+}
