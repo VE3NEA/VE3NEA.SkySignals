@@ -140,6 +140,49 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [Fact(Skip = "manual probe: P6(c) filter sweep. Result 2026-07-02 on the real Monitor-3 text card: " +
+      "the defaults (chan 15000 / video 1800) leave heavy speckle; narrowing to chan 4000–5000 + video " +
+      "500–650 yields an essentially clean, fully readable image that BEATS the RXSSTV reference decode. " +
+      "Brackets: chan 3000 clips the FM tails (speckle returns), video 350 over-smooths. Implication: the " +
+      "real audio deviation is far below the synthetic 5 kHz — settle the deviation, re-baseline the " +
+      "synthetic encoder, and lock new defaults in the P6(c) pass.")]
+    public void Real_FilterSweepProbe()
+    {
+      // P6(c): sweep the Stage-1 channel BW and the Stage-3 video BW over the matched real reference image
+      // (the Monitor-3 text card — RXSSTV's decode of the same transmission, C:\Ham\RX-SSTV-2\History
+      // 2026-07-01_11.07.49, is the quality target; readable text makes differences obvious at a glance).
+      string wav = Path.Combine(RecordingsDir, "2026-07-01_11_02_25_Monitor-3.iq.wav");
+      if (!File.Exists(wav)) { output.WriteLine("capture absent; probe skipped"); return; }
+
+      var (iq, sr) = WavIqReader.Read(wav);
+      var res = SstvDecoder.DetectMode(iq, new SstvDecodeOptions { SampleRate = sr });
+      res.Found.Should().BeTrue("the burst is known to be present");
+      var spec = SstvModes.Get(res.Mode!.Value);
+
+      int margin = (int)(0.5 * sr);
+      int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * sr);
+      int start = Math.Max(0, res.FirstSyncSample - margin);
+      int end = Math.Min(iq.Length, res.FirstSyncSample + dur + margin);
+      var seg = iq[start..end];
+
+      foreach (double chanBw in new[] { 5000.0, 4000.0, 3000.0 })
+        foreach (double videoBw in new[] { 650.0, 500.0 })
+        {
+          var img = SstvDecoder.Decode(seg, res.Mode.Value, new SstvDecodeOptions
+          {
+            SampleRate = sr,
+            Acquire = false,
+            StartSample = res.FirstSyncSample - start,
+            ChannelBwHz = chanBw,
+            BrightnessBwHz = videoBw
+          });
+          string path = Path.Combine(OutDir, $"sweep_Monitor3_chan{chanBw:0}_vid{videoBw:0}.png");
+          img.SavePng(path);
+          output.WriteLine($"chan={chanBw} video={videoBw} -> {Path.GetFileName(path)}");
+        }
+    }
+
+
     // ----------------------------------------------------------------------------------------------------
     //                                            engine glue
     // ----------------------------------------------------------------------------------------------------

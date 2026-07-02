@@ -35,19 +35,45 @@ passes): the SPUTNIX winged-satellite image with readable banner**; geometry is 
 correction works on real signals. All via MHT (`fromVis=false`), measured period exactly 150.0 ms.
 Remaining quality gap: heavy speckle noise = the P6(c) front-end fidelity work.
 
+**Reference decodes (2026-07-02): `C:\Ham\RX-SSTV-2\History` holds RXSSTV's decodes of the same
+transmissions** (match by timestamp: capture filename = recording start, RXSSTV filename = image
+completion). Confirmed same-image pairs: Monitor-3 text card ends 11:07:49; UTMN2 SPUTNIX ends 11:35:09.
+Findings from the comparison:
+
+- **VIZARD-meteo is Robot36 confirmed** — RXSSTV also decoded it as Robot36 (the "Robot 72" transmitter tag
+  is wrong); its transmissions were genuinely weak (RXSSTV's decodes are mostly noise too).
+- **UmKA-1 12:19:50 explained**: RXSSTV's image completed at 12:19:42 — the transmission ended just before
+  our recording started; our noise-only decode is correct behavior.
+- **The 22:36 UTMN2 capture holds ≥2 bursts**: ours decoded the weaker one at +30 s; RXSSTV's clean
+  SPUTNIX (22:40:05) is the stronger ~+197 s burst. The harness currently decodes only `BestTrain` —
+  **decode one image per train** (the P8 leaf-per-image behavior) so no burst is dropped.
+- **Quality target for P6(c)**: RXSSTV is visibly cleaner on smooth areas (less RGB speckle) but shows torn
+  rows where it lost sync; our geometry is straighter. So the timing chain is ahead, the video filtering is
+  behind — the gap is front-end fidelity, exactly §6 items 1–3.
+
+**First P6(c) data point (Real_FilterSweepProbe, 2026-07-02, on the matched Monitor-3 text card):**
+sweeping `ChannelBwHz` × `BrightnessBwHz` over the real burst, the defaults (15000 / 1800) leave heavy
+speckle; **chan 4000–5000 + video 500–650 gives an essentially clean, fully readable image that beats the
+RXSSTV reference** ("Launch site: Leninabad, USSR" crisp, the bottom flag row visible). Brackets: chan 3000
+clips the FM tails (speckle returns — the knee), video 350 over-smooths. Hopper's ±500 Hz video band-limit
+is vindicated on real IQ. **Implication: the real audio deviation is far below the synthetic encoder's
+5 kHz** — the P6(c) pass must measure/settle the real deviation, align the encoder to it, re-baseline the
+synthetic PSNR bars, and then lock the new defaults (a naive default switch would clip the current
+synthetic signal, whose Carson width is ~±7.3 kHz).
+
 Next actions (P6(c) + follow-ups surfaced by the real run):
 
-1. **Front-end fidelity sweep** (§6 goals): Stage-1 channel BW vs real deviation, `BrightnessBwHz`,
-   de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`); PSNR on synthetic impairments
-   (add the `DopplerRateHzPerSec` encoder knob, §8) + the reference-free metrics on the real decodes.
-   Raise `SstvNoiseTests` floors as fidelity improves.
+1. **Front-end fidelity sweep** (§6 goals): settle the real deviation and align the encoder; lock
+   `ChannelBwHz`/`BrightnessBwHz` defaults from the sweep above; then de-emphasis, impulse blanking (mine
+   `Hopper\Experiments\FmNoise`); PSNR on synthetic impairments (add the `DopplerRateHzPerSec` encoder
+   knob, §8) + visual/reference-free metrics on the real decodes against the RXSSTV references. Raise
+   `SstvNoiseTests` floors as fidelity improves.
 2. **Threshold tuning** (retro D) on real IQ; retro E (per-pulse frequency or drop the gate) and O
    (freqdem + single discriminator pass — `DetectMode`+`Decode` still discriminate twice) fold in.
 3. **VIS search window**: currently only the first 2 s (`AcquireSearchSamples`) — real bursts start minutes
    in, so VIS is never seen on captures. Either scan VIS continuously (streaming tone tracks, §6.0) or seed
    it from each detected burst start.
-4. **VIZARD-meteo mode question**: the transmitter tag says Robot 72 but the decode locks a 150 ms cadence
-   (Robot36) with real image content in the top band — confirm the true mode / investigate mid-burst fade.
+4. **Decode every train, not just `BestTrain`** in the harness (multi-image passes; see the 22:36 finding).
 5. Then P7 (regression corpus) and P8 (SkyRoof integration, §5).
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
