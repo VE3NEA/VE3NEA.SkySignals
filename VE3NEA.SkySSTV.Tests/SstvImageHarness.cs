@@ -64,10 +64,10 @@ namespace VE3NEA.SkySSTV.Tests
     // ----------------------------------------------------------------------------------------------------
 
 
-    [Fact(Skip = "manual probe: processes a 102 MB capture. Result 2026-07-01 (retro J validated): " +
-      "raw burst 0.243 / clutter 0.163; bandpassed burst 0.420 (= synthetic level) / clutter 0.406 — " +
-      "the Stage-2 bandpass lifts real syncs to synthetic scores, but band-limited noise coherence rises " +
-      "too, so single-pulse thresholds remain non-separable and the §4.1 train integration stays required.")]
+    [ManualFact("Result 2026-07-01 (retro J validated): raw burst 0.243 / clutter 0.163; bandpassed burst " +
+      "0.420 (= synthetic level) / clutter 0.406 — the Stage-2 bandpass lifts real syncs to synthetic " +
+      "scores, but band-limited noise coherence rises too, so single-pulse thresholds remain " +
+      "non-separable and the §4.1 train integration stays required.")]
     public void Real_SyncScoreProbe()
     {
       // retro item J validation: the P4.5 probe measured the real sync matched-filter score at ~0.24 with a
@@ -104,12 +104,12 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [Fact(Skip = "manual harness: processes multi-hundred-MB captures. Result 2026-07-02 (multi-image, " +
-      "real-tuned defaults, continuous VIS): 18 images from 8 of 9 captures — one per promoted train. " +
-      "Both UTMN2 22:36 bursts decode nearly clean (the 27 s copy is the better one); UTMN2 11:29 yields " +
-      "five bursts whose ~13 s pairs match RXSSTV's paired history entries; Monitor-3 text card clean " +
-      "(beats RXSSTV); UmKA-1 anchors fromVis=True at ~297 s + a second burst at ~318 s. Weak-train noise " +
-      "decodes (score ~0.28-0.30, e.g. 12_37_50) remain the retro-D threshold-tuning case.")]
+    [ManualFact("Result 2026-07-02 (multi-image, real-tuned defaults, continuous VIS): 18 images from 8 " +
+      "of 9 captures — one per promoted train. Both UTMN2 22:36 bursts decode nearly clean (the 27 s copy " +
+      "is the better one); UTMN2 11:29 yields five bursts whose ~13 s pairs match RXSSTV's paired history " +
+      "entries; Monitor-3 text card clean (beats RXSSTV); UmKA-1 anchors fromVis=True at ~297 s + a " +
+      "second burst at ~318 s. Weak-train noise decodes (score ~0.28-0.30, e.g. 12_37_50) remain the " +
+      "retro-D threshold-tuning case.")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))
@@ -173,12 +173,11 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
-    [Fact(Skip = "manual probe: P6(c) filter sweep. Result 2026-07-02 on the real Monitor-3 text card: " +
-      "the defaults (chan 15000 / video 1800) leave heavy speckle; narrowing to chan 4000–5000 + video " +
-      "500–650 yields an essentially clean, fully readable image that BEATS the RXSSTV reference decode. " +
-      "Brackets: chan 3000 clips the FM tails (speckle returns), video 350 over-smooths. Implication: the " +
-      "real audio deviation is far below the synthetic 5 kHz — settle the deviation, re-baseline the " +
-      "synthetic encoder, and lock new defaults in the P6(c) pass.")]
+    [ManualFact("Result 2026-07-02 on the real Monitor-3 text card: the (then-)defaults (chan 15000 / " +
+      "video 1800) left heavy speckle; narrowing to chan 4000–5000 + video 500–650 yielded an essentially " +
+      "clean, fully readable image that BEATS the RXSSTV reference decode. Brackets: chan 3000 clips the " +
+      "FM tails (speckle returns), video 350 over-smooths. This drove the ChannelBwHz/BrightnessBwHz " +
+      "defaults now in SstvDecodeOptions.")]
     public void Real_FilterSweepProbe()
     {
       // P6(c): sweep the Stage-1 channel BW and the Stage-3 video BW over the matched real reference image
@@ -216,10 +215,10 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
-    [Fact(Skip = "manual probe: processes all captures. Result 2026-07-02: peak deviation ≈ 3.3 kHz on the " +
-      "strong bursts (Monitor-3 3310, UTMN2 3303/3368 Hz); weaker bursts read 3.7–4.1 kHz (noise-inflated). " +
-      "Corroborated by the FskDemod spectrogram (occupied width ≈ ±5 kHz, carrier centered). Basis for the " +
-      "chan ±6 kHz default and the encoder's 3.3 kHz deviation.")]
+    [ManualFact("Result 2026-07-02: peak deviation ≈ 3.3 kHz on the strong bursts (Monitor-3 3310, UTMN2 " +
+      "3303/3368 Hz); weaker bursts read 3.7–4.1 kHz (noise-inflated). Corroborated by the FskDemod " +
+      "spectrogram (occupied width ≈ ±5 kHz, carrier centered). Basis for the chan ±6 kHz default and the " +
+      "encoder's 3.3 kHz deviation.")]
     public void Real_DeviationProbe()
     {
       // P6(c): measure the real transmissions' peak FM deviation. The discriminator output inside a burst
