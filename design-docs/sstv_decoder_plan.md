@@ -82,15 +82,22 @@ Suite: **86 pass / 3 manual-skip.**
   Cyrillic card RXSSTV never captured. Remaining defect: 12_37_50 Monitor-3 decodes noise from a weak
   train (score 0.30) — the retro-D threshold case.
 
+**Multi-image decode DONE (2026-07-02):** the harness decodes one image per promoted train (≥¼ of the
+mode's lines claimed) instead of only `BestTrain` — **18 images from 8 of 9 captures**. Both UTMN2 22:36
+bursts decode nearly clean (the 27 s copy is the better one — its earlier bad decode was the old wide
+filters, not the burst); UTMN2 11:29 yields five bursts whose ~13 s pairs match RXSSTV's paired history
+entries; UmKA-1 shows a second burst at ~318 s after its VIS-anchored ~297 s one.
+
 Next actions:
 
-1. **Threshold tuning** (retro D) on real IQ — the 12_37_50 false/weak lock is the test case; retro E
-   (per-pulse frequency or drop the gate) and O (freqdem + single discriminator pass — `DetectMode`+
-   `Decode` still discriminate twice) fold in.
+1. **Threshold tuning** (retro D) on real IQ — the weak-train noise decodes (score ~0.28–0.30, e.g.
+   12_37_50 and Monitor-3's 152 s burst) are the test cases; retro E (per-pulse frequency or drop the
+   gate) and O (freqdem + single discriminator pass — `DetectMode`+`Decode` still discriminate twice)
+   fold in.
 2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
    `DopplerRateHzPerSec` encoder knob (§8), SNR-adaptive video bandwidth.
-3. **Decode every train, not just `BestTrain`** in the harness (multi-image passes; see the 22:36 finding).
-4. Then P7 (regression corpus) and P8 (SkyRoof integration, §5).
+3. Then P7 (regression corpus) and P8 (SkyRoof integration, §5 — the per-train image emission just proven
+   in the harness is exactly the panel's leaf-per-image behavior).
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
 progressively-built image in SkyRoof's TelemetryPanel. Satellites generate SSTV

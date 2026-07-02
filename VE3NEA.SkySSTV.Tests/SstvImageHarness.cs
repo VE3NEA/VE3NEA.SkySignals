@@ -104,12 +104,12 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [Fact(Skip = "manual harness: processes multi-hundred-MB captures. Result 2026-07-02 after the P6(c) " +
-      "real-tuned defaults (chan ±6 kHz, video ±600 Hz) + continuous VIS: 8 of 9 captures decode (was 6). " +
-      "Monitor-3 text card essentially CLEAN (beats the RXSSTV reference); UTMN2 22:36 now picks the " +
-      "stronger ~183 s burst (near-clean SPUTNIX); UmKA-1 anchors fromVis=True (continuous VIS found the " +
-      "header at ~297 s) showing a Cyrillic card RXSSTV never got. Remaining: 12_37_50 Monitor-3 decodes " +
-      "noise from a weak train (score 0.30) — the retro-D threshold-tuning case.")]
+    [Fact(Skip = "manual harness: processes multi-hundred-MB captures. Result 2026-07-02 (multi-image, " +
+      "real-tuned defaults, continuous VIS): 18 images from 8 of 9 captures — one per promoted train. " +
+      "Both UTMN2 22:36 bursts decode nearly clean (the 27 s copy is the better one); UTMN2 11:29 yields " +
+      "five bursts whose ~13 s pairs match RXSSTV's paired history entries; Monitor-3 text card clean " +
+      "(beats RXSSTV); UmKA-1 anchors fromVis=True at ~297 s + a second burst at ~318 s. Weak-train noise " +
+      "decodes (score ~0.28-0.30, e.g. 12_37_50) remain the retro-D threshold-tuning case.")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))
@@ -123,19 +123,53 @@ namespace VE3NEA.SkySSTV.Tests
         try
         {
           var (iq, sr) = WavIqReader.Read(wav);
-          var decoded = DecodeToImage(iq, sr);
           string stem = Path.GetFileNameWithoutExtension(wav);   // strips .wav; keeps .iq
-          if (decoded is (RgbImage img, SstvModeResult res))
+          int count = 0;
+          foreach (var (img, mode, firstSync, fromVis, score) in DecodeAllImages(iq, sr))
           {
-            string path = Path.Combine(OutDir, $"{stem}_{res.Mode}.png");
+            string path = Path.Combine(OutDir, $"{stem}_{firstSync / sr:0}s_{mode}.png");
             img.SavePng(path);
-            output.WriteLine($"{stem}: {res.Mode} fromVis={res.FromVis} firstSync={res.FirstSyncSample} " +
-              $"period={res.LinePeriodMs:0.0}ms score={res.SyncScore:0.00} -> {Path.GetFileName(path)}");
+            output.WriteLine($"{stem}: {mode} fromVis={fromVis} burst@{firstSync / sr:0.0}s " +
+              $"score={score:0.00} -> {Path.GetFileName(path)}");
+            count++;
           }
-          else output.WriteLine($"{stem}: no SSTV mode detected ({iq.Length / sr}s @ {sr}Hz)");
+          if (count == 0) output.WriteLine($"{stem}: no SSTV images ({iq.Length / sr}s @ {sr}Hz)");
         }
         catch (Exception ex) { output.WriteLine($"{Path.GetFileName(wav)}: {ex.GetType().Name} {ex.Message}"); }
       }
+    }
+
+    /// <summary>Decode one image per promoted pulse train (a pass carries several transmissions — plan
+    /// §1.10/§4.1; e.g. the 22:36 UTMN2 capture holds bursts at ~30 s and ~183 s). A train must have
+    /// claimed at least a quarter of its mode's lines to count as an image (Hopper emitted a frame at
+    /// ≥ ⅓·Lines on retire).</summary>
+    private List<(RgbImage img, SstvMode mode, double firstSync, bool fromVis, double score)>
+      DecodeAllImages(Complex32[] iq, double sr)
+    {
+      var o = new SstvDecodeOptions { SampleRate = sr };
+      double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+      var hits = SstvVisDetector.DetectAll(sync, sr);
+      var extractor = SstvDecoder.ExtractTrains(sync, sr, hits);
+
+      var images = new List<(RgbImage, SstvMode, double, bool, double)>();
+      foreach (var train in extractor.Trains)
+      {
+        if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) continue;
+        var spec = SstvModes.Get(train.Format);
+        int claimed = 0;
+        foreach (var line in extractor.Lines) if (line.Train == train) claimed++;
+        if (claimed < spec.LineCount / 4) continue;
+
+        int firstSync = (int)Math.Round(train.Regr.GetPulseTime(0));
+        int margin = (int)(0.5 * sr);
+        int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * sr);
+        int start = Math.Max(0, firstSync - margin);
+        int end = Math.Min(iq.Length, firstSync + dur + margin);
+        var img = SstvDecoder.Decode(iq[start..end], train.Format,
+          new SstvDecodeOptions { SampleRate = sr, Acquire = false, StartSample = firstSync - start });
+        images.Add((img, train.Format, firstSync, train is SstvVisPulseTrain, train.MeanPower));
+      }
+      return images;
     }
 
 
