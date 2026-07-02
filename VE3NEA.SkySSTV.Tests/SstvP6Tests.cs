@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 namespace VE3NEA.SkySSTV.Tests
 {
   /// <summary>
-  /// P6 work-off of the alignment-retro items (docs/roadmap/sstv_alignment_retro.md): J — the Stage-2
+  /// P6 work-off of the alignment-retro items (design-docs/sstv_decoder_plan.md §9): J — the Stage-2
   /// sync-path bandpass, and M — Robot36 chroma identity read from the separator tone. Each test pins the
   /// property the retro item demands, on the synthetic closed loop.
   /// </summary>

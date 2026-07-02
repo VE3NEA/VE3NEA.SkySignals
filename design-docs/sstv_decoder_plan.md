@@ -2,6 +2,34 @@
 
 Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
+## Current Status
+
+**Phase: P6(b) — the pulse-train MHT extractor is the next action.** (2026-07-02) The code now lives in the
+`VE3NEA.SkySignals` repo, branch `sstv`, project renamed **`VE3NEA.SkySSTV`** (the retro's VE3NEA.Tlm commit
+hashes refer to the old repo). Baseline re-verified here: **build clean, suite 80 pass / 2 manual-skip** —
+identical to the state recorded in §9 (retro items J, A, C, N, K, L, M, P done; **G/H open = the next
+piece**). Next action, in order:
+
+1. Extend `SstvPulseTrain` to Hopper's `TPulseTrain` (pulse storage, `GetPower` ±4-pulse smoothing,
+   `AddOldPulses` back-fill on promote, `IsRetiredAt`, revision marks) + a `TVisPulseTrain` equivalent
+   (VIS-seeded high-prior train, promotes on 3 pulses, `TryAddPulses` triplet adoption).
+2. New `SstvPulseTrainExtractor` ported from `C:\Proj\DSP\Hopper\TrainExtr.pas` + `PulseTrn.pas` (read this
+   session; no AFC/multi-frequency dimension — associate-first, then per-mode triplet spawn gated by the
+   pulse's `DurMs` family; candidate→active→retired; best-train-per-block with 1.5× hysteresis; dirty-block
+   scan-line list). Note: associate-first naturally kills the Robot36→Robot72 half-rate harmonic spawn, and
+   ±3 % period gates separate every pair of PD modes — no extra disambiguation needed.
+3. Unit tests (clean train, clutter, fade/coast, mixed FSK+SSTV bursts), then wire into `DetectMode`
+   (replacing `SstvModeDetector`'s whole-file scan) and `LineOnsets` (train regressor grid replaces
+   `SstvSyncTracker`; apply `CorrFactor` to the intra-line pixel clock — retro F).
+4. Delete the batch detectors (`SstvSyncFilter`, `SstvSyncCorrelator`, `SstvSyncTracker`, batch
+   `SstvModeDetector` internals — retro G) and update the tests that use them directly
+   (`SstvP2Tests`, `SstvP6Tests.MaxSyncScore`, `SstvImageHarness.Real_SyncScoreProbe`). `SstvToneBank`
+   stays for now: the VIS detector's bounded ~2 s window is allowed block processing (§1.13).
+5. Re-run the real-capture probes; **unskip `Real_DecodesToPng` once the extractor localizes UTMN2's burst
+   (~185–216 s into the capture)** — with Stage-2 the per-pulse scores are at synthetic level, so the train
+   should stand out clearly: the **first real PNG** is the milestone. Then P6(c) threshold tuning (retro
+   D/E/O fold in here); raise the `SstvNoiseTests` floors as fidelity improves.
+
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
 progressively-built image in SkyRoof's TelemetryPanel. Satellites generate SSTV
 audio and feed it to an FM transmitter, so the chain is **FM-on-FM**: an outer FM
@@ -382,8 +410,10 @@ ignored by `SstvDecoder`; SSTV segments present no valid FSK frames).
 ### 6.0 Streaming-first refactor (do FIRST, before any tuning) — batch-removal inventory
 
 Per §1.13, the batch shortcuts taken in P1-P4 must be converted to streaming (sample/block-in, bounded
-state) **before** the filter sweep and before implementing §4.1 recovery. Current batch operations to remove
-(all in `VE3NEA.Sstv`):
+state) **before** the filter sweep and before implementing §4.1 recovery. **Judgment call (agreed
+2026-07-01): the remaining items below are folded into the P6(b) Hopper port** — the port replaces them
+wholesale, so converting them to streaming form first would be throwaway work; they are deleted, not
+refactored, when the extractor lands. Current batch operations to remove (all in `VE3NEA.Sstv`):
 
 - ~~**`SstvDecoder.AnalyticSignal` — whole-signal FFT** (the brightness path).~~ **DONE (P6a):** replaced by
   the streaming NCO mix-to-baseband + complex BlackmanSinc low-pass (`BrightnessBwHz`) + instantaneous
@@ -492,10 +522,10 @@ image leaves around the SSTV segments (mode from VIS/MHT, not the sidecar tag). 
   (b) **robust mode+timing recovery** — the sparse pulse-train MHT (spawn on a period-consistent triplet) +
   pulse-number RLS regressor + best-train-per-block, minus Hopper's AFC/multi-frequency machinery (§4.1/§6.1);
   (c) experimentation on the real Robot36/Robot72 IQ (pre-discrimination video band-limit, de-emphasis,
-  noise-shaping) to lock defaults. Do (a) and (b) before (c). **Work off the alignment-retro items
-  (`sstv_alignment_retro.md`, A–P) inside these steps:** J (sync band-limit) and A (time-axis template)
-  before any threshold tuning or real-IQ MHT work; N is a requirement on the (a) port; K/L (encoder slant
-  fidelity, harness re-acquisition mislock) before the (c) experiments; C/D/E/F/M/O/P fold into (b)/(c).
+  noise-shaping) to lock defaults. Do (a) and (b) before (c). **Work off the alignment-retro items (§9)
+  inside these steps:** J, A, C, N, K, L, M and most of P are done (§9 "Done"); the open remainder — G/H
+  (this port), D (thresholds), E (freq gate), F (CorrFactor pixel clock), I (constants), O (freqdem +
+  single discriminator pass) — folds into (b)/(c) per §9 "Open".
 - **P7** Real regression corpus (Robot36 + Robot72 captures) + docs.
 - **P8 (last)** SkyRoof integration (dispatcher, image leaves, progressive render, META, auto-save) — see
   §5. Deliberately the final phase: the decoder must decode real captures to PNG standalone (P6/P7) before
@@ -525,23 +555,78 @@ image leaves around the SSTV segments (mode from VIS/MHT, not the sidecar tag). 
   end conditioning** — the weak real sync/brightness SNR needs the §3 Stage-3 brightness LPF + a channel-BW
   sweep tuned to the real deviation to lift it before localization and imaging are reliable.
 
-Review addenda (2026-07-01, details in `sstv_alignment_retro.md` J–P):
+Review addenda (2026-07-01, item letters per §9):
 
-- **Stage-2 audio bandpass (§3) is specified but unimplemented** (retro J) — implement it (or delete it
-  from the chain and record why). Prime suspect for the weak real sync scores above: the coherence
-  denominator currently ingests the full parabolic out-of-band FM noise.
+- ~~**Stage-2 audio bandpass (§3) is specified but unimplemented** (retro J)~~ **DONE 2026-07-01** as
+  `SstvDecoder.SyncAudio` — it was indeed the weak-real-sync culprit (0.243 → 0.420 on real IQ, §9).
 - **Front-end fork to resolve:** the P6a streaming NCO-mix + FIR brightness (done, §6.0) and the §6.1
   Hopper overlap-save FFT bank ("replaces `AnalyticSignal` **and** the tone banks") are competing designs.
   Recommendation: keep NCO+FIR for brightness and port only the sync-band extraction (≈ the Stage-2 item
   above); decide explicitly and record it here so the P6 port does not re-litigate it.
-- **Robot36 chroma parity must come from the separator tone** (1500 Hz = R-Y line, 2300 Hz = B-Y line), not
-  the transmitted-line index (retro M) — a mid-image lock after a fade otherwise swaps red/blue at 50 %.
+- ~~**Robot36 chroma parity must come from the separator tone**~~ **DONE 2026-07-01** (retro M, §9) —
+  read from the 1500/2300 Hz separator with parity fallback; a mid-image lock no longer swaps red/blue.
 - **Unify the dropout knobs:** §1.10 `T_gap` (3–5 s) and the pulse-train `RetireSeconds` (6 s) are the same
-  physical event — make them one tunable.
-- **Encoder impairment fidelity for P6(c):** fix the per-segment slant rounding (retro K — slants below
-  ~120 ppm currently render as zero) and add a `DopplerRateHzPerSec` knob: constant Doppler is removed by
-  design (§1.6); the drifting DC ramp is what a real pass actually produces, and it is what stresses the
-  brightness LPF and the tone banks' constant-mean assumption.
+  physical event — make them one tunable (lands with the extractor, §9 G/H).
+- **Encoder impairment fidelity for P6(c):** ~~fix the per-segment slant rounding (retro K)~~ **DONE
+  2026-07-01** (continuous scaled-time cursor, §9); still open — add a `DopplerRateHzPerSec` knob: constant
+  Doppler is removed by design (§1.6); the drifting DC ramp is what a real pass actually produces, and it
+  is what stresses the brightness LPF and the tone banks' constant-mean assumption.
 - **Discriminator:** wire the wrapped `freqdem` native per §1.2 or record the deviation (retro O), and share
   one discriminator pass between `DetectMode` and `Decode` (currently each rediscriminates the full capture).
 - Phasing (§7) has no P5 — renumber or mark the gap intentional.
+
+---
+
+## 9. Alignment retro — consolidated status (retro file retired 2026-07-02)
+
+A 2026-07-01 design/implementation alignment review (originally `sstv_alignment_retro.md`, items A–P;
+file deleted, everything still useful lives here) found where the P6(b) streaming port had diverged from
+the design. The recurring failure pattern — worth remembering — was **the streaming piece silently dropping
+a property the batch piece had** (the A/B divergence below); when porting, diff the *statistic*, not just
+the code shape.
+
+### Done (validated 2026-07-01; suite 80 pass / 2 manual-skip; VE3NEA.Tlm-era commits 84c689f…6038b17)
+
+- **J — Stage-2 sync-path bandpass** (`SstvDecoder.SyncAudio`, 1000–2400 Hz cosine-modulated BlackmanSinc,
+  SIMD LiquidFir) feeds every sync/VIS/mode/tracker statistic. Validated on real IQ (§4.1 MEASURED note):
+  real burst score 0.243 → **0.420 = the synthetic level**; but band-limited noise coherence rises too
+  (clutter max 0.406), so single-pulse thresholds remain non-separable and the §4.1 train integration
+  stays required.
+- **A/C/N — `SstvPulseDetector` is now the full separable zero-mean 2D matched filter**: bipolar time
+  template (a sustained 1200 Hz carrier's interior emits nothing — tested), onset = argmax (the P3 centroid
+  heuristic is gone), one detector instance per sync-duration family with `DurMs` carried on each pulse
+  (the Robot-vs-PD family discriminant for the MHT), mixer recurrence + ring-re-anchored running sums for
+  multi-minute numeric stability.
+- **B — root-caused lesson (keep):** the sync statistic must be **energy-normalized coherence, never raw
+  band power**. FM is constant-envelope: measured window energy at a real sync vs a separator step differed
+  by 0.2 % while coherence differed **250:1** (0.493 vs 0.002); a raw-power detector fired 481 pulses vs
+  the true 240. Bandpass skirts leak broadband clicks — normalization, not filtering, is what rejects them.
+- **K** — the encoder keeps a continuous scaled-time cursor across segments, so tens-of-ppm slants render
+  faithfully (per-segment rounding used to quantize slant to zero below ~118 ppm). **L** — the P4.5 harness
+  decodes at the detected onset with a PSNR gate (it used to re-acquire inside the slice and mislock on the
+  VIS start bit). **M** — Robot36 chroma identity is read from the 1500/2300 Hz separator tone with parity
+  fallback (mid-image lock test). **P (part)** — candidate promote-age bound + duplicate line-slot rejection
+  in `SstvPulseTrain`.
+
+### Open (work off during the rest of P6)
+
+- **G/H — the extractor/MHT port, wiring, and batch-code deletion** — the next piece; concrete steps in
+  `## Current Status`. Port requirements folded in from the review: a **minimum KeyOn width / noise-floor
+  gate** (Hopper's `TSyncTracker` has one) so a single-sample blip above threshold cannot become a pulse,
+  and the **§1.10 `T_gap` = `SstvPulseTrain.RetireSeconds` unification** (one tunable for "the transmission
+  ended").
+- **D — detection thresholds are hardcoded near the real-signal margin** (`ScoreThreshold` 0.18 in
+  `SstvPulseDetector`; ~0.25 in the batch detectors until they are deleted). Tune on real IQ in P6(c) after
+  the extractor lands (A+J already raised the margin); consider a relative/adaptive threshold rather than a
+  fixed constant.
+- **E — per-pulse frequency is a constant 1200 Hz**, so `SstvPulseTrain`'s ±150 Hz frequency gate is inert
+  (Hopper used it for clutter rejection on crowded HF). Either estimate per-pulse frequency (baseband phase
+  slope) or consciously drop the gate for the single-frequency FM case and simplify the train.
+- **F — reconstruction ignores `CorrFactor` for the intra-line pixel clock**: segment widths are computed
+  as nominal `round(ms/1000·fs)`; only the line onsets are slant-corrected. Scale segment/pixel widths by
+  the winning train's `CorrFactor` when the extractor lands (Hopper: `TimeScale = samplesPerMs·CorrFactor`).
+- **I — duplicated magic constants** (coherence window, thresholds, sync/freq tolerances, min-spacing
+  re-declared per detector) — centralize while deleting the batch detectors.
+- **O — hand-rolled `Math.Atan2` discriminator, run twice per capture** (`DetectMode` and `Decode` each
+  rediscriminate the full IQ — multi-hundred-MB real captures). Wire the wrapped `freqdem` native (§1.2) or
+  record the deviation and why; share one discriminator pass between detection and decode.
