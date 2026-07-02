@@ -43,6 +43,9 @@ namespace VE3NEA.SkySSTV
     /// <summary>VIS data bit = 0 (1300 Hz).</summary>
     public const double VisBitZero = 1300.0;
 
+    /// <summary>Total header duration: leader + break + leader + 10 bits (start, 7 data, parity, stop).</summary>
+    public const double VisHeaderMs = 2 * VisLeaderMs + VisBreakMs + 10 * VisBitMs;
+
     /// <summary>Map a component value 0..255 to its subcarrier frequency (Hz), clamped.</summary>
     public static double ValueToFreq(double value)
     {

@@ -157,9 +157,13 @@ namespace VE3NEA.SkySSTV.Tests
     {
       var spec = SstvModes.Get(SstvMode.Robot36);
       var img = SolidImage(spec, 128, 128, 128);
-      var clean = SstvEncoder.Encode(img, SstvMode.Robot36, new SstvEncoderOptions { IncludeVis = true });
+      // pinned to 5 kHz deviation: this P0 scaffold reads bits with an unfiltered zero-crossing probe
+      // (SstvTestSignal), which needs the wider deviation's noise margin; deviation realism is the
+      // decoder tests' concern, this test only proves the noise knob perturbs the IQ.
+      var clean = SstvEncoder.Encode(img, SstvMode.Robot36,
+        new SstvEncoderOptions { IncludeVis = true, DeviationHz = 5000.0 });
       var noisy = SstvEncoder.Encode(img, SstvMode.Robot36,
-        new SstvEncoderOptions { IncludeVis = true, NoiseStdDev = 0.02, NoiseSeed = 7 });
+        new SstvEncoderOptions { IncludeVis = true, DeviationHz = 5000.0, NoiseStdDev = 0.02, NoiseSeed = 7 });
 
       // the noise option must actually change the samples.
       double rms = 0; int nn = Math.Min(clean.Length, noisy.Length);

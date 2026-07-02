@@ -56,7 +56,7 @@ namespace VE3NEA.SkySSTV.Tests
       var o = new SstvDecodeOptions();
       double[] disc = SstvDecoder.Discriminator(iq, o);
       var rng = new Random(5);
-      for (int i = 0; i < disc.Length; i++) disc[i] += 5000.0 * Gauss(rng);
+      for (int i = 0; i < disc.Length; i++) disc[i] += 3300.0 * Gauss(rng);
       double[] sync = SstvDecoder.SyncAudio(disc, Fs, o);
 
       double raw = MaxSyncScore(disc, spec);

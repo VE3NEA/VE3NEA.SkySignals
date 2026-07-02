@@ -61,20 +61,36 @@ is vindicated on real IQ. **Implication: the real audio deviation is far below t
 synthetic PSNR bars, and then lock the new defaults (a naive default switch would clip the current
 synthetic signal, whose Carson width is ~±7.3 kHz).
 
-Next actions (P6(c) + follow-ups surfaced by the real run):
+**P6(c) first pass DONE (2026-07-02, same day): deviation measured, defaults locked, continuous VIS.**
+Suite: **86 pass / 3 manual-skip.**
 
-1. **Front-end fidelity sweep** (§6 goals): settle the real deviation and align the encoder; lock
-   `ChannelBwHz`/`BrightnessBwHz` defaults from the sweep above; then de-emphasis, impulse blanking (mine
-   `Hopper\Experiments\FmNoise`); PSNR on synthetic impairments (add the `DopplerRateHzPerSec` encoder
-   knob, §8) + visual/reference-free metrics on the real decodes against the RXSSTV references. Raise
-   `SstvNoiseTests` floors as fidelity improves.
-2. **Threshold tuning** (retro D) on real IQ; retro E (per-pulse frequency or drop the gate) and O
-   (freqdem + single discriminator pass — `DetectMode`+`Decode` still discriminate twice) fold in.
-3. **VIS search window**: currently only the first 2 s (`AcquireSearchSamples`) — real bursts start minutes
-   in, so VIS is never seen on captures. Either scan VIS continuously (streaming tone tracks, §6.0) or seed
-   it from each detected burst start.
-4. **Decode every train, not just `BestTrain`** in the harness (multi-image passes; see the 22:36 finding).
-5. Then P7 (regression corpus) and P8 (SkyRoof integration, §5).
+- **Real deviation measured ≈ 3.3 kHz** (`Real_DeviationProbe`: Monitor-3 3310, UTMN2 3303/3368 Hz; weaker
+  bursts read higher from noise inflation; corroborated by the FskDemod spectrogram — occupied width
+  ≈ ±5 kHz, carrier centered). Encoder default `DeviationHz` = 3300 so the synthetic loop exercises the
+  real Carson width.
+- **Defaults locked from the sweep + measurement:** `ChannelBwHz` 15000 → **6000** (Carson ≈ ±5.6 kHz with
+  margin), `BrightnessBwHz` 1800 → **600**. Cost/benefit on synthetic Robot36: clean ceiling ~32 → 27.2 dB
+  (video-filter smear on 0.275 ms pixels) but the noise curve is now nearly **flat to σ=0.1** (27.0 dB
+  where the old floor was 20). PSNR floors re-baselined accordingly (Robot72 barely moved — longer pixels).
+  A possible later refinement: SNR-adaptive video bandwidth (wide when clean, narrow when noisy).
+- **Continuous VIS (follow-up 3 done):** `SstvVisDetector.DetectAll` tiles bounded ~3 s windows over the
+  whole stream (allowed §1.13 block processing); every hit seeds a high-prior train; `AcquireSearchSamples`
+  removed. A corrupted VIS self-arbitrates (its train starves) — the explicit override logic is gone.
+- **Real results with the new defaults: 8 of 9 captures decode (was 6).** Monitor-3 text card essentially
+  **clean — beats the RXSSTV reference**; UTMN2 22:36 now selects the stronger ~183 s burst (near-clean
+  SPUTNIX); **UmKA-1 anchors `fromVis=true`** — the continuous scan found its header ~297 s in — showing a
+  Cyrillic card RXSSTV never captured. Remaining defect: 12_37_50 Monitor-3 decodes noise from a weak
+  train (score 0.30) — the retro-D threshold case.
+
+Next actions:
+
+1. **Threshold tuning** (retro D) on real IQ — the 12_37_50 false/weak lock is the test case; retro E
+   (per-pulse frequency or drop the gate) and O (freqdem + single discriminator pass — `DetectMode`+
+   `Decode` still discriminate twice) fold in.
+2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
+   `DopplerRateHzPerSec` encoder knob (§8), SNR-adaptive video bandwidth.
+3. **Decode every train, not just `BestTrain`** in the harness (multi-image passes; see the 22:36 finding).
+4. Then P7 (regression corpus) and P8 (SkyRoof integration, §5).
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
 progressively-built image in SkyRoof's TelemetryPanel. Satellites generate SSTV

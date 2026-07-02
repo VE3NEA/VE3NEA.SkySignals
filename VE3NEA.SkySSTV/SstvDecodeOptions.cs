@@ -11,14 +11,15 @@ namespace VE3NEA.SkySSTV
     public double SampleRate { get; init; } = 48000.0;
 
     /// <summary>Stage-1 complex channel low-pass cutoff (Hz), i.e. half the pass-bandwidth. Must clear the
-    /// FM's full occupied width (well beyond Carson ~dev+f_audio): a cutoff that clips the constant-envelope
-    /// tails makes the discriminator spike (brightness noise). ±15 kHz passes typical NBFM SSTV (dev ≤ ~5 kHz)
-    /// while rejecting far-out noise; P6 tunes it to the real deviation. 0 disables the stage.</summary>
-    public double ChannelBwHz { get; init; } = 15000.0;
+    /// FM's full occupied width (Carson half-width ~dev+f_audio): a cutoff that clips the constant-envelope
+    /// tails makes the discriminator spike (brightness noise). Real satellite SSTV measured dev ≈ 3.3 kHz
+    /// (Real_DeviationProbe 2026-07-02) → Carson ≈ ±5.6 kHz; ±6 kHz clears it with margin, and the real
+    /// filter sweep showed ±4–5 kHz already clean vs heavy speckle at ±15 kHz. 0 disables the stage.</summary>
+    public double ChannelBwHz { get; init; } = 6000.0;
 
 
     /// <summary>When true (P2 default) the decoder acquires the image start automatically — VIS header if
-    /// present (plan §4), otherwise the first 1200 Hz sync pulse (plan §7). When false it decodes at the
+    /// present (plan §4), otherwise the winning sync train (plan §4.1). When false it decodes at the
     /// fixed <see cref="StartSample"/> (P1 behavior, for closed-loop tests with known timing).</summary>
     public bool Acquire { get; init; } = true;
 
@@ -26,15 +27,12 @@ namespace VE3NEA.SkySSTV
     /// is false, or as the fallback when acquisition finds neither a VIS header nor a sync pulse.</summary>
     public int StartSample { get; init; } = 0;
 
-    /// <summary>Length (samples) of the leading region searched for the VIS header / first sync during
-    /// acquisition. Two seconds comfortably covers a header at the very start of the capture.</summary>
-    public int AcquireSearchSamples { get; init; } = 96000;
-
     /// <summary>Half-bandwidth (Hz) of the Stage-3 complex low-pass that isolates the video subcarrier after
-    /// the mix-to-baseband, i.e. the streaming analytic/brightness filter (plan §1.4/§6.1). Must clear the
-    /// video deviation (±400 Hz around 1900) plus edge sidebands while rejecting the −3800 Hz mix image;
-    /// wider = sharper pixel edges + more noise, narrower = smoother + less noise. Tuned in P6(c).</summary>
-    public double BrightnessBwHz { get; init; } = 1800.0;
+    /// the mix-to-baseband, i.e. the streaming analytic/brightness filter (plan §1.4/§6.1). Wider = sharper
+    /// pixel edges + more noise, narrower = smoother + less noise. The real filter sweep (2026-07-02, vs the
+    /// RXSSTV reference) put the sweet spot at 500–650 Hz — Hopper's ±500 Hz choice confirmed; 350 Hz
+    /// over-smooths, 1800 Hz leaves heavy speckle on real signals.</summary>
+    public double BrightnessBwHz { get; init; } = 600.0;
 
     /// <summary>Low edge (Hz) of the Stage-2 audio bandpass applied to the discriminated audio before ALL
     /// sync / VIS / mode statistics (plan §3, retro item J). The coherence statistic divides by total window

@@ -33,18 +33,27 @@ namespace VE3NEA.SkySSTV
 
       // the MHT pulse-train extraction supplies acquisition (burst start) and per-line timing (plan §4.1)
       SstvPulseTrain? train = null;
-      SstvVisResult vis = default;
+      SstvVisResult firstHit = default;
       if (o.Acquire || o.Track)
       {
         double[] sync = SyncAudio(disc, fs, o);              // Stage-2 band-limit for all timing statistics
-        if (o.Acquire) vis = SstvVisDetector.Detect(sync, fs, 0, o.AcquireSearchSamples);
-        var seed = vis.Found && vis.Mode == mode ? vis : default;
-        train = ExtractTrains(sync, fs, seed).BestTrain(mode);
+        List<SstvVisResult>? seeds = null;
+        if (o.Acquire)
+        {
+          seeds = new List<SstvVisResult>();
+          foreach (var hit in SstvVisDetector.DetectAll(sync, fs))
+            if (hit.Mode == mode)
+            {
+              seeds.Add(hit);
+              if (!firstHit.Found) firstHit = hit;
+            }
+        }
+        train = ExtractTrains(sync, fs, seeds).BestTrain(mode);
       }
 
       int start = !o.Acquire ? o.StartSample
-        : vis.Found ? vis.HeaderEndSample                    // stop bit and line-0 sync are both 1200 Hz — trust VIS
         : train != null ? (int)Math.Round(train.Regr.GetPulseTime(0))
+        : firstHit.Found ? firstHit.HeaderEndSample          // VIS parsed but no train confirmed it
         : o.StartSample;
 
       var (lineOnset, corr) = LineOnsets(train, fs, spec, o, start);
@@ -73,13 +82,16 @@ namespace VE3NEA.SkySSTV
     }
 
     /// <summary>Run the per-family streaming sync detectors over the Stage-2 audio and feed the MHT
-    /// extractor (plan §4.1). A found <paramref name="vis"/> seeds the high-prior train. The audio is
+    /// extractor (plan §4.1). Every found VIS hit seeds a high-prior train. The audio is
     /// front-padded so a sync at sample 0 still has a warm left template flank, and the two detectors'
     /// differing emission latencies are re-ordered so the extractor sees pulses in onset order.</summary>
-    internal static SstvPulseTrainExtractor ExtractTrains(double[] sync, double fs, SstvVisResult vis = default)
+    internal static SstvPulseTrainExtractor ExtractTrains(double[] sync, double fs,
+      IReadOnlyList<SstvVisResult>? visHits = null)
     {
       var extractor = new SstvPulseTrainExtractor(fs);
-      if (vis.Found && vis.Mode is SstvMode vm) extractor.AddVisTrain(vm, vis.HeaderEndSample);
+      if (visHits != null)
+        foreach (var hit in visHits)
+          if (hit.Found && hit.Mode is SstvMode vm) extractor.AddVisTrain(vm, hit.HeaderEndSample);
 
       var families = new List<double>();
       foreach (var spec in SstvModes.All)
@@ -123,14 +135,15 @@ namespace VE3NEA.SkySSTV
       return extractor;
     }
 
-    /// <summary>Locate the SSTV header/first-sync in the discriminated audio and return the sample index of
-    /// its 8-bit VIS byte and start (plan §4). <see cref="SstvVisResult.Found"/> is false when no valid,
-    /// parity-checked header is present; the byte may map to no supported mode.</summary>
+    /// <summary>Scan the whole stream for a VIS header and return the first hit (plan §4).
+    /// <see cref="SstvVisResult.Found"/> is false when no valid, parity-checked header is present
+    /// anywhere; the byte may map to no supported mode.</summary>
     public static SstvVisResult DetectVis(Complex32[] iq, SstvDecodeOptions? options = null)
     {
       var o = options ?? new SstvDecodeOptions();
       double[] sync = SyncAudio(Discriminator(iq, o), o.SampleRate, o);
-      return SstvVisDetector.Detect(sync, o.SampleRate, 0, o.AcquireSearchSamples);
+      var hits = SstvVisDetector.DetectAll(sync, o.SampleRate);
+      return hits.Count > 0 ? hits[0] : new SstvVisResult(false, -1, null, -1, -1, 0, false);
     }
 
     /// <summary>Infer the SSTV mode of <paramref name="iq"/> (plan §4): a valid VIS header if present, else

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace VE3NEA.SkySSTV
 {
@@ -15,37 +16,45 @@ namespace VE3NEA.SkySSTV
     SstvVisResult Vis);
 
   /// <summary>
-  /// Mode inference (plan §4/§4.1): a valid VIS header is a strong prior; the multiple-hypothesis tracker
+  /// Mode inference (plan §4/§4.1): valid VIS headers are strong priors; the multiple-hypothesis tracker
   /// (<see cref="SstvPulseTrainExtractor"/>) scores every candidate mode against the observed sync cadence
-  /// and sync-duration family. Both run always — a VIS seeds a high-prior train that promotes on 3
-  /// confirming pulses, the MHT fills in when VIS is absent, and it can override a corrupted-but-parseable
-  /// VIS when a strong train of a different sync-duration family dominates the pass. No single pulse is
-  /// ever thresholded into a decision: the winning train is the one whose period-consistent pulse train
-  /// integrated the most soft evidence (weak-and-consistent beats strong-and-scattered).
+  /// and sync-duration family. Both run continuously over the whole stream — every VIS hit seeds a
+  /// high-prior train that promotes on 3 confirming pulses, the MHT fills in when VIS is absent, and a
+  /// corrupted-but-parseable VIS arbitrates itself: its train collects no confirming pulses and dies while
+  /// the true cadence promotes a plain candidate. No single pulse is ever thresholded into a decision: the
+  /// winning train is the one whose period-consistent pulse train integrated the most soft evidence
+  /// (weak-and-consistent beats strong-and-scattered).
   /// </summary>
   internal static class SstvModeDetector
   {
     public static SstvModeResult Detect(double[] sync, double fs, SstvDecodeOptions o)
     {
-      var vis = SstvVisDetector.Detect(sync, fs, 0, o.AcquireSearchSamples);
-      var extractor = SstvDecoder.ExtractTrains(sync, fs, vis);
+      var hits = SstvVisDetector.DetectAll(sync, fs);
+      var extractor = SstvDecoder.ExtractTrains(sync, fs, hits);
       var best = extractor.BestTrain();
-      double score = best?.MeanPower ?? 0;
 
-      // reconcile: trust a valid VIS unless a strong train of a different sync-duration family dominates
-      if (vis.Found && vis.Mode is SstvMode vm)
-      {
-        bool contradicted = best is SstvPulseTrain train
-          && SstvModes.Get(train.Format).SyncMs != SstvModes.Get(vm).SyncMs
-          && train.MeanPower > 2 * SstvPulseDetector.ScoreThreshold;
-        if (!contradicted)
-          return new SstvModeResult(true, vm, true, SstvModes.Get(vm).LinePeriodMs, score, vis.HeaderEndSample, vis);
-      }
+      if (best is SstvVisPulseTrain visTrain)
+        return new SstvModeResult(true, visTrain.Format, true, visTrain.Regr.Period / fs * 1000.0,
+          visTrain.MeanPower, (int)Math.Round(visTrain.Regr.GetPulseTime(0)), HitFor(hits, visTrain));
 
       if (best is SstvPulseTrain picked)
         return new SstvModeResult(true, picked.Format, false, picked.Regr.Period / fs * 1000.0,
-          picked.MeanPower, (int)Math.Round(picked.Regr.GetPulseTime(0)), vis);
-      return new SstvModeResult(false, null, false, 0, 0, -1, vis);
+          picked.MeanPower, (int)Math.Round(picked.Regr.GetPulseTime(0)), FirstHit(hits));
+
+      // no promoted train: a parity-valid VIS alone still identifies the mode (e.g. a signal cut short)
+      foreach (var hit in hits)
+        if (hit.Mode is SstvMode vm)
+          return new SstvModeResult(true, vm, true, SstvModes.Get(vm).LinePeriodMs, 0, hit.HeaderEndSample, hit);
+      return new SstvModeResult(false, null, false, 0, 0, -1, FirstHit(hits));
     }
+
+    /// <summary>The VIS hit that seeded <paramref name="train"/> (matched by its anchor sample).</summary>
+    private static SstvVisResult HitFor(List<SstvVisResult> hits, SstvVisPulseTrain train)
+    {
+      foreach (var hit in hits) if (hit.HeaderEndSample == train.VisTime) return hit;
+      return FirstHit(hits);
+    }
+
+    private static SstvVisResult FirstHit(List<SstvVisResult> hits) => hits.Count > 0 ? hits[0] : default;
   }
 }

@@ -104,13 +104,12 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [Fact(Skip = "manual harness: processes multi-hundred-MB captures. Result 2026-07-02 (first real " +
-      "decodes, P6b extractor): 6 of 9 captures localize a burst and decode — Monitor-3 shows a READABLE " +
-      "text card (RA3PPY / status: Operational), UTMN2 the SPUTNIX winged-satellite image with readable " +
-      "banner; geometry straight (RLS slant OK). All detected as Robot36 via MHT (VIS never seen — the " +
-      "2 s VIS search window misses bursts that start minutes in). Heavy speckle noise remains = the " +
-      "P6(c) front-end fidelity work. VIZARD-meteo decodes on a 150 ms cadence (tag said Robot72) — " +
-      "confirm mode in P6(c).")]
+    [Fact(Skip = "manual harness: processes multi-hundred-MB captures. Result 2026-07-02 after the P6(c) " +
+      "real-tuned defaults (chan ±6 kHz, video ±600 Hz) + continuous VIS: 8 of 9 captures decode (was 6). " +
+      "Monitor-3 text card essentially CLEAN (beats the RXSSTV reference); UTMN2 22:36 now picks the " +
+      "stronger ~183 s burst (near-clean SPUTNIX); UmKA-1 anchors fromVis=True (continuous VIS found the " +
+      "header at ~297 s) showing a Cyrillic card RXSSTV never got. Remaining: 12_37_50 Monitor-3 decodes " +
+      "noise from a weak train (score 0.30) — the retro-D threshold-tuning case.")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))
@@ -180,6 +179,39 @@ namespace VE3NEA.SkySSTV.Tests
           img.SavePng(path);
           output.WriteLine($"chan={chanBw} video={videoBw} -> {Path.GetFileName(path)}");
         }
+    }
+
+
+    [Fact(Skip = "manual probe: processes all captures. Result 2026-07-02: peak deviation ≈ 3.3 kHz on the " +
+      "strong bursts (Monitor-3 3310, UTMN2 3303/3368 Hz); weaker bursts read 3.7–4.1 kHz (noise-inflated). " +
+      "Corroborated by the FskDemod spectrogram (occupied width ≈ ±5 kHz, carrier centered). Basis for the " +
+      "chan ±6 kHz default and the encoder's 3.3 kHz deviation.")]
+    public void Real_DeviationProbe()
+    {
+      // P6(c): measure the real transmissions' peak FM deviation. The discriminator output inside a burst
+      // is dev·a(t) with a(t) a unit sinusoid at the subcarrier frequency, so after the Stage-2 bandpass
+      // (which also removes the Doppler DC) the peak deviation is simply RMS·√2 over the burst interior.
+      foreach (string wav in Directory.GetFiles(RecordingsDir, "*.iq.wav"))
+      {
+        var (iq, sr) = WavIqReader.Read(wav);
+        var o = new SstvDecodeOptions { SampleRate = sr };
+        var res = SstvDecoder.DetectMode(iq, o);
+        string stem = Path.GetFileNameWithoutExtension(wav);
+        if (!res.Found || res.Mode is not SstvMode mode) { output.WriteLine($"{stem}: no burst"); continue; }
+
+        var spec = SstvModes.Get(mode);
+        int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * sr);
+        int a = Math.Max(0, res.FirstSyncSample + dur / 10);
+        int b = Math.Min(iq.Length, res.FirstSyncSample + dur - dur / 10);
+        if (b <= a) { output.WriteLine($"{stem}: burst span empty"); continue; }
+
+        double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq[a..b], o), sr, o);
+        double sum = 0;
+        int n0 = sync.Length / 10, n1 = sync.Length - sync.Length / 10;
+        for (int i = n0; i < n1; i++) sum += sync[i] * sync[i];
+        double dev = Math.Sqrt(sum / (n1 - n0)) * Math.Sqrt(2.0);
+        output.WriteLine($"{stem}: mode={mode} burst@{res.FirstSyncSample / sr:0.0}s  peak deviation ≈ {dev:0} Hz");
+      }
     }
 
 

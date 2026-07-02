@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace VE3NEA.SkySSTV
 {
@@ -32,6 +33,24 @@ namespace VE3NEA.SkySSTV
     // coherence is in [0, 0.5] (a real tone splits between ±f); a clean matched tone ≈ 0.5.
     private const double LeaderGate = 0.25;   // 300 ms @1900 ridge
     private const double BitGate = 0.20;      // 10/30 ms @1200 notch / start / stop
+
+    /// <summary>Scan the <b>whole</b> stream for VIS headers (plan §4.1 follow-up: real bursts start
+    /// minutes into a pass, so a leading-window-only search never sees them). Realized as tiled
+    /// bounded-length <see cref="Detect"/> windows — allowed §1.13 block processing, one candidate per
+    /// ~4 s tile — returning every hit that passes the structural gates. A pass carries several images,
+    /// so multiple hits are normal; each seeds its own high-prior train in the MHT.</summary>
+    public static List<SstvVisResult> DetectAll(double[] disc, double fs)
+    {
+      var hits = new List<SstvVisResult>();
+      int header = (int)Math.Round(SstvTones.VisHeaderMs / 1000.0 * fs);
+      int step = (int)Math.Round(3.0 * fs);
+      for (int start = 0; start < disc.Length - header; start += step)
+      {
+        var hit = Detect(disc, fs, start, step);
+        if (hit.Found) hits.Add(hit);
+      }
+      return hits;
+    }
 
     /// <summary>Search [<paramref name="searchStart"/>, searchStart+<paramref name="searchLength"/>) for a
     /// VIS header. The tone banks span the search range plus one header length so windows near the end are

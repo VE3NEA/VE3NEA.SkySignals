@@ -10,8 +10,10 @@ namespace VE3NEA.SkySSTV
     /// <summary>Output complex sample rate (Hz). Matches the decode chain: no resampling.</summary>
     public double SampleRate { get; init; } = 48000.0;
 
-    /// <summary>Peak FM deviation of the RF carrier driven by the unit-amplitude audio (Hz).</summary>
-    public double DeviationHz { get; init; } = 5000.0;
+    /// <summary>Peak FM deviation of the RF carrier driven by the unit-amplitude audio (Hz). Default is the
+    /// measured real-satellite value ≈ 3.3 kHz (Real_DeviationProbe 2026-07-02, Monitor-3/UTMN2 bursts), so
+    /// the synthetic closed loop exercises the same Carson width the tuned decoder filters expect.</summary>
+    public double DeviationHz { get; init; } = 3300.0;
 
     /// <summary>Constant residual carrier offset added to the RF (Hz). For FM-on-FM this is a DC
     /// offset on the recovered audio (plan §1.6) — the decoder removes it downstream.</summary>

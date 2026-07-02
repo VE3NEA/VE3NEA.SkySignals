@@ -35,14 +35,16 @@ namespace VE3NEA.SkySSTV.Tests
 
 
     [Theory]
-    [InlineData(0.01, 29.0)]   // ~37 dB SNR
-    [InlineData(0.02, 28.0)]   // ~31 dB SNR
-    [InlineData(0.05, 26.0)]   // ~23 dB SNR
-    [InlineData(0.10, 20.0)]   // ~17 dB SNR
+    [InlineData(0.01, 26.0)]   // ~37 dB SNR — at the ≈27.2 dB clean ceiling (video-filter-limited)
+    [InlineData(0.02, 26.0)]   // ~31 dB SNR — still at the ceiling
+    [InlineData(0.05, 26.0)]   // ~23 dB SNR — still at the ceiling
+    [InlineData(0.10, 25.0)]   // ~17 dB SNR — ≈27.0 dB measured: the curve is nearly flat now
     public void Frontend_DegradesGracefullyWithNoise(double sigma, double minPsnr)
     {
       // fixed timing isolates the front-end (channel FIR → discriminator → streaming Stage-3 brightness LPF →
-      // integrator) from acquisition/tracking. Floors reflect the P6a streaming filter (see class remarks).
+      // integrator) from acquisition/tracking. Floors reflect the P6(c) real-tuned defaults (chan ±6 kHz,
+      // video ±600 Hz, encoder dev 3.3 kHz): Robot36 clean sits at a ≈27.2 dB filter-limited ceiling and the
+      // noise curve is nearly flat to σ=0.1 — the resolution/noise trade chosen for real weak signals.
       var spec = SstvModes.Get(SstvMode.Robot36);
       var src = GrayscaleGradient(spec.Width, spec.Height);
       var iq = SstvEncoder.Encode(src, SstvMode.Robot36,
