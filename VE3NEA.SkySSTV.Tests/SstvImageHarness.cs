@@ -642,6 +642,92 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("Result 2026-07-03 (first run; PNGs NOT yet visually judged — do that before locking): " +
+      "the envelope-gated blanker wins on ALL four real bursts and never hurts — clicks 2.4→0.0 %, and " +
+      "on the hardest burst (04-18) sync maxScore 0.221→0.324 at chan ±4000 + blank 0.5; rowNoise drops " +
+      "monotonically with blanker everywhere (utmn2236 32.7→26.6, m3_1102 53.5→46.6). chan ±4000-4500 " +
+      "beats ±6000 for DECODE on every case (detection keeps ±6000 per Real_DetectionChannelSweep). " +
+      "12_37_50 stays noise-dominated (rowNoise ~70) — likely unrecoverable. NOTE the synthetic sweep " +
+      "(Frontend_BlankerAndChannelSweep) shows the OPPOSITE (blanker mildly negative): synthetic AWGN at " +
+      "σ≤0.6 produces ≤0.05 % clicks — real FM noise is impulsive in a way the closed loop does not " +
+      "model; trust the real grid. Pending: visual PNG judgment, blanker threshold 0.3 vs 0.5 call, " +
+      "then lock a decode-stage ChannelBwHz (or dev-matched rule) + BlankerThreshold default.")]
+    public void Real_P6cDecodeGridProbe()
+    {
+      // P6(c): the decode-stage front end (detection stays at the ±6000 default). Grid: Stage-1 channel BW ×
+      // envelope-gated blanker threshold, on two strong bursts (fidelity must not regress) and the two
+      // below-FM-threshold speckle residuals (04-18, 12_37_50). Quantities: discriminator click rate, sync
+      // matched-filter max, decoded-image row-to-row luma noise; the PNGs are the real verdict.
+      (string tag, string file, double t0, double t1)[] cases =
+      {
+        ("utmn2236", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0),
+        ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0),
+        ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0),
+        ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0),
+      };
+
+      foreach (var (tag, file, t0, t1) in cases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+
+        // locate the train once, at the fixed detection defaults, so every config decodes the same slice
+        var oDet = new SstvDecodeOptions { SampleRate = sr };
+        double[] discDet = SstvDecoder.Discriminator(seg, oDet);
+        double[] syncDet = SstvDecoder.SyncAudio(discDet, sr, oDet);
+        var hits = SstvVisDetector.DetectAll(syncDet, sr);
+        var extractor = SstvDecoder.ExtractTrains(syncDet, sr, hits);
+        SstvPulseTrain? best = null;
+        foreach (var train in extractor.Trains)
+          if (extractor.IsImageTrain(train) && (best == null || train.PulseCnt > best.PulseCnt)) best = train;
+        if (best == null) { output.WriteLine($"{tag}: no image train at detection defaults"); continue; }
+        int firstSync = (int)Math.Round(best.Regr.GetPulseTime(0));
+        var spec = SstvModes.Get(best.Format);
+        output.WriteLine($"--- {tag}: {best.Format} train @{firstSync / sr:0.0}s p={best.PulseCnt}");
+
+        foreach (double chanBw in new[] { 6000.0, 4500.0, 4000.0 })
+          foreach (double blank in new[] { 0.0, 0.3, 0.5 })
+          {
+            var o = new SstvDecodeOptions
+            { SampleRate = sr, ChannelBwHz = chanBw, BlankerThreshold = blank,
+              Acquire = false, StartSample = firstSync };
+            double[] disc = SstvDecoder.Discriminator(seg, o);
+
+            int clicks = 0;
+            for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) clicks++;
+            var det = new SstvPulseDetector(sr, spec.SyncMs);
+            det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
+
+            var img = SstvDecoder.Decode(disc, best.Format, o);
+            string path = Path.Combine(OutDir, $"p6c_{tag}_chan{chanBw:0}_blk{blank * 10:0}.png");
+            img.SavePng(path);
+            output.WriteLine($"  chan ±{chanBw:0} blank {blank:0.0}: clicks={100.0 * clicks / disc.Length:0.00}% " +
+              $"maxScore={det.MaxScore:0.000} rowNoise={RowNoise(img):0.0} -> {Path.GetFileName(path)}");
+          }
+      }
+    }
+
+    /// <summary>Mean absolute luma difference between vertically adjacent pixels — a reference-free
+    /// speckle/noise proxy (image content correlates line-to-line; noise does not). Lower is quieter,
+    /// but over-smoothing also lowers it: read together with the PNGs.</summary>
+    private static double RowNoise(RgbImage img)
+    {
+      double sum = 0; long n = 0;
+      for (int y = 1; y < img.Height; y++)
+        for (int x = 0; x < img.Width; x++)
+        {
+          var (r1, g1, b1) = img.Get(x, y - 1);
+          var (r2, g2, b2) = img.Get(x, y);
+          double y1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
+          double y2 = 0.299 * r2 + 0.587 * g2 + 0.114 * b2;
+          sum += Math.Abs(y2 - y1); n++;
+        }
+      return n > 0 ? sum / n : 0;
+    }
+
+
     [ManualFact("Result 2026-07-02: peak deviation ≈ 3.3 kHz on the strong bursts (Monitor-3 3310, UTMN2 " +
       "3303/3368 Hz); weaker bursts read 3.7–4.1 kHz (noise-inflated). Corroborated by the FskDemod " +
       "spectrogram (occupied width ≈ ±5 kHz, carrier centered). Basis for the chan ±6 kHz default and the " +

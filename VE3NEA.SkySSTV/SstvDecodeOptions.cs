@@ -18,6 +18,14 @@ namespace VE3NEA.SkySSTV
     public double ChannelBwHz { get; init; } = 6000.0;
 
 
+    /// <summary>Envelope-gated impulse-blanker threshold, as a fraction of the running mean envelope of the
+    /// channel-filtered signal; 0 disables the blanker. Mined from Hopper's FmNoise experiment (plan §6.1):
+    /// DevVsMag.txt shows the discriminator error std is ~6× larger where the instantaneous envelope fades
+    /// toward zero — FM clicks live in envelope fades, so discriminator samples taken inside a fade are
+    /// replaced by interpolation across it (P6(c) impulse blanking).</summary>
+    public double BlankerThreshold { get; init; } = 0.0;
+
+
     /// <summary>When true (P2 default) the decoder acquires the image start automatically — VIS header if
     /// present (plan §4), otherwise the winning sync train (plan §4.1). When false it decodes at the
     /// fixed <see cref="StartSample"/> (P1 behavior, for closed-loop tests with known timing).</summary>

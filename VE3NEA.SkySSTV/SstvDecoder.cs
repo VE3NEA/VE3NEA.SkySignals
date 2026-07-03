@@ -203,7 +203,52 @@ namespace VE3NEA.SkySSTV
     {
       double fs = o.SampleRate;
       Complex32[] chan = ChannelFilter(iq, fs, o.ChannelBwHz);
-      return Discriminate(chan, fs);
+      double[] disc = Discriminate(chan, fs);
+      if (o.BlankerThreshold > 0) BlankImpulses(chan, disc, fs, o.BlankerThreshold);
+      return disc;
+    }
+
+    /// <summary>Envelope-gated impulse blanker (P6(c), mined from Hopper's FmNoise experiment §6.1):
+    /// FM clicks happen where the instantaneous envelope fades — DevVsMag.txt measured the discriminator
+    /// error std ~6× larger at zero envelope than at the mean. Discriminator samples whose envelope is
+    /// below <paramref name="threshold"/>·(running mean envelope) are unreliable and are replaced by
+    /// linear interpolation across the fade. Bounded state (single-pole envelope tracker) + bounded gap
+    /// length keep this streaming-realizable with a max-gap latency (plan §1.13); fades longer than the
+    /// gap bound are dropouts, left to the pulse-train coasting.</summary>
+    private static void BlankImpulses(Complex32[] chan, double[] disc, double fs, double threshold)
+    {
+      int n = chan.Length;
+      if (n < 3) return;
+      var mag = new float[n];
+      for (int i = 0; i < n; i++)
+        mag[i] = (float)Math.Sqrt((double)chan[i].Real * chan[i].Real +
+                                  (double)chan[i].Imaginary * chan[i].Imaginary);
+
+      // running mean envelope: single-pole tracker (τ = 100 ms), primed on the first window
+      double alpha = 1.0 / (0.1 * fs);
+      int prime = (int)Math.Min(n, 0.1 * fs);
+      double mean = 0; for (int i = 0; i < prime; i++) mean += mag[i]; mean /= prime;
+
+      // disc[i] mixes chan[i] with chan[i−1], so a faded sample poisons two discriminator outputs
+      var bad = new bool[n];
+      for (int i = 0; i < n; i++)
+      {
+        if (mag[i] < threshold * mean) { bad[i] = true; if (i + 1 < n) bad[i + 1] = true; }
+        mean += (mag[i] - mean) * alpha;
+      }
+
+      int maxGap = (int)(0.02 * fs);
+      for (int i = 0; i < n; )
+      {
+        if (!bad[i]) { i++; continue; }
+        int a = i;
+        while (i < n && bad[i]) i++;                         // bad run is [a, i)
+        if (i - a > maxGap) continue;                        // a dropout, not a click — leave it
+        double left = a > 0 ? disc[a - 1] : disc[i < n ? i : n - 1];
+        double right = i < n ? disc[i] : left;
+        for (int j = a; j < i; j++)
+          disc[j] = left + (right - left) * (j - a + 1) / (i - a + 1);
+      }
     }
 
     /// <summary>Stage-2 audio bandpass (plan §3, retro item J): band-limit the discriminated audio to the

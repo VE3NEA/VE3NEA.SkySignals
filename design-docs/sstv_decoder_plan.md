@@ -21,11 +21,20 @@ Known residuals (accepted, documented in the probe annotations):
 - The below-FM-threshold transmissions (04-18 0–24 s, 12_37_50 1–38 s) detect and time-lock but decode
   to RGB speckle — the P6(c) front-end fidelity gap.
 
+**P6(c) IN PROGRESS (2026-07-03):** the envelope-gated impulse blanker is implemented
+(`SstvDecodeOptions.BlankerThreshold`, default 0 = off; design mined from Hopper `FmNoise` DevVsMag —
+clicks live in envelope fades) and the decode-stage chan-BW × blanker grid ran on 4 real bursts
+(`Real_P6cDecodeGridProbe`): blanker wins on ALL real bursts (clicks 2.4→0 %, 04-18 maxScore
+0.221→0.324 at chan ±4000 + blank 0.5, rowNoise down everywhere, strong bursts don't regress); the
+synthetic closed loop (`Frontend_BlankerAndChannelSweep`) shows the opposite because AWGN barely
+clicks — trust the real grid. `p6c_*.png` written to the recordings `decoded` folder.
+
 Next steps:
 
-1. P6(c) experiments: per-burst deviation-matched channel/video bandwidth (±4 kHz measured sweet spot
-   for the low-deviation bursts — also owns the speckle residual), de-emphasis, impulse blanking (mine
-   `Hopper\Experiments\FmNoise`); lock the defaults.
+1. Finish P6(c): (a) USER visually judges `p6c_*.png` (blanker 0.3 vs 0.5; chan ±4000 vs ±4500);
+   (b) lock defaults — needs a separate decode-stage channel BW (detection stays ±6000 per
+   `Real_DetectionChannelSweep`) + `BlankerThreshold` default, or a per-burst deviation-matched rule;
+   (c) de-emphasis experiment (not yet run).
 2. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table).
 3. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
 

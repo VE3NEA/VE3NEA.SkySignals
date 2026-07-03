@@ -57,6 +57,47 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [Fact]
+    public void Frontend_BlankerAndChannelSweep()
+    {
+      // P6(c) closed-loop experiment: does the envelope-gated impulse blanker (and/or a deviation-matched
+      // channel) lift PSNR at and below the FM threshold? Ground truth is exact here; the real-capture
+      // probes confirm visually. Nominal dev 3.3 kHz (measured real) and low dev 1.5 kHz (the 04-18 class).
+      //
+      // Result 2026-07-03: a useful NEGATIVE that does NOT transfer to real signals — synthetic AWGN at
+      // σ≤0.6 yields ≤0.05 % clicks, so the blanker only costs (−0.3..−1.6 dB at blank 0.5, ~0 at low σ)
+      // and the narrow channel is a wash. The REAL captures show 1.2–2.6 % clicks and the opposite verdict
+      // (see Real_P6cDecodeGridProbe): real FM-threshold noise is impulsive in a way this AWGN loop does
+      // not reproduce. Keep this sweep as the above-threshold no-regression guard.
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = GrayscaleGradient(spec.Width, spec.Height);
+
+      foreach (double dev in new[] { 3300.0, 1500.0 })
+        foreach (double chanBw in dev > 2000 ? new[] { 6000.0, 4500.0 } : new[] { 6000.0, 3900.0 })
+        {
+          output.WriteLine($"--- dev={dev:0} chan=±{chanBw:0}");
+          foreach (double sigma in new[] { 0.3, 0.4, 0.5, 0.6 })
+          {
+            var iq = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
+            { IncludeVis = false, DeviationHz = dev, NoiseStdDev = sigma, NoiseSeed = 7 });
+
+            var line = $"sigma={sigma:0.0}:";
+            foreach (double blank in new[] { 0.0, 0.5 })
+            {
+              var o = new SstvDecodeOptions
+              { Acquire = false, Track = false, ChannelBwHz = chanBw, BlankerThreshold = blank };
+              double[] disc = SstvDecoder.Discriminator(iq, o);
+              int clicks = 0;
+              for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) clicks++;
+              var dec = SstvDecoder.Decode(disc, SstvMode.Robot36, o);
+              line += $"  blank={blank:0.0}: PSNR={Psnr(src, dec):0.0} dB clicks={100.0 * clicks / disc.Length:0.00}%";
+            }
+            output.WriteLine(line);
+          }
+        }
+    }
+
+
     // ----------------------------------------------------------------------------------------------------
     //                                     VIS detection under noise
     // ----------------------------------------------------------------------------------------------------
