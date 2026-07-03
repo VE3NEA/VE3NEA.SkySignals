@@ -4,11 +4,11 @@ Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
 ## Current Status
 
-**Phase: train-accuracy overhaul DONE (2026-07-03) — the RLS gate mis-scaling root-caused (Hopper sample
-counts not rescaled to 48 kHz), duplicate trains and the Robot72 harmonic gone, the no-overlap spawn rule
-in: 18 of 19 ground-truth transmissions detected with exactly one train each, 0 false. Next: the
-cross-pulse soft-comb, then the remaining P6(c) experiments, then P7.** The code lives in the
-`VE3NEA.SkySignals` repo, branch `sstv`, project **`VE3NEA.SkySSTV`**. Suite: **91 pass / 10 manual-skip**.
+**Phase: train-accuracy overhaul DONE (2026-07-03; 18 of 19 ground-truth transmissions, one train each,
+0 false) + the streaming soft-comb BUILT and standalone-validated (04-18 fires at z 5.8 — the hardest
+case is detectable at last). Next: finish the comb's variance normalization, wire it into the extractor,
+then the remaining P6(c) experiments, then P7.** The code lives in the `VE3NEA.SkySignals` repo, branch
+`sstv`, project **`VE3NEA.SkySSTV`**. Suite: **94 pass / 12 manual-skip**.
 
 What landed (the Hopper port, plan §4.1/§6.1):
 
@@ -246,10 +246,36 @@ score stream (bounded state, §1.13), a detection threshold ≈ z 3.5 with a sha
 normalization to widen the margin, and seeding the MHT (comb hit → high-prior train at the comb phase,
 like a VIS seed).
 
+**Streaming soft-comb BUILT, standalone-validated (2026-07-03 late, `SstvSoftComb` + 3 unit tests +
+`Real_StreamingCombProbe`; not yet wired into the extractor).** One leaky ring of `period` bins per mode
+(λ = 0.99/period touch ⇒ ~100-period memory, retro-N safe — the leak bounds every bin), fed by the
+family's un-thresholded score stream via the detector's new probe `ScoreTap`; block-rate O(P) scans.
+**The 04-18 burst fires decisively: first confirmed hit 9.5 s in, z = 5.8, anchor 77.1 ms = the
+batch-validated phase.** Design points measured on the way (each a probe-caught failure):
+
+- The leaky form **erases** the fundamental's √2 z-advantage over its half-rate harmonic (both saturate
+  to the same per-bin height — the batch advantage came from fixed-time integration) → per-ring
+  **mirror-ridge suppression**: a ring showing a comparable ridge at phase + P/2 is the harmonic and
+  yields to the true mode's own ring.
+- A single ring holds only ~period/2L independent noise samples, so its self-estimated σ has Student-t
+  tails that fire falsely → **pooled per-family noise statistics**, gated until every ring of the family
+  is warm.
+- **Period-aware threshold** `1.6·√(2·ln(period/2L))` (extreme-value scaling; a flat threshold cannot
+  serve 7 200- and 45 000-bin rings at once).
+
+Remaining before extractor wiring: the noise control still grazes z = 3.6 at 13.2 s — between family
+warm-up and leak steady state (9–30 s) the rings' variances fill at different rates and the pool
+underestimates σ; fix analytically by normalizing each ring's bins by its touch-count variance factor
+`(1−λ^{2k})/(1−λ²)` before pooling. Then: comb hit → high-prior train seeded at the comb phase (like a
+VIS seed), back-dated one comb memory so the accumulated span's lines are claimed; re-run the accuracy
+scorecard (04-18 should finally decode; must stay 18/19+ with no new false trains).
+
 Next actions:
 
-1. **Streaming soft-comb accumulator** (statistic validated above) for the 04-18 class — also owns the
-   sensitivity-floor residuals (the UmKA ~503 post-dropout split, late starts on weak bursts).
+1. **Finish the soft-comb**: the touch-count variance normalization above, then wire into
+   `ExtractTrains`/the extractor (comb hit seeds a high-prior train), validate on the scorecard — this
+   also owns the sensitivity-floor residuals (the UmKA ~503 post-dropout split, late starts on weak
+   bursts).
 2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
    per-burst deviation-matched (NOT fixed-narrower — see the sweep above) channel/video bandwidth.
 3. P7 regression corpus: `Real_TrainAccuracyProbe` + the ground-truth table are its seed.

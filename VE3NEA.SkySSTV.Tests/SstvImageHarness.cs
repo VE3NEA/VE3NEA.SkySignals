@@ -323,6 +323,59 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("Result 2026-07-03 (SstvSoftComb v1): the 04-18 burst fires decisively — first confirmed " +
+      "hit 9.5 s (after family warm-up), z 5.8, final z 5.0 at anchor 77.1 ms = the batch-validated " +
+      "phase. Design points measured along the way: (a) the leaky form erases the fundamental's sqrt-2 " +
+      "z-advantage over the half-rate harmonic -> per-ring mirror-ridge suppression; (b) a single ring " +
+      "holds ~period/2L independent samples so self-estimated sigma has Student-t tails -> pooled " +
+      "per-family stats, gated until the whole family is warm; (c) period-aware threshold " +
+      "1.6*sqrt(2 ln Neff). REMAINING: the noise control still grazes z=3.6 at 13.2 s — during " +
+      "9-30 s the rings' variances fill at different rates and the pool underestimates sigma; fix " +
+      "analytically by normalizing each ring by its touch-count variance factor (1-lambda^2k)/(1-lambda^2) " +
+      "before pooling. Then wire into the extractor (comb hit -> high-prior train, like a VIS seed).")]
+    public void Real_StreamingCombProbe()
+    {
+      string hardWav = Path.Combine(RecordingsDir, "2026-04-18_12_36_09_UmKA-1.iq.wav");
+      string ctrlWav = Path.Combine(RecordingsDir, "2026-07-01_11_29_08_UTMN2.iq.wav");
+      if (!File.Exists(hardWav) || !File.Exists(ctrlWav)) { output.WriteLine("captures absent; probe skipped"); return; }
+
+      var (iqH, srH) = WavIqReader.Read(hardWav);
+      var (iqC, srC) = WavIqReader.Read(ctrlWav);
+      Report("burst  ", iqH[..(int)(24 * srH)], srH);
+      Report("control", iqC[(int)(60 * srC)..(int)(84 * srC)], srC);
+
+      void Report(string name, Complex32[] iq, double sr)
+      {
+        var o = new SstvDecodeOptions { SampleRate = sr };
+        double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+        var spec = SstvModes.Get(SstvMode.Robot36);
+
+        var comb = new SstvSoftComb(sr);
+        var det = new SstvPulseDetector(sr, spec.SyncMs)
+        { ScoreTap = (t, s) => comb.Process(spec.SyncMs, t, s) };
+
+        int block = (int)(0.25 * sr);
+        long firstHit = -1;
+        double hitZ = 0;
+        SstvMode? hitMode = null;
+        var pulses = new List<SstvPulse>();
+        for (int t = 0; t < sync.Length; t++)
+        {
+          det.Process(sync[t], pulses);
+          if (t % block == block - 1 && comb.Check(t) is SstvCombHit h && firstHit < 0)
+          { firstHit = t; hitZ = h.Z; hitMode = h.Mode; }
+        }
+
+        // final ring scan for the trajectory summary (peak z regardless of the hit gate)
+        comb.Check(sync.Length - 1);
+        var final = comb.Check(sync.Length - 1);
+        output.WriteLine($"{name}: first confirmed hit " +
+          (firstHit < 0 ? "NONE" : $"at {firstHit / sr:0.0}s {hitMode} z={hitZ:0.0}") +
+          $"; final best {(final is SstvCombHit f ? $"{f.Mode} z={f.Z:0.0} anchor%P={(f.AnchorSample % 7200) / sr * 1000:0.0}ms" : "none ≥ HitZ")}");
+      }
+    }
+
+
     [ManualFact("Result 2026-07-03 — the soft-comb VALIDATES on the hardest case: combing the " +
       "un-thresholded score over 160 Robot36 periods of the 04-18 burst gives a coherent ridge at " +
       "z=4.5 (all top-20 phases within ±1 ms of one phase, identical at chan ±6000 and ±4000 — the comb " +
