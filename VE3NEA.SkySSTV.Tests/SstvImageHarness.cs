@@ -104,12 +104,12 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [ManualFact("Result 2026-07-02 late (retro D+E+O in): 18 images from 8 of 9 captures — every " +
-      "promoted ≥¼-lines train emits (the weak low-fill decodes ARE real transmissions, e.g. 12_37_50 " +
-      "@157 s, user-confirmed on the FskDemod spectrogram), plus a NEW real image: the UmKA-1 ~133 s " +
-      "SpacePi/Earth burst the VIS-hijack bug had swallowed (its old '@318 s second burst' was an " +
-      "artifact of that hijack). Single discriminator pass per capture. Still undetected: the 04-18 " +
-      "UmKA-1 transmission (the longer-coherent-integration case).")]
+    [ManualFact("Result 2026-07-03 late (soft-comb wired): 21 images from ALL 9 captures — the 04-18 " +
+      "UmKA-1 transmission detects and decodes for the first time (comb-seeded train @0.1 s; video " +
+      "still speckle = the P6(c) below-FM-threshold fidelity gap, but timing locks: the post-24 s " +
+      "striping is vertical). Also new: the 12_37_50 @5 s candidate (likely-real, pending user " +
+      "confirmation) and the 04-19 @505 post-dropout partial. Previous result 2026-07-02: 18 images " +
+      "from 8 of 9, single discriminator pass, weak low-fill decodes are real transmissions.")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))
@@ -173,7 +173,9 @@ namespace VE3NEA.SkySSTV.Tests
     /// <summary>Ground truth: every SSTV transmission in the corpus, listed by the user (2026-07-03) from
     /// spectrogram/audio inspection, as (startSec, endSec) per file-name substring. The 11_29_08 entry
     /// "265-202" is a typo in the source list, read as 165-202 (matches the detections there); its 4th
-    /// transmission 478-516 was found by the detector and user-confirmed (2026-07-03).</summary>
+    /// transmission 478-516 was found by the detector and user-confirmed (2026-07-03). The 12_37_50
+    /// 1-38 s transmission was found by the soft-comb and user-confirmed (2026-07-03 late) — too weak
+    /// for an image, but detected.</summary>
     private static readonly (string file, (double t0, double t1)[] spans)[] Truth =
     {
       ("2026-04-18_12_36_09_UmKA-1", new[] { (0.0, 24.0) }),
@@ -183,17 +185,19 @@ namespace VE3NEA.SkySSTV.Tests
       ("2026-07-01_11_09_11_VIZARD-meteo", new[] { (50.0, 88.0), (208.0, 245.0) }),
       ("2026-07-01_11_15_34_VIZARD-meteo", new[] { (0.0, 18.0) }),
       ("2026-07-01_11_29_08_UTMN2", new[] { (5.0, 45.0), (165.0, 202.0), (323.0, 357.0), (478.0, 516.0) }),
-      ("2026-07-01_12_37_50_Monitor-3", new[] { (155.0, 160.0) }),
+      ("2026-07-01_12_37_50_Monitor-3", new[] { (1.0, 38.0), (155.0, 160.0) }),
       ("2026-07-01_12_41_24_VIZARD-meteo", new[] { (0.0, 15.0), (135.0, 175.0), (292.0, 328.0) }),
     };
 
-    [ManualFact("Result 2026-07-03 (RLS gate rescale + guards + merge-on-promote + the no-overlap spawn " +
-      "rule): 18 of 19 transmissions matched with ONE train each, 0 false (was ~13/18 with 5+ " +
-      "duplicates); the Robot72 harmonic mis-mode is gone; the 11_29_08 478-516 transmission was found " +
-      "by the detector and user-confirmed. Residuals: the known 04-18 MISS (hardest case), and one " +
-      "flagged DUP that actually follows the no-overlap rule: UmKA 04-19 484-515 has a real >6 s sync " +
-      "dropout at ~500 (SNR floor), so the first train finishes and a second partial legitimately spawns " +
-      "at ~503 with a >20 ms phase step (un-mergeable grid; the soft-comb regime).")]
+    [ManualFact("Result 2026-07-03 late (soft-comb wired in): 20 of 20 matched, 0 false, 0 missed — " +
+      "04-18 DETECTS AND DECODES FOR THE FIRST TIME (comb-seeded train 0.1-28 s), and the comb FOUND a " +
+      "transmission missing from the truth list (12_37_50 1-38 s: cadence, RF-spectrogram stripes, " +
+      "21-check persistence; user-confirmed — too weak for an image but detected). 1 DUP residual = " +
+      "the pre-existing 04-19 ~505 post-dropout continuation. Comb guards proven here: family-ring " +
+      "reset on train retirement (kills ridge-echo phantoms), the 12-check persistence gate (kills " +
+      "noise extremes), tight comb-train regressor priors (periodPpm 200 / phaseMs 1.5 — without them " +
+      "a soft noise first pulse wrenched the grid and 11_29's first transmission collapsed to 27 " +
+      "pulses).")]
     public void Real_TrainAccuracyProbe()
     {
       int nMatch = 0, nDup = 0, nFalse = 0, nMiss = 0;
@@ -323,16 +327,15 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
-    [ManualFact("Result 2026-07-03 (SstvSoftComb v1): the 04-18 burst fires decisively — first confirmed " +
-      "hit 9.5 s (after family warm-up), z 5.8, final z 5.0 at anchor 77.1 ms = the batch-validated " +
-      "phase. Design points measured along the way: (a) the leaky form erases the fundamental's sqrt-2 " +
-      "z-advantage over the half-rate harmonic -> per-ring mirror-ridge suppression; (b) a single ring " +
-      "holds ~period/2L independent samples so self-estimated sigma has Student-t tails -> pooled " +
-      "per-family stats, gated until the whole family is warm; (c) period-aware threshold " +
-      "1.6*sqrt(2 ln Neff). REMAINING: the noise control still grazes z=3.6 at 13.2 s — during " +
-      "9-30 s the rings' variances fill at different rates and the pool underestimates sigma; fix " +
-      "analytically by normalizing each ring by its touch-count variance factor (1-lambda^2k)/(1-lambda^2) " +
-      "before pooling. Then wire into the extractor (comb hit -> high-prior train, like a VIS seed).")]
+    [ManualFact("Result 2026-07-03 late (comb FINISHED and wired): burst first confirmed hit 10.5 s " +
+      "z=5.2, 55 confirmed checks, anchor 77.1 ms = the batch phase; control and both noise-fire " +
+      "segments clean; the 12_37 0-40 s segment fires z 3.9-4.1 for 21 checks — cadence + RF stripes " +
+      "say it is a REAL Monitor-3 transmission (pending user ground-truth confirmation). What closed " +
+      "the false fires: (a) touch-count variance normalization (1-lambda^2k)/(1-lambda^2) before " +
+      "pooling (z 3.6 -> 3.4); (b) HitFactor 1.6 -> 1.8 — the threshold must cover the max over a " +
+      "pass's worth of ~memory-length ring redraws, sqrt(2 ln(Neff*redraws)) ~ 3.4, not the " +
+      "instantaneous 2.06; (c) the 12-check persistence gate — noise extremes wander off within ~3 " +
+      "checks, real ridges are re-fed every period (55/21 checks).")]
     public void Real_StreamingCombProbe()
     {
       string hardWav = Path.Combine(RecordingsDir, "2026-04-18_12_36_09_UmKA-1.iq.wav");
@@ -343,6 +346,24 @@ namespace VE3NEA.SkySSTV.Tests
       var (iqC, srC) = WavIqReader.Read(ctrlWav);
       Report("burst  ", iqH[..(int)(24 * srH)], srH);
       Report("control", iqC[(int)(60 * srC)..(int)(84 * srC)], srC);
+
+      // the segments where the scorecard runs showed comb false-fires (no real transmission per the
+      // ground-truth cadence): early 12_37 (a REAL-transmission candidate — RF stripes on cadence),
+      // early 11_09 (noise, 3-check run), 11_29 ~450 (noise) and 11_09 ~170-208 (the Robot72 phantom)
+      string m3Wav = Path.Combine(RecordingsDir, "2026-07-01_12_37_50_Monitor-3.iq.wav");
+      string vzWav = Path.Combine(RecordingsDir, "2026-07-01_11_09_11_VIZARD-meteo.iq.wav");
+      if (File.Exists(m3Wav))
+      {
+        var (iq3, sr3) = WavIqReader.Read(m3Wav);
+        Report("12_37 0-40 s", iq3[..(int)(40 * sr3)], sr3);
+      }
+      if (File.Exists(vzWav))
+      {
+        var (iq4, sr4) = WavIqReader.Read(vzWav);
+        Report("11_09 0-40 s", iq4[..(int)(40 * sr4)], sr4);
+        Report("11_09 150-215", iq4[(int)(150 * sr4)..(int)(215 * sr4)], sr4);
+      }
+      Report("11_29 400-470", iqC[(int)(400 * srC)..(int)(470 * srC)], srC);
 
       void Report(string name, Complex32[] iq, double sr)
       {
@@ -356,14 +377,19 @@ namespace VE3NEA.SkySSTV.Tests
 
         int block = (int)(0.25 * sr);
         long firstHit = -1;
-        double hitZ = 0;
+        double hitZ = 0, maxZ = 0;
+        int nHits = 0;
         SstvMode? hitMode = null;
         var pulses = new List<SstvPulse>();
         for (int t = 0; t < sync.Length; t++)
         {
           det.Process(sync[t], pulses);
-          if (t % block == block - 1 && comb.Check(t) is SstvCombHit h && firstHit < 0)
-          { firstHit = t; hitZ = h.Z; hitMode = h.Mode; }
+          if (t % block == block - 1 && comb.Check(t) is SstvCombHit h)
+          {
+            nHits++;
+            if (h.Z > maxZ) maxZ = h.Z;
+            if (firstHit < 0) { firstHit = t; hitZ = h.Z; hitMode = h.Mode; }
+          }
         }
 
         // final ring scan for the trajectory summary (peak z regardless of the hit gate)
@@ -371,6 +397,7 @@ namespace VE3NEA.SkySSTV.Tests
         var final = comb.Check(sync.Length - 1);
         output.WriteLine($"{name}: first confirmed hit " +
           (firstHit < 0 ? "NONE" : $"at {firstHit / sr:0.0}s {hitMode} z={hitZ:0.0}") +
+          $"; {nHits} confirmed checks, max z={maxZ:0.0}" +
           $"; final best {(final is SstvCombHit f ? $"{f.Mode} z={f.Z:0.0} anchor%P={(f.AnchorSample % 7200) / sr * 1000:0.0}ms" : "none ≥ HitZ")}");
       }
     }

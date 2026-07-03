@@ -55,8 +55,9 @@ namespace VE3NEA.SkySSTV.Tests
       long t = 0;
       for (; t < 40 * Fs; t++) comb.Process(9.0, t, Score(t, rng, bumps: true));
 
-      comb.Check(t);                              // arm the stability gate
-      var hit = comb.Check(t + Block);
+      // arm the persistence gate: the ridge must stay over threshold for ConfirmChecks checks
+      for (int k = 1; k < SstvSoftComb.ConfirmChecks; k++) comb.Check(t + k * Block);
+      var hit = comb.Check(t + SstvSoftComb.ConfirmChecks * Block);
       hit.Should().NotBeNull();
       output.WriteLine($"best: {hit!.Value.Mode} z={hit.Value.Z:0.0}");
       hit.Value.Mode.Should().Be(SstvMode.Robot36, "the fundamental out-scores the half-rate harmonic");

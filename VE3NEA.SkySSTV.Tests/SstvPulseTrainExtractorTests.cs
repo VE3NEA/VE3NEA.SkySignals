@@ -283,6 +283,77 @@ namespace VE3NEA.SkySSTV.Tests
       extractor.IsImageTrain(tiny).Should().BeFalse("a below-¼-lines fragment is not an image");
     }
 
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                         comb-seeded train
+    // ----------------------------------------------------------------------------------------------------
+
+
+    [Fact]
+    public void CombSeed_ClaimsBackdatedSpan_AndAssociatesSoftPulses()
+    {
+      // the 04-18 class: every pulse is soft (below the spawn tier), so no triplet ever spawns — a
+      // confirmed comb hit must seed an Active train back-dated one comb memory, whose floor power claims
+      // the accumulated span's lines and whose grid the later soft pulses confirm through the RLS gate
+      var pulses = Robot36Train(36000, 120);
+      for (int i = 0; i < pulses.Count; i++) pulses[i] = P(pulses[i].Time, power: 0.12f);
+      int anchor = 36000 + 60 * 7200;                        // a mid-burst hit, on the true grid
+      int end = pulses[^1].Time + 12000;
+
+      var extractor = new SstvPulseTrainExtractor(Fs);
+      int i2 = 0;
+      bool seeded = false;
+      for (int blockEnd = Block; blockEnd < end + Block; blockEnd += Block)
+      {
+        if (!seeded && blockEnd > anchor) { extractor.AddCombTrain(SstvMode.Robot36, anchor); seeded = true; }
+        var batch = new List<SstvPulse>();
+        while (i2 < pulses.Count && pulses[i2].Time < blockEnd) batch.Add(pulses[i2++]);
+        extractor.Process(batch, Math.Min(blockEnd, end));
+      }
+      extractor.Finish(end);
+
+      var train = extractor.Trains.OfType<SstvCombPulseTrain>().Single();
+      var claimed = extractor.Lines.Where(l => l.Train == train).ToList();
+      output.WriteLine($"comb train: state={train.State} pulses={train.PulseCnt} claimed={claimed.Count} " +
+        $"start={train.Regr.GetPulseTime(0)}");
+      train.State.Should().Be(SstvTrainState.Active, "the comb evidence holds the train alive");
+      train.PulseCnt.Should().BeGreaterThan(55, "every on-grid soft pulse after the seed associates");
+      claimed.Count.Should().BeGreaterThan(100, "the back-dated floor claims the whole accumulated span");
+      claimed[0].PulseNo.Should().Be(0, "claims reach back to the back-dated start");
+      extractor.IsImageTrain(train).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CombSeed_SuppressedWhileTrainActive()
+    {
+      // the no-overlap rule applies to comb seeds: while a promoted train is tracking, a comb hit (the
+      // same transmission's own ridge) must not create a second hypothesis
+      var pulses = Robot36Train(36000, 60);
+      int end = pulses[^1].Time + 12000;
+      var extractor = Run(pulses, end);
+      extractor.Trains.Where(t => t.State == SstvTrainState.Active).Should().HaveCount(1);
+
+      extractor.AddCombTrain(SstvMode.Robot36, 36000 + 50 * 7200);
+      extractor.Trains.OfType<SstvCombPulseTrain>().Should().BeEmpty(
+        "a comb hit while a train is active seeds nothing");
+    }
+
+    [Fact]
+    public void CombSeed_SuppressedByRecentlyRetiredTrain()
+    {
+      // the comb ridge persists one comb memory after its cause: a hit arriving right after a strong
+      // train retired is that train's echo, not a new transmission — no duplicate seed
+      var pulses = Robot36Train(36000, 60);
+      int lastPulse = pulses[^1].Time;
+      int end = lastPulse + 10 * 48000;                      // > the 6 s retire timeout
+      var extractor = Run(pulses, end);
+      extractor.Trains.Single().State.Should().Be(SstvTrainState.Retired);
+
+      extractor.AddCombTrain(SstvMode.Robot36, lastPulse + 8 * 48000);
+      extractor.Trains.OfType<SstvCombPulseTrain>().Should().BeEmpty(
+        "a post-retirement ridge echo must not duplicate the transmission");
+    }
+
     [Fact]
     public void VisSeed_OffsetGrid_IsNotConfirmed()
     {

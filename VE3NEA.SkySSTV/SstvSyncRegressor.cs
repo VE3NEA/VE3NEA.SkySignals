@@ -48,7 +48,13 @@ namespace VE3NEA.SkySSTV
     /// <summary>Slant / sample-clock correction = estimated period / nominal period.</summary>
     public double CorrFactor => period / NominalPeriod;
 
-    public SstvSyncRegressor(int approxStartTime, double nominalPeriod, double fs)
+    /// <summary>The defaults are the triplet-spawn priors: 1 % on the period, phase almost unknown (set by
+    /// the first pulse). A comb-seeded train passes tight priors instead — the comb ridge already knows the
+    /// period (nominal, to real slants of tens of ppm) and the phase (peak bin, ~1 ms): without them the
+    /// first associated pulse (possibly soft in-gate noise, and at a large pulseNo after back-dating) sets
+    /// the phase alone, and its error is absorbed into the period as a phantom slant of err/pulseNo.</summary>
+    public SstvSyncRegressor(int approxStartTime, double nominalPeriod, double fs,
+      double periodPpm = 10000, double phaseMs = double.PositiveInfinity)
     {
       FirstPulseTime = approxStartTime;
       LastPulseTime = approxStartTime;
@@ -58,8 +64,10 @@ namespace VE3NEA.SkySSTV
 
       period = nominalPeriod;
       phase = 0;
-      double sig = 0.01 * nominalPeriod;     // 1 % prior on the period
-      p11 = sig * sig; p12 = 0; p22 = 1e10;  // phase almost unknown
+      double sig = periodPpm * 1e-6 * nominalPeriod;   // 1 % prior on the period by default
+      p11 = sig * sig; p12 = 0;
+      p22 = double.IsInfinity(phaseMs)                 // phase almost unknown by default
+        ? 1e10 : Math.Pow(phaseMs / 1000.0 * fs, 2);
     }
 
     /// <summary>Reset the phase reference to a new start time (keeps the period estimate).</summary>

@@ -100,14 +100,25 @@ namespace VE3NEA.SkySSTV
       var families = new List<double>();
       foreach (var spec in SstvModes.All)
         if (!families.Contains(spec.SyncMs)) families.Add(spec.SyncMs);
-      var detectors = new SstvPulseDetector[families.Count];
-      for (int i = 0; i < families.Count; i++)
-        detectors[i] = new SstvPulseDetector(fs, families[i])
-        { Threshold = SstvPulseDetector.AssocThreshold };   // two-tier soft evidence (plan §4.1)
 
       int pad = (int)Math.Round(0.05 * fs);                  // lead-in: > 2× the longest sync template
       int maxLatency = (int)Math.Round(0.10 * fs);           // bound on detector emission lag past an onset
       int blockSize = (int)Math.Round(0.25 * fs);
+
+      // the streaming soft-comb rides the detectors' un-thresholded score streams (plan §4.1): a confirmed
+      // hit seeds a high-prior back-dated train — the sensitivity floor for transmissions whose single
+      // pulses never separate from noise (the 04-18 class)
+      var comb = new SstvSoftComb(fs);
+      var detectors = new SstvPulseDetector[families.Count];
+      for (int i = 0; i < families.Count; i++)
+      {
+        double family = families[i];
+        detectors[i] = new SstvPulseDetector(fs, family)
+        {
+          Threshold = SstvPulseDetector.AssocThreshold,      // two-tier soft evidence (plan §4.1)
+          ScoreTap = (t, s) => comb.Process(family, t - pad, s)
+        };
+      }
 
       var raw = new List<SstvPulse>();
       var pending = new List<SstvPulse>();
@@ -123,6 +134,11 @@ namespace VE3NEA.SkySSTV
         foreach (var p in raw) pending.Add(new SstvPulse(p.Time - pad, p.Power, p.DurMs));
         pending.Sort((a, b) => a.Time.CompareTo(b.Time));
 
+        // a confirmed comb hit seeds (or refreshes) the high-prior back-dated train before this block's
+        // pulses are folded, so they associate with it immediately
+        if (comb.Check(blockEnd - pad) is SstvCombHit hit)
+          extractor.AddCombTrain(hit.Mode, (int)hit.AnchorSample);
+
         // deliver only pulses no later emission can precede, so the extractor sees onset order
         int safeTime = blockEnd - pad - maxLatency;
         deliver.Clear();
@@ -130,6 +146,11 @@ namespace VE3NEA.SkySSTV
         while (cnt < pending.Count && pending[cnt].Time <= safeTime) deliver.Add(pending[cnt++]);
         pending.RemoveRange(0, cnt);
         extractor.Process(deliver, blockEnd - pad);
+
+        // a retiring train's family rings hold only its residue — flush them so the decaying ridge
+        // cannot re-fire as a phantom seed (it stays over threshold for ~ln(z/HitZ) comb memories)
+        if (extractor.RetiredTrain is SstvPulseTrain retired)
+          comb.ResetFamily(SstvModes.Get(retired.Format).SyncMs);
       }
 
       raw.Clear();

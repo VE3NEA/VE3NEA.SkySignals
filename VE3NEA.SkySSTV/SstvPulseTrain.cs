@@ -113,16 +113,25 @@ namespace VE3NEA.SkySSTV
     {
       var spec = SstvModes.Get(Format);
       if (!MatchesFamily(pulse, spec)) return false;
-      if (pulse.Time > Regr.GetPulseTime(spec.LineCount + 50)) return false;
+      if (pulse.Time > Regr.GetPulseTime(MaxPulseNo(spec))) return false;
 
       int pulseNo = Regr.GetPulseNo(pulse.Time);
       if (pulseNo == lastPulseNo) return false;
       double expected = Regr.GetPulseTime(pulseNo);
-      if (Math.Abs(pulse.Time - expected) > Regr.GetMaxError(pulseNo)) return false;
+      if (Math.Abs(pulse.Time - expected) > MaxError(pulseNo)) return false;
 
       AddPulse(pulse);
       return true;
     }
+
+    /// <summary>Last line slot a pulse may associate at — the image-span gate. The comb-seeded train widens
+    /// it by its back-dating span.</summary>
+    protected virtual int MaxPulseNo(SstvModeSpec spec) => spec.LineCount + 50;
+
+    /// <summary>±association gate (samples) at <paramref name="pulseNo"/> — the regressor's innovation gate
+    /// by default; seeded trains override the pre-first-pulse case (with no pulses the phase covariance is
+    /// still the near-infinite prior, so the raw gate would accept anything).</summary>
+    protected virtual double MaxError(int pulseNo) => Regr.GetMaxError(pulseNo);
 
     /// <summary>A pulse detected by a different family's sync template (e.g. the 20 ms PD template on a
     /// Robot train) carries a biased onset and must not be fitted. Zero DurMs (unknown) always passes.</summary>
@@ -348,6 +357,83 @@ namespace VE3NEA.SkySSTV
       if (power == 0 && PulseCnt > 0 && time > VisTime
           && Regr.GetPulseNo(time) < SmoothPulsesWing + 1)
         power = pulses[^1].Power;
+      return power;
+    }
+  }
+
+  /// <summary>
+  /// A soft-comb-seeded high-prior train (plan §4.1): created from a confirmed <see cref="SstvSoftComb"/>
+  /// hit — mode and line phase known from the comb ridge — for the transmissions whose single pulses are
+  /// not threshold-separable from noise (the 04-18 class). The comb's two consecutive over-threshold checks
+  /// over ~100 line periods are far stronger evidence than the N-of-M pulse count, so the train is born
+  /// <see cref="SstvTrainState.Active"/> and back-dated one comb memory: the ridge is the integral of the
+  /// last <see cref="SstvSoftComb.MemoryPeriods"/> periods, so the lines of that whole span belong to it.
+  /// Because the burst may have no spawn-tier pulses at all, the block claim is held by a floor power over
+  /// the [back-dated start, last comb hit] span, and the life clocks are keyed to the comb hits (the
+  /// extractor refreshes <see cref="RegisterHit"/> on every confirming hit) rather than to strong pulses.
+  /// Soft pulses associate through the usual RLS gate and refine the grid.</summary>
+  internal sealed class SstvCombPulseTrain : SstvPulseTrain
+  {
+    private const double SeedWingMs = 7.0;       // first-pulse gate around the comb grid (comb phase ±~1 ms)
+    private const double FloorPower = SstvPulseDetector.AssocThreshold;  // block-claim floor over the comb span
+
+    private readonly int seedWing;
+    private readonly int startTime;              // the back-dated span start (comb anchor − comb memory)
+    private int lastHitTime;                     // most recent confirming comb hit — the evidence clock
+
+    public SstvCombPulseTrain(SstvMode mode, int startSample, int hitAnchor, double fs) : base(mode, fs)
+    {
+      seedWing = (int)Math.Round(SeedWingMs / 1000.0 * fs);
+      startTime = startSample;
+      lastHitTime = hitAnchor;
+      // tight regressor priors — the comb ridge already fixes period (nominal ± real slants) and phase
+      // (peak bin ± ~1 ms), so a soft first pulse tweaks the grid instead of setting it (see the
+      // SstvSyncRegressor ctor note)
+      Regr = new SstvSyncRegressor(startSample, nominalPeriod, fs, periodPpm: 200, phaseMs: 1.5);
+      LastStrongTime = hitAnchor;
+      State = SstvTrainState.Active;
+    }
+
+    /// <summary>A later confirming comb hit on this train's grid: extend the claimed span and hold the
+    /// retire clocks — the comb, not the pulse stream, is this train's evidence.</summary>
+    public void RegisterHit(int anchorSample)
+    { if (anchorSample > lastHitTime) lastHitTime = anchorSample; }
+
+    /// <summary>The transmission started anywhere inside the back-dated span, so its image may extend one
+    /// comb memory past the nominal span end.</summary>
+    protected override int MaxPulseNo(SstvModeSpec spec)
+      => spec.LineCount + SstvSoftComb.MemoryPeriods + 50;
+
+    /// <summary>Nothing may associate before the span start; the first pulse is gated by the tight seed
+    /// wing (the comb phase is known to ~1 ms, and with no pulses the regressor's own gate is vacuous).</summary>
+    protected override double MaxError(int pulseNo)
+      => pulseNo < 0 ? 0 : PulseCnt == 0 ? seedWing : base.MaxError(pulseNo);
+
+    /// <summary>Born promoted — the comb confirmation already is the promotion evidence.</summary>
+    public override bool HasEnoughPulses => true;
+
+    public override bool IsCandidateIdle(int time) => false;
+
+    /// <summary>The back-dated start is fixed by the comb memory; there is nothing older to explain.</summary>
+    public override bool AddOldPulses(IReadOnlyList<SstvPulse> all) => false;
+
+    /// <summary>Life is keyed to the comb hits (and any strong pulses): the ridge persists through fades,
+    /// so once it stops confirming for a retire timeout the transmission is over. Soft pulses alone may
+    /// bridge one extra timeout, as on the plain train.</summary>
+    public override bool CanRetire(int time)
+      => (time - Math.Max(lastHitTime, Regr.LastPulseTime)) > retireTimeout
+         || (time - Math.Max(lastHitTime, LastStrongTime)) > 2 * retireTimeout;
+
+    /// <summary>Claims stop at the last comb evidence.</summary>
+    public override bool IsRetiredAt(int time) => State == SstvTrainState.Retired && time > lastHitTime;
+
+    /// <summary>Hold the block claim across the whole comb-evidence span even where no pulse was ever
+    /// emitted — on the 04-18 class most line slots have no pulse at any threshold, yet the comb proves
+    /// the transmission spans them.</summary>
+    public override double GetPower(int time)
+    {
+      double power = base.GetPower(time);
+      if (power == 0 && time >= startTime && time <= lastHitTime) power = FloorPower;
       return power;
     }
   }

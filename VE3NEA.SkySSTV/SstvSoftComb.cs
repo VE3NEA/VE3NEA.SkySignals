@@ -17,7 +17,11 @@ namespace VE3NEA.SkySSTV
   /// validation used. A periodic train buried below the single-pulse threshold accumulates a coherent
   /// ridge at its phase; noise stays flat. <see cref="Check"/> scans each ring for its peak z-score
   /// (O(P) per mode per block — cheap at block rate) and reports a hit when the peak clears
-  /// <see cref="HitZ"/> on two consecutive checks (stability gate). The true mode out-scores its
+  /// <see cref="HitZ"/> on <see cref="ConfirmChecks"/> consecutive checks at a stable phase — the
+  /// persistence gate: a real ridge is re-fed every line period and stays confirmed for tens of checks
+  /// (04-18 burst: 55+; the 12_37 weak-transmission candidate: 21), while a noise extreme grazing the
+  /// threshold wanders off within a few (measured: 3 checks at z 3.8–4.0 on the corpus' noise fires
+  /// at 11_09 0–26 s and 11_29 ~450 s). The true mode out-scores its
   /// half-rate harmonic by √2 (the harmonic splits the same hits over two bins with half the per-bin
   /// noise averaging), so the caller seeds only the best-z hit.
   ///
@@ -27,8 +31,14 @@ namespace VE3NEA.SkySSTV
   internal sealed class SstvSoftComb
   {
     internal const double LeakPerPeriod = 0.99;  // ring memory ≈ 100 line periods
-    internal const double HitFactor = 1.6;       // threshold = HitFactor·E[noise max], see HitZ below
+    internal const double HitFactor = 1.8;       // threshold = HitFactor·E[noise max], see HitZ below
     private const double WarmupPeriods = 30;     // bins need this many periods before z is meaningful
+    internal const int ConfirmChecks = 12;       // consecutive over-threshold checks before a hit (persistence)
+
+    /// <summary>The comb's integration span in line periods (= 1/(1−λ)): a confirmed hit's evidence was
+    /// accumulated over this many periods before its anchor, so the extractor back-dates the seeded train
+    /// by this span (plan §4.1).</summary>
+    internal static int MemoryPeriods => (int)Math.Round(1.0 / (1.0 - LeakPerPeriod));
 
     private sealed class ModeComb
     {
@@ -37,7 +47,7 @@ namespace VE3NEA.SkySSTV
       public required double SyncMs;             // the family whose score stream feeds this ring
       public required double HitZ;               // period-aware detection threshold (see ctor)
       public long Samples;                       // family samples folded in so far
-      public double PendingZ;                    // last check's peak z (the 2-consecutive stability gate)
+      public int RunLength;                      // consecutive over-threshold checks (the persistence gate)
       public int PendingPhase;
     }
 
@@ -51,7 +61,10 @@ namespace VE3NEA.SkySSTV
         // the score stream is correlated over ~2× the sync-template length, so a ring holds
         // N_eff ≈ period / (2L) independent bins and its noise maximum scales as √(2·ln N_eff)
         // (extreme-value statistics — measured: Robot36 noise max ≈ 2.4, Robot72 ≈ 3.6 under a flat 3.5
-        // threshold). The per-ring threshold is HitFactor × that expectation.
+        // threshold). The per-ring threshold is HitFactor × that expectation; the factor also absorbs
+        // the TIME exposure the instantaneous count misses — the leak redraws the ring every ~memory,
+        // so over a whole pass the noise max is √(2·ln(N_eff·redraws)) (measured on the 24 s noise
+        // control after variance normalization: z = 3.4 ≈ that prediction, vs 2.06 instantaneous).
         double corr = 2.0 * spec.SyncMs / 1000.0 * fs;
         double nEff = Math.Max(4.0, period / corr);
         combs.Add(new ModeComb
@@ -85,7 +98,11 @@ namespace VE3NEA.SkySSTV
     /// The z normalization (mean/σ) is <b>pooled across each family's rings</b>: one ring holds only
     /// ~period/2L independent noise samples, so its self-estimated σ has Student-t tails that fire falsely;
     /// the family's rings accumulate identically-distributed noise (same leak, same per-touch σ), and
-    /// pooling multiplies the degrees of freedom.</summary>
+    /// pooling multiplies the degrees of freedom. Before pooling, each ring's bins are divided by its
+    /// touch-count variance factor √((1−λ^{2k})/(1−λ²)) (k = periods folded so far): a bin's leaky-sum
+    /// variance fills toward the steady state at a rate set by its own period, so between family warm-up
+    /// and leak steady state the rings' raw variances differ and a raw pool underestimates σ (measured:
+    /// a z = 3.6 noise grazer at 13.2 s).</summary>
     public SstvCombHit? Check(long now)
     {
       // pooled noise statistics per sync family — only once EVERY ring of the family is warm: a partial
@@ -101,7 +118,8 @@ namespace VE3NEA.SkySSTV
         {
           if (Math.Abs(c.SyncMs - fam) > 0.5) continue;
           if (c.Samples < WarmupPeriods * c.Ring.Length) { allWarm = false; break; }
-          foreach (double v in c.Ring) { sum += v; sumSq += v * v; }
+          double norm = TouchNorm(c);
+          foreach (double v in c.Ring) { double nv = v / norm; sum += nv; sumSq += nv * nv; }
           n += c.Ring.Length;
         }
         if (!allWarm || n == 0) continue;
@@ -116,29 +134,58 @@ namespace VE3NEA.SkySSTV
         if (c.Samples < WarmupPeriods * period) continue;
         if (!famStats.TryGetValue(c.SyncMs, out var stats) || stats.sd <= 0) continue;
         double mean = stats.mean, sd = stats.sd;
+        double norm = TouchNorm(c);
 
         int peak = 0;
         for (int i = 1; i < period; i++) if (c.Ring[i] > c.Ring[peak]) peak = i;
-        double z = (c.Ring[peak] - mean) / sd;
+        double z = (c.Ring[peak] / norm - mean) / sd;
 
         // half-rate-harmonic suppression: a ring whose period is 2× the true one shows TWO ridges — at
         // the phase and at phase + P/2 (in the leaky form both saturate to the fundamental's height, so
         // z alone cannot discriminate). A comparable mirror ridge marks this ring as the harmonic; the
         // true mode's own ring (single ridge) reports the hit.
         int mirror = (peak + period / 2) % period;
-        if (c.Ring[mirror] - mean > 0.6 * (c.Ring[peak] - mean)) continue;
+        if (c.Ring[mirror] / norm - mean > 0.6 * (c.Ring[peak] / norm - mean)) continue;
 
-        // stability gate: the previous check must have cleared the threshold at (nearly) the same phase
-        bool confirmed = z >= c.HitZ && c.PendingZ >= c.HitZ
-          && PhaseDist(peak, c.PendingPhase, period) < 0.05 * period;
-        c.PendingZ = z;
+        // persistence gate: the peak must clear the threshold at a stable phase for ConfirmChecks
+        // consecutive checks — a real ridge is re-fed every period and persists, a noise extreme
+        // grazing the threshold wanders off within a few checks
+        bool over = z >= c.HitZ
+          && (c.RunLength == 0 || PhaseDist(peak, c.PendingPhase, period) < 0.05 * period);
+        c.RunLength = over ? c.RunLength + 1 : 0;
         c.PendingPhase = peak;
-        if (!confirmed) continue;
+        if (c.RunLength < ConfirmChecks) continue;
 
         long anchor = now - ((now - peak) % period + period) % period;   // latest onset at the peak phase
         if (best == null || z > best.Value.Z) best = new SstvCombHit(c.Spec.Mode, anchor, z);
       }
       return best;
+    }
+
+    /// <summary>Zero every ring of a sync family — called when a promoted train of that family retires.
+    /// The rings then hold mostly that transmission's residue, and a strong burst's decaying ridge stays
+    /// over threshold for ~ln(z₀/HitZ) comb memories after it ends (measured: Robot72-ring echoes firing
+    /// 44–55 s after strong Robot36 bursts ended), re-seeding phantom trains. Touch counts reset too, so
+    /// the warm-up gate re-engages while the bins refill from live noise.</summary>
+    public void ResetFamily(double familyDurMs)
+    {
+      foreach (var c in combs)
+      {
+        if (Math.Abs(c.SyncMs - familyDurMs) > 0.5) continue;
+        Array.Clear(c.Ring);
+        c.Samples = 0;
+        c.RunLength = 0;
+        c.PendingPhase = 0;
+      }
+    }
+
+    /// <summary>Touch-count variance normalizer for a ring's bins: after k touches a leaky sum of
+    /// unit-variance noise has variance (1−λ^{2k})/(1−λ²) — dividing by its square root brings every
+    /// ring to unit per-touch variance regardless of how far its leak has filled.</summary>
+    private static double TouchNorm(ModeComb c)
+    {
+      double k = (double)c.Samples / c.Ring.Length;
+      return Math.Sqrt((1 - Math.Pow(LeakPerPeriod, 2 * k)) / (1 - LeakPerPeriod * LeakPerPeriod));
     }
 
     private IEnumerable<double> FamilyKeys()

@@ -54,6 +54,7 @@ namespace VE3NEA.SkySSTV
     private readonly List<SstvPulseTrain> trains = new();
     private readonly List<SstvScanLine> lines = new();
     private int dirtyBlock;
+    private int pendingDirty = int.MaxValue;     // dirty mark set between lifecycle passes (comb seeding)
 
     public IReadOnlyList<SstvPulseTrain> Trains => trains;
     public IReadOnlyList<SstvScanLine> Lines => lines;
@@ -85,6 +86,42 @@ namespace VE3NEA.SkySSTV
     /// <summary>Seed a high-prior train from a decoded VIS header (plan §4.1): mode and line-0 onset known.</summary>
     public void AddVisTrain(SstvMode mode, int headerEndSample)
       => trains.Add(new SstvVisPulseTrain(mode, headerEndSample, fs));
+
+    /// <summary>Seed (or refresh) a high-prior train from a confirmed soft-comb hit (plan §4.1): like a VIS
+    /// seed, but born Active — the comb's over-threshold ridge over ~100 line periods IS the promotion
+    /// evidence — and back-dated one comb memory so the accumulated span's lines are claimed. A hit whose
+    /// span is already explained by an existing train seeds nothing: the ridge persists one comb memory
+    /// after its cause, so a hit right after a strong train retires is that train's own echo.</summary>
+    public void AddCombTrain(SstvMode mode, int anchorSample)
+    {
+      double period = SstvModes.Get(mode).LinePeriodMs / 1000.0 * fs;
+      double memory = SstvSoftComb.MemoryPeriods * period;
+
+      // a hit on the grid of the live comb train refreshes its life — the comb is its evidence clock
+      foreach (var train in trains)
+        if (train is SstvCombPulseTrain comb && comb.Format == mode
+            && comb.State == SstvTrainState.Active
+            && Math.Abs(anchorSample - comb.Regr.GetPulseTime(comb.Regr.GetPulseNo(anchorSample)))
+               <= MergeWingMs / 1000.0 * fs)
+        { comb.RegisterHit(anchorSample); return; }
+
+      // the no-overlap rule (one transmission per FM channel) applies to comb seeds too
+      foreach (var train in trains)
+        if (train.State == SstvTrainState.Active) return;
+
+      // explained evidence: any same-family train (a candidate racing to promotion, or one retired within
+      // the comb memory) whose pulses fed the ridge — seeding on it would duplicate that transmission
+      double syncMs = SstvModes.Get(mode).SyncMs;
+      foreach (var train in trains)
+        if (Math.Abs(SstvModes.Get(train.Format).SyncMs - syncMs) < 0.5
+            && train.Regr.LastPulseTime > anchorSample - memory) return;
+
+      // back-date one comb memory, clamped to the stream start with the comb phase preserved
+      int back = Math.Min(SstvSoftComb.MemoryPeriods, (int)Math.Floor(anchorSample / period));
+      int start = anchorSample - (int)Math.Round(back * period);
+      trains.Add(new SstvCombPulseTrain(mode, start, anchorSample, fs));
+      pendingDirty = Math.Min(pendingDirty, start / blockSize);
+    }
 
     /// <summary>Fold in the pulses detected up to <paramref name="uptoTime"/> (absolute samples, pulses in
     /// time order), then run the train lifecycle and (re-)extract the scan lines of the settled blocks.</summary>
@@ -273,7 +310,8 @@ namespace VE3NEA.SkySSTV
     private void UpdateTrainList(int time)
     {
       RetiredTrain = null;
-      dirtyBlock = time / blockSize - 1 - smoothBlocksWing;
+      dirtyBlock = Math.Min(time / blockSize - 1 - smoothBlocksWing, pendingDirty);
+      pendingDirty = int.MaxValue;
 
       for (int i = trains.Count - 1; i >= 0; i--)
       {
