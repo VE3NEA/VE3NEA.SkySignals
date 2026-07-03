@@ -29,14 +29,28 @@ clicks live in envelope fades) and the decode-stage chan-BW × blanker grid ran 
 synthetic closed loop (`Frontend_BlankerAndChannelSweep`) shows the opposite because AWGN barely
 clicks — trust the real grid. `p6c_*.png` written to the recordings `decoded` folder.
 
+**User judgment (2026-07-03):** `p6c_m3_1237` shows no image at any setting (12_37_50 is
+detect-only, unrecoverable); on the other 3 bursts **chan4000 + blank 0.5 is visually best**.
+Defaults LOCKED accordingly: `VideoChannelBwHz = 4000` (new option; `Decode(Complex32[],…)` runs the
+video chain with it, detection keeps `ChannelBwHz = 6000`), `BlankerThreshold = 0.5` (both chains);
+harness image decodes now go through the video chain (decode from the IQ slice, not the detection
+disc).
+
+**INTERRUPTED mid-validation (session limit):** with the new defaults the fast suite is 97 pass /
+**1 FAIL: `SstvP3Tests.Tracking_CoastsThroughMidImageFade`** — not yet investigated (suspect: the
+blanker gates the test's simulated fade envelope and perturbs what the tracker sees, or the ±4000
+video chain shifted its PSNR/assertion margin). Nothing else run after the lock.
+
 Next steps:
 
-1. Finish P6(c): (a) USER visually judges `p6c_*.png` (blanker 0.3 vs 0.5; chan ±4000 vs ±4500);
-   (b) lock defaults — needs a separate decode-stage channel BW (detection stays ±6000 per
-   `Real_DetectionChannelSweep`) + `BlankerThreshold` default, or a per-burst deviation-matched rule;
-   (c) de-emphasis experiment (not yet run).
-2. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table).
-3. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
+1. Fix/diagnose `Tracking_CoastsThroughMidImageFade` under the locked defaults (first look: does the
+   test's fade simulation drop the envelope so the blanker rewrites the fade? If so the test may need
+   `BlankerThreshold = 0` locally, or the blanker's max-gap bound is wrong for multi-line fades).
+2. Re-run `Real_TrainAccuracyProbe` (must stay 20/20 with blanker 0.5 in the detection chain) and
+   `Real_DecodesToPng` (regenerate images with the locked video chain), update their annotations.
+3. De-emphasis experiment (not yet run), then P6(c) is done.
+4. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table).
+5. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
 
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the

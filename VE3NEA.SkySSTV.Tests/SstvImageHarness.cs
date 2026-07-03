@@ -162,7 +162,7 @@ namespace VE3NEA.SkySSTV.Tests
         int dur = (int)(spec.LineCount * spec.LinePeriodMs / 1000.0 * sr);
         int start = Math.Max(0, firstSync - margin);
         int end = Math.Min(disc.Length, firstSync + dur + margin);
-        var img = SstvDecoder.Decode(disc[start..end], train.Format,
+        var img = SstvDecoder.Decode(iq[start..end], train.Format,
           new SstvDecodeOptions { SampleRate = sr, Acquire = false, StartSample = firstSync - start });
         images.Add((img, train.Format, firstSync, train is SstvVisPulseTrain, train.MeanPower));
       }
@@ -632,7 +632,7 @@ namespace VE3NEA.SkySSTV.Tests
             SampleRate = sr,
             Acquire = false,
             StartSample = res.FirstSyncSample - start,
-            ChannelBwHz = chanBw,
+            VideoChannelBwHz = chanBw,                       // Decode() runs the video chain (P6(c) lock)
             BrightnessBwHz = videoBw
           });
           string path = Path.Combine(OutDir, $"sweep_Monitor3_chan{chanBw:0}_vid{videoBw:0}.png");
@@ -783,7 +783,7 @@ namespace VE3NEA.SkySSTV.Tests
       int start = Math.Max(0, res.FirstSyncSample - margin);
       int end = Math.Min(disc.Length, res.FirstSyncSample + dur + margin);
 
-      var img = SstvDecoder.Decode(disc[start..end], mode,
+      var img = SstvDecoder.Decode(iq[start..end], mode,
         new SstvDecodeOptions { SampleRate = fs, Acquire = false, StartSample = res.FirstSyncSample - start });
       return (img, res);
     }

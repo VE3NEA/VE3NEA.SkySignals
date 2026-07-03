@@ -24,7 +24,12 @@ namespace VE3NEA.SkySSTV
     /// <see cref="SstvDecodeOptions.Acquire"/> false to decode at the fixed
     /// <see cref="SstvDecodeOptions.StartSample"/>.</summary>
     public static RgbImage Decode(Complex32[] iq, SstvMode mode, SstvDecodeOptions? options = null)
-      => Decode(Discriminator(iq, options ?? new SstvDecodeOptions()), mode, options);
+    {
+      // the video/decode chain runs its own narrower Stage-1 channel (P6(c) lock, 2026-07-03): detection
+      // keeps ChannelBwHz, image quality wants VideoChannelBwHz + the blanker
+      var o = options ?? new SstvDecodeOptions();
+      return Decode(Discriminator(iq, o with { ChannelBwHz = o.VideoChannelBwHz }), mode, o);
+    }
 
     /// <summary>Decode from the discriminated audio (one <see cref="Discriminator"/> pass is shared between
     /// detection and decode — retro item O; every stage downstream of the outer FM demod consumes this

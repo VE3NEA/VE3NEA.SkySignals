@@ -10,20 +10,31 @@ namespace VE3NEA.SkySSTV
     /// <summary>Complex input sample rate (Hz).</summary>
     public double SampleRate { get; init; } = 48000.0;
 
-    /// <summary>Stage-1 complex channel low-pass cutoff (Hz), i.e. half the pass-bandwidth. Must clear the
-    /// FM's full occupied width (Carson half-width ~dev+f_audio): a cutoff that clips the constant-envelope
-    /// tails makes the discriminator spike (brightness noise). Real satellite SSTV measured dev ≈ 3.3 kHz
-    /// (Real_DeviationProbe 2026-07-02) → Carson ≈ ±5.6 kHz; ±6 kHz clears it with margin, and the real
-    /// filter sweep showed ±4–5 kHz already clean vs heavy speckle at ±15 kHz. 0 disables the stage.</summary>
+    /// <summary>Stage-1 complex channel low-pass cutoff (Hz), i.e. half the pass-bandwidth, for the
+    /// DETECTION/timing chain. Must clear the FM's full occupied width (Carson half-width ~dev+f_audio):
+    /// real satellite SSTV measured dev ≈ 3.3 kHz (Real_DeviationProbe 2026-07-02) → Carson ≈ ±5.6 kHz;
+    /// ±6 kHz clears it with margin. Narrower LOOKS cleaner but loses weak-train pulses and splits trains
+    /// (Real_DetectionChannelSweep 2026-07-02) — the video chain has its own narrower cutoff
+    /// (<see cref="VideoChannelBwHz"/>). 0 disables the stage.</summary>
     public double ChannelBwHz { get; init; } = 6000.0;
+
+
+    /// <summary>Stage-1 cutoff (Hz) for the VIDEO/decode chain, applied by
+    /// <c>Decode(Complex32[],…)</c> in place of <see cref="ChannelBwHz"/>. The P6(c) real-capture grid +
+    /// visual judgment (Real_P6cDecodeGridProbe 2026-07-03) put the best image quality at ±4 kHz with the
+    /// impulse blanker on: the clipped Carson tails become envelope fades whose clicks the blanker excises,
+    /// so the narrower channel's noise rejection is kept without the speckle.</summary>
+    public double VideoChannelBwHz { get; init; } = 4000.0;
 
 
     /// <summary>Envelope-gated impulse-blanker threshold, as a fraction of the running mean envelope of the
     /// channel-filtered signal; 0 disables the blanker. Mined from Hopper's FmNoise experiment (plan §6.1):
     /// DevVsMag.txt shows the discriminator error std is ~6× larger where the instantaneous envelope fades
     /// toward zero — FM clicks live in envelope fades, so discriminator samples taken inside a fade are
-    /// replaced by interpolation across it (P6(c) impulse blanking).</summary>
-    public double BlankerThreshold { get; init; } = 0.0;
+    /// replaced by interpolation across it. Default locked by the P6(c) real grid + visual judgment
+    /// (2026-07-03): wins or is neutral on every real burst in both chains (clicks 2.4→0 %, 04-18 sync
+    /// maxScore 0.221→0.324); a no-op on clean signals (constant envelope ⇒ nothing gated).</summary>
+    public double BlankerThreshold { get; init; } = 0.5;
 
 
     /// <summary>When true (P2 default) the decoder acquires the image start automatically — VIS header if
