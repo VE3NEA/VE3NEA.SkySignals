@@ -4,11 +4,11 @@ Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
 ## Current Status
 
-**Phase: P6(c) retro work-off DONE (2026-07-02 late) — retro D/E/O closed, VIS-hijack bug fixed, a NEW
-real image uncovered, 04-18 re-diagnosed (low-deviation FM), and two dead ends measured shut (fixed
-narrower channel; wider coherence window). Next: cross-pulse soft-evidence accumulation, then the
-remaining P6(c) experiments, then P7.** The code lives in the `VE3NEA.SkySignals` repo, branch `sstv`,
-project **`VE3NEA.SkySSTV`**. Suite: **88 pass / 8 manual-skip**.
+**Phase: train-accuracy overhaul DONE (2026-07-03) — the RLS gate mis-scaling root-caused (Hopper sample
+counts not rescaled to 48 kHz), duplicate trains and the Robot72 harmonic gone, the no-overlap spawn rule
+in: 18 of 19 ground-truth transmissions detected with exactly one train each, 0 false. Next: the
+cross-pulse soft-comb, then the remaining P6(c) experiments, then P7.** The code lives in the
+`VE3NEA.SkySignals` repo, branch `sstv`, project **`VE3NEA.SkySSTV`**. Suite: **91 pass / 10 manual-skip**.
 
 What landed (the Hopper port, plan §4.1/§6.1):
 
@@ -180,12 +180,69 @@ accumulation** (the §4.1 soft-comb: integrate the un-thresholded matched-filter
 line slots before requiring a hard triplet). The detector's window and threshold are now constructor/init
 knobs (defaults unchanged) for these experiments.
 
+**Two-tier soft evidence IN PROGRESS (2026-07-02 late, uncommitted — REVIEW BEFORE COMMIT).** The first
+streaming step of the soft-comb: the extractor's detectors now emit down to `AssocThreshold` 0.10, but
+only ≥ `ScoreThreshold` 0.18 pulses may form the spawn triplet — soft pulses can only CONFIRM an existing
+hypothesis through the tight RLS gate (unit test `SoftPulses_ConfirmButNeverSpawn`). `GetPower` block-claim
+smoothing became **density-weighted** (empty slots count as zero — the intended half-rate-harmonic
+discriminant). Suite 89 pass / 8 manual-skip. Corpus: **20 images** — gains: a NEW third UmKA-1 burst at
+~490 s found at the default channel, a new UTMN2 22:36 burst at ~208 s, several bursts extend earlier
+(more claimed lines); synthetic noise rejection unaffected. **One REGRESSION: UTMN2 11:29 ~176 s now
+decodes as Robot72** (was Robot36) — the half-rate harmonic promotes on soft evidence and the true
+Robot36 hypothesis never forms to compete, so density weighting alone cannot displace it. Fix candidates
+for next session: harmonic arbitration at spawn/promotion — suppress a candidate whose period is ~2× an
+existing same-family train's with aligned phase, or prefer at promotion the hypothesis whose grid
+explains more spawn-tier pulses over the shared span. 04-18 still yields no image (expected — needs the
+full comb accumulator, not just tiered thresholds).
+
+**Train-accuracy overhaul DONE (2026-07-03) — the duplicate-train / false-start defect root-caused and
+fixed.** The user supplied a ground-truth list of every transmission in the corpus (now embedded in
+`Real_TrainAccuracyProbe`, the accuracy scorecard); the code was detecting many transmissions 2-3× with
+false mid-transmission starts. Root cause: **the RLS regressor's tolerances were ported from Hopper as
+raw sample counts without rescaling from its ~2.756 kHz processing rate to our 48 kHz** — the association
+gate floor was ±0.25 ms against real low-SNR onset jitter of 1–3 ms (17× tighter than the proven design),
+so mid-burst pulses missed the gate, went unclaimed, and re-spawned duplicate trains. (The §9 A/B lesson
+a third time: port the statistic, not the number — `TripletTolMs` had been converted correctly, and its
+comment named Hopper's rate.) What landed:
+
+- `SstvSyncRegressor` tolerances now in TIME, converted by fs: observation σ = 2.2 ms, gate floor =
+  4.4 ms (Hopper's 6 / 12 samples @ 2.756 kHz).
+- **Guards the wide gate requires against soft (0.10-tier) in-gate noise** (~4 %/slot): back-fill adopts
+  spawn-tier pulses only (else the start creeps backward through noise); retire/idle clocks — any pulse
+  holds one retire timeout, soft-only life bounded at 2× (`LastStrongTime`); VIS confirmation pulses must
+  be spawn-tier; **promotion requires ≥ 6 spawn-tier pulses** (`StrongCnt`) among the N-of-M total (soft-
+  dominated phantom trains, mean ≈ 0.16, promoted without this).
+- **Merge-on-promote**: a promoting candidate whose grid is the continuation (±20 ms within a ≤12 s fade)
+  of an existing same-mode train is absorbed, not emitted — the fade-split fragment backstop.
+- `GetPower` density weighting (from the harmonic fight) stays; with the wide gate the true-period train
+  holds its pulses, so **the UTMN2 11:29 Robot72 harmonic mis-mode is gone** (correct Robot36).
+
+- **No-overlap spawn rule (user decision 2026-07-03)**: one FM channel carries one transmission at a
+  time, so while a promoted train is Active no new hypothesis may spawn — "finish the first one; if
+  there is still signal, start a new train". Candidates still compete freely before promotion (mode
+  competition preserved); a mid-burst duplicate is now categorically impossible rather than merely gated.
+
+**Scorecard vs ground truth: 18 of 19 transmissions matched with exactly one train each, 0 false** (was
+~13/18 with 5+ duplicates). The detector found a transmission missing from the original list —
+11_29_08 ~478–516, fitting the transmitter's 160 s cadence — and the user confirmed it. Monitor-3 text
+card still decodes clean (no quality regression). Suite: 91 pass / 10 manual-skip. Residuals: (1) the
+known 04-18 miss; (2) UmKA 04-19 484–515 emits two partials: a real >6 s sync dropout at ~500 (SNR
+floor) retires the first train and a continuation spawns at ~503 with a >20 ms phase step — consistent
+with the no-overlap rule as specified; folding such post-dropout continuations into one image would need
+either a wider merge wing (risks smearing two grids into one bad fit) or an emission-level
+same-mode-within-N-seconds dedup — deferred to the soft-comb work, which should hold the first train
+through that dropout in the first place. Also new: **`SstvSpectrogramHarness`**
+(`Real_SpectrogramProbe`) renders RF + discriminated-audio spectrogram PNGs per capture (ScottPlot
+Viridis, the FskDemod view) for visual inspection by a coding assistant.
+
 Next actions:
 
-1. **Cross-pulse soft-evidence accumulation** for the 04-18 class (the §4.1 soft-comb, streaming form —
-   both single-pulse alternatives are now measured dead ends: window widening and threshold lowering).
+1. **Full cross-pulse soft-comb accumulator** for the 04-18 class (tiered thresholds alone don't reach
+   it; window widening and global threshold lowering are measured dead ends) — also owns the two
+   sensitivity-floor residuals above (the UmKA ~503 split, late starts on weak bursts).
 2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
    per-burst deviation-matched (NOT fixed-narrower — see the sweep above) channel/video bandwidth.
+3. P7 regression corpus: `Real_TrainAccuracyProbe` + the ground-truth table are its seed.
 2. Then P7 (regression corpus) and P8 (SkyRoof integration, §5 — the per-train image emission just proven
    in the harness is exactly the panel's leaf-per-image behavior; `IsImageTrain` is the leaf-emission
    gate).

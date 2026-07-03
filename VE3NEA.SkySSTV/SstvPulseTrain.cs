@@ -35,6 +35,7 @@ namespace VE3NEA.SkySSTV
   {
     private const double PromoteSeconds = 4.0;   // promote-or-kill a candidate by this idle time
     private const double RetireSeconds = 6.0;    // retire an active train after this idle time (§1.10 T_gap)
+    private const int MinStrongPromote = 6;      // spawn-tier pulses required among the promotion evidence
     private const double WeakPower = 2 * SstvPulseDetector.ScoreThreshold;  // a weak last pulse holds the claim longer
     protected const int SmoothPulsesWing = 4;    // train power is smoothed over ±4 pulse slots
 
@@ -46,6 +47,16 @@ namespace VE3NEA.SkySSTV
     private readonly int createdTime;            // seed time — bounds the promote window (N-of-M, retro P)
     private int lastPulseNo = int.MinValue;      // rejects a second pulse landing in the same line slot
     private int revisionCnt;
+
+    /// <summary>Time of the last spawn-tier (≥ <see cref="SstvPulseDetector.ScoreThreshold"/>) pulse — the
+    /// retire/idle clock. Soft associate-tier pulses may confirm and extend the fit, but with the wide RLS
+    /// gate a noise pulse lands in-gate every few seconds, so letting them reset the idle clocks would keep
+    /// a dead train alive indefinitely.</summary>
+    protected int LastStrongTime { get; set; }
+
+    /// <summary>Count of spawn-tier pulses on the train — the promotion evidence that soft in-gate noise
+    /// cannot fake (see <see cref="HasEnoughPulses"/>).</summary>
+    protected int StrongCnt { get; private set; }
 
     public SstvTrainState State { get; set; }
     public SstvMode Format { get; }
@@ -69,12 +80,14 @@ namespace VE3NEA.SkySSTV
     public SstvPulseTrain(SstvMode mode, SstvPulse p0, SstvPulse p1, SstvPulse p2, double fs)
       : this(mode, fs)
     {
-      Regr = new SstvSyncRegressor(p0.Time, nominalPeriod);
+      Regr = new SstvSyncRegressor(p0.Time, nominalPeriod, fs);
       Regr.ProcessPulse(p0.Time);
       Regr.ProcessPulse(p1.Time);
       Regr.ProcessPulse(p2.Time);
       pulses.Add(p0); pulses.Add(p1); pulses.Add(p2);
       createdTime = p0.Time;
+      LastStrongTime = p2.Time;
+      StrongCnt = 3;                             // the spawn triplet is spawn-tier by construction
       lastPulseNo = Regr.GetPulseNo(p2.Time);
       State = SstvTrainState.Candidate;
     }
@@ -89,7 +102,7 @@ namespace VE3NEA.SkySSTV
       promoteTimeout = PromoteSeconds * fs;
       retireTimeout = RetireSeconds * fs;
       createdTime = 0;
-      Regr = new SstvSyncRegressor(0, nominalPeriod);
+      Regr = new SstvSyncRegressor(0, nominalPeriod, fs);
     }
 
     /// <summary>Try to associate a pulse with this train: rejected if of the wrong sync-duration family, past
@@ -123,14 +136,22 @@ namespace VE3NEA.SkySSTV
       if (pulses.Count > 0 && pulse.Time < pulses[0].Time) pulses.Insert(0, pulse);
       else pulses.Add(pulse);
 
+      if (pulse.Power >= SstvPulseDetector.ScoreThreshold)
+      {
+        StrongCnt++;
+        if (pulse.Time > LastStrongTime) LastStrongTime = pulse.Time;
+      }
       lastPulseNo = Regr.GetPulseNo(pulse.Time);
       Regr.ProcessPulse(pulse.Time);
     }
 
     /// <summary>On promotion, back-fill earlier detections this train explains (Hopper <c>AddOldPulses</c>):
-    /// walk <paramref name="all"/> backwards from the current start, adopting unclaimed pulses that pass the
-    /// association gates, back to one retire-timeout before the start. If any were adopted, the regressor is
-    /// rebuilt from the new first pulse and refitted over the whole train. Returns whether the start moved.</summary>
+    /// walk <paramref name="all"/> backwards from the current start, adopting unclaimed <b>spawn-tier</b>
+    /// pulses that pass the association gates, back to one retire-timeout before the start. Soft pulses are
+    /// excluded here: back-fill has no future evidence to confirm them, and with the wide gate a chain of
+    /// in-gate noise pulses would creep the start ever backward, before the real transmission. If any were
+    /// adopted, the regressor is rebuilt from the new first pulse and refitted over the whole train.
+    /// Returns whether the start moved.</summary>
     public virtual bool AddOldPulses(IReadOnlyList<SstvPulse> all)
     {
       double startTime = Regr.FirstPulseTime;
@@ -140,19 +161,25 @@ namespace VE3NEA.SkySSTV
         if (all[i].Time >= startTime) continue;
         if (all[i].Time < startTime - retireTimeout) break;
         if (all[i].Used) continue;
+        if (all[i].Power < SstvPulseDetector.ScoreThreshold) continue;
         if (TryAddPulse(all[i])) { startTime = all[i].Time; added = true; }
       }
       if (!added) return false;
 
-      Regr = new SstvSyncRegressor((int)startTime, nominalPeriod);
+      Regr = new SstvSyncRegressor((int)startTime, nominalPeriod, fs);
       foreach (var p in pulses) Regr.ProcessPulse(p.Time);
       return true;
     }
 
-    /// <summary>Smoothed sync power near <paramref name="time"/>: the mean pulse power over the ±<see
-    /// cref="SmoothPulsesWing"/> line slots around it, rejecting the block edge cases (no pulse in the center
+    /// <summary>Smoothed sync power near <paramref name="time"/>: the pulse power summed over the ±<see
+    /// cref="SmoothPulsesWing"/> line slots around it and averaged over the <b>whole window</b> (empty slots
+    /// count as zero — density-weighted), rejecting the block edge cases (no pulse in the center
     /// slot and support on only one side ⇒ before the start / past the end of the train; a center pulse with
-    /// no neighbors at all ⇒ an isolated spike). Drives the extractor's best-train-per-block choice.</summary>
+    /// no neighbors at all ⇒ an isolated spike). Drives the extractor's best-train-per-block choice.
+    /// Density weighting is the half-rate-harmonic discriminant: a Robot72 grid riding a Robot36 signal
+    /// fills at most every other of its slots, so the true train out-scores it ~2:1 — enough to clear the
+    /// 1.5× switch hysteresis (with the two-tier soft evidence, harmonic hypotheses promote more easily,
+    /// and the density-blind mean let them keep their blocks).</summary>
     public virtual double GetPower(int time)
     {
       var neighbors = new double[2 * SmoothPulsesWing + 1];
@@ -173,31 +200,40 @@ namespace VE3NEA.SkySSTV
       if (neighbors[SmoothPulsesWing] == 0) { if (!(hasLeft && hasRight)) return 0; }
       else { if (!(hasLeft || hasRight)) return 0; }
 
-      double sum = 0; int cnt = 0;
-      foreach (double p in neighbors)
-        if (p > 0) { sum += p; cnt++; }
-      return cnt > 0 ? sum / cnt : 0;
+      double sum = 0;
+      foreach (double p in neighbors) sum += p;
+      return sum / neighbors.Length;
     }
 
-    /// <summary>A candidate has enough pulses to promote to active (N-of-M over the promote window).</summary>
-    public virtual bool HasEnoughPulses => PulseCnt >= Math.Max(6, (int)Math.Round(0.4 * promoteTimeout / Regr.NominalPeriod));
+    /// <summary>A candidate has enough pulses to promote to active (N-of-M over the promote window). Soft
+    /// associate-tier pulses count toward the total, but at least <see cref="MinStrongPromote"/> must be
+    /// spawn-tier: with the wide RLS gate, a chance noise triplet collecting in-gate soft noise could
+    /// otherwise ride to promotion (seen as soft-dominated phantom trains, mean power ≈ 0.16).</summary>
+    public virtual bool HasEnoughPulses
+      => PulseCnt >= Math.Max(6, (int)Math.Round(0.4 * promoteTimeout / Regr.NominalPeriod))
+         && StrongCnt >= MinStrongPromote;
 
-    /// <summary>A candidate is due to be killed: idle too long, or — bounding the N-of-M promote window
-    /// (retro P) — older than the promote timeout without having promoted. Without the age bound, clutter
-    /// that trickles one associated pulse per few seconds would stay alive and eventually promote.</summary>
+    /// <summary>A candidate is due to be killed: idle too long (no spawn-tier pulse), or — bounding the
+    /// N-of-M promote window (retro P) — older than the promote timeout without having promoted. Without
+    /// the age bound, clutter that trickles one associated pulse per few seconds would stay alive and
+    /// eventually promote.</summary>
     public virtual bool IsCandidateIdle(int time)
-      => (time - Regr.LastPulseTime) > promoteTimeout || (time - createdTime) > promoteTimeout;
+      => (time - LastStrongTime) > promoteTimeout || (time - createdTime) > promoteTimeout;
 
-    /// <summary>An active train has gone idle long enough to retire.</summary>
-    public virtual bool CanRetire(int time) => (time - Regr.LastPulseTime) > retireTimeout;
+    /// <summary>An active train has gone idle long enough to retire. Two clocks: any associated pulse
+    /// holds the train for one retire timeout (bridging weak stretches where only soft pulses survive),
+    /// but soft-only life is bounded at twice that — with the wide RLS gate an in-gate noise pulse arrives
+    /// every few seconds, so a pulse-of-any-tier clock alone would never let a dead train retire.</summary>
+    public virtual bool CanRetire(int time)
+      => (time - Regr.LastPulseTime) > retireTimeout || (time - LastStrongTime) > 2 * retireTimeout;
 
     /// <summary>Whether a retired train has stopped claiming line blocks at <paramref name="time"/>: right
-    /// after its last pulse when that pulse was strong (the transmission clearly ended there), one retire
-    /// timeout later when it was weak (the tail may just be faded).</summary>
+    /// after its last strong pulse when that pulse was strong (the transmission clearly ended there), one
+    /// retire timeout later when the tail was weak (it may just be faded).</summary>
     public virtual bool IsRetiredAt(int time)
     {
       if (State != SstvTrainState.Retired) return false;
-      double retireTime = Regr.LastPulseTime;
+      double retireTime = LastStrongTime;
       if (pulses.Count > 0 && pulses[^1].Power < WeakPower) retireTime += retireTimeout;
       return retireTime < time;
     }
@@ -236,7 +272,8 @@ namespace VE3NEA.SkySSTV
       VisTime = headerEndSample;
       anchorWing = (int)Math.Round(AnchorWingMs / 1000.0 * fs);
       tripletWing = (int)Math.Round(TripletWingMs / 1000.0 * fs);
-      Regr = new SstvSyncRegressor(headerEndSample, nominalPeriod);
+      Regr = new SstvSyncRegressor(headerEndSample, nominalPeriod, fs);
+      LastStrongTime = headerEndSample;
       State = SstvTrainState.VisOnly;
     }
 
@@ -244,6 +281,11 @@ namespace VE3NEA.SkySSTV
     {
       if (State != SstvTrainState.VisOnly && State != SstvTrainState.Candidate)
         return base.TryAddPulse(pulse);
+
+      // promotion evidence must be spawn-tier: the VIS train promotes on just 3 confirming pulses, and
+      // with the wide gate a soft in-gate noise pulse arrives often enough that 3 soft ones within the
+      // window are a real false-promotion risk. Soft pulses may still confirm once Active (base path).
+      if (pulse.Power < SstvPulseDetector.ScoreThreshold) return false;
 
       var spec = SstvModes.Get(Format);
       if (!MatchesFamily(pulse, spec)) return false;
@@ -270,7 +312,7 @@ namespace VE3NEA.SkySSTV
       if (p0.Time < VisTime - anchorWing) return false;
       if (Regr.GetPulseNo(p2.Time) > SstvModes.Get(Format).LineCount + 1) return false;
 
-      var fit = new SstvSyncRegressor(p0.Time, nominalPeriod);
+      var fit = new SstvSyncRegressor(p0.Time, nominalPeriod, fs);
       fit.ProcessPulse(p0.Time);
       fit.ProcessPulse(p1.Time);
       fit.ProcessPulse(p2.Time);
@@ -290,7 +332,7 @@ namespace VE3NEA.SkySSTV
     public override bool HasEnoughPulses => PulseCnt >= 3;
 
     /// <summary>A VIS train is given twice the normal promote window before being killed.</summary>
-    public override bool IsCandidateIdle(int time) => (time - Regr.LastPulseTime) > 2 * promoteTimeout;
+    public override bool IsCandidateIdle(int time) => (time - LastStrongTime) > 2 * promoteTimeout;
 
     /// <summary>The mode is known, so the train retires exactly at its predicted image end.</summary>
     public override bool CanRetire(int time)

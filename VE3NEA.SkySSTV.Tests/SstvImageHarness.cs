@@ -170,6 +170,74 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    /// <summary>Ground truth: every SSTV transmission in the corpus, listed by the user (2026-07-03) from
+    /// spectrogram/audio inspection, as (startSec, endSec) per file-name substring. The 11_29_08 entry
+    /// "265-202" is a typo in the source list, read as 165-202 (matches the detections there); its 4th
+    /// transmission 478-516 was found by the detector and user-confirmed (2026-07-03).</summary>
+    private static readonly (string file, (double t0, double t1)[] spans)[] Truth =
+    {
+      ("2026-04-18_12_36_09_UmKA-1", new[] { (0.0, 24.0) }),
+      ("2026-04-19_12_19_50_UmKA-1", new[] { (110.0, 150.0), (295.0, 335.0), (484.0, 515.0) }),
+      ("2026-06-30_22_36_37_UTMN2_Robot36", new[] { (37.0, 63.0), (183.0, 218.0) }),
+      ("2026-07-01_11_02_25_Monitor-3", new[] { (140.0, 167.0), (285.0, 325.0) }),
+      ("2026-07-01_11_09_11_VIZARD-meteo", new[] { (50.0, 88.0), (208.0, 245.0) }),
+      ("2026-07-01_11_15_34_VIZARD-meteo", new[] { (0.0, 18.0) }),
+      ("2026-07-01_11_29_08_UTMN2", new[] { (5.0, 45.0), (165.0, 202.0), (323.0, 357.0), (478.0, 516.0) }),
+      ("2026-07-01_12_37_50_Monitor-3", new[] { (155.0, 160.0) }),
+      ("2026-07-01_12_41_24_VIZARD-meteo", new[] { (0.0, 15.0), (135.0, 175.0), (292.0, 328.0) }),
+    };
+
+    [ManualFact("Result 2026-07-03 (RLS gate rescale + guards + merge-on-promote + the no-overlap spawn " +
+      "rule): 18 of 19 transmissions matched with ONE train each, 0 false (was ~13/18 with 5+ " +
+      "duplicates); the Robot72 harmonic mis-mode is gone; the 11_29_08 478-516 transmission was found " +
+      "by the detector and user-confirmed. Residuals: the known 04-18 MISS (hardest case), and one " +
+      "flagged DUP that actually follows the no-overlap rule: UmKA 04-19 484-515 has a real >6 s sync " +
+      "dropout at ~500 (SNR floor), so the first train finishes and a second partial legitimately spawns " +
+      "at ~503 with a >20 ms phase step (un-mergeable grid; the soft-comb regime).")]
+    public void Real_TrainAccuracyProbe()
+    {
+      int nMatch = 0, nDup = 0, nFalse = 0, nMiss = 0;
+      foreach (var (file, spans) in Truth)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{file}: ABSENT"); continue; }
+
+        var (iq, sr) = WavIqReader.Read(wav);
+        var o = new SstvDecodeOptions { SampleRate = sr };
+        double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+        var hits = SstvVisDetector.DetectAll(sync, sr);
+        var extractor = SstvDecoder.ExtractTrains(sync, sr, hits);
+
+        output.WriteLine($"--- {file}");
+        var matched = new bool[spans.Length];
+        foreach (var train in extractor.Trains)
+        {
+          if (!extractor.IsImageTrain(train)) continue;
+          double t0 = train.Regr.GetPulseTime(0) / sr;
+          double t1 = train.Regr.LastPulseTime / sr;
+          string desc = $"{train.Format}{(train is SstvVisPulseTrain ? " VIS" : "")} {t0:0.0}-{t1:0.0}s " +
+            $"p={train.PulseCnt} s={train.MeanPower:0.00} fill={extractor.FillRatio(train):0.00}";
+
+          int hit = -1;
+          for (int i = 0; i < spans.Length; i++)
+            if (t1 > spans[i].t0 - 5 && t0 < spans[i].t1 + 5) { hit = i; break; }
+
+          if (hit < 0) { nFalse++; output.WriteLine($"  FALSE  {desc}"); }
+          else if (matched[hit]) { nDup++; output.WriteLine($"  DUP    {desc} (of {spans[hit].t0:0}-{spans[hit].t1:0})"); }
+          else
+          {
+            matched[hit] = true; nMatch++;
+            output.WriteLine($"  match  {desc} (truth {spans[hit].t0:0}-{spans[hit].t1:0})");
+          }
+        }
+        for (int i = 0; i < spans.Length; i++)
+          if (!matched[i]) { nMiss++; output.WriteLine($"  MISS   truth {spans[i].t0:0}-{spans[i].t1:0}"); }
+      }
+      output.WriteLine($"=== TOTAL: {nMatch} matched, {nDup} duplicates, {nFalse} false, {nMiss} missed " +
+        $"(of {Truth.Sum(t => t.spans.Length)} transmissions)");
+    }
+
+
     [ManualFact("Result 2026-07-02 (the retro-D measurement, conclusion REVISED same day): a fill-ratio " +
       "gate (pulses/claimed, low ≤ 0.34 vs high ≥ 0.46) first looked like a noise/real separator, but the " +
       "low-fill trains are REAL weak transmissions (user-confirmed on the FskDemod spectrogram: 12_37_50 " +

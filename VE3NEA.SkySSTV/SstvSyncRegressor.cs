@@ -14,7 +14,18 @@ namespace VE3NEA.SkySSTV
   /// </summary>
   internal sealed class SstvSyncRegressor
   {
-    private const double ObsVar = 36.0;      // pulse-time observation variance (σ = 6 samples), from Hopper
+    // Hopper's tolerances, expressed in TIME and converted by the sample rate (Hopper ran its sync chain
+    // at ~2.756 kHz: σ = 6 samples ≈ 2.2 ms, gate floor 12 samples ≈ 4.4 ms). The first port copied the
+    // raw sample counts, making the association gate 17× tighter than the proven design (±0.25 ms vs real
+    // low-SNR onset jitter of 1–3 ms) — mid-burst pulses missed the gate, went unclaimed, and seeded
+    // duplicate trains with false starts inside an already-tracked transmission (found 2026-07-03 against
+    // the user's ground-truth transmission list; the retro-§9 lesson again: port the statistic, not the
+    // number).
+    private const double ObsSigmaMs = 2.2;   // pulse-onset observation σ
+    private const double MinGateMs = 4.4;    // association-gate floor
+
+    private readonly double obsVar;          // observation variance, samples²
+    private readonly double minGate;         // gate floor, samples
 
     // state: predicted relative pulse time = Period·pulseNo + Phase
     private double period;
@@ -37,11 +48,13 @@ namespace VE3NEA.SkySSTV
     /// <summary>Slant / sample-clock correction = estimated period / nominal period.</summary>
     public double CorrFactor => period / NominalPeriod;
 
-    public SstvSyncRegressor(int approxStartTime, double nominalPeriod)
+    public SstvSyncRegressor(int approxStartTime, double nominalPeriod, double fs)
     {
       FirstPulseTime = approxStartTime;
       LastPulseTime = approxStartTime;
       NominalPeriod = nominalPeriod;
+      obsVar = Math.Pow(ObsSigmaMs / 1000.0 * fs, 2);
+      minGate = MinGateMs / 1000.0 * fs;
 
       period = nominalPeriod;
       phase = 0;
@@ -62,7 +75,7 @@ namespace VE3NEA.SkySSTV
       double innov = rel - (period * pulseNo + phase);
       double ph1 = p11 * pulseNo + p12;      // (P·Hᵀ)₁
       double ph2 = p12 * pulseNo + p22;      // (P·Hᵀ)₂
-      double s = pulseNo * ph1 + ph2 + ObsVar;   // H·P·Hᵀ + R
+      double s = pulseNo * ph1 + ph2 + obsVar;   // H·P·Hᵀ + R
       double k1 = ph1 / s, k2 = ph2 / s;         // Kalman gain
 
       period += k1 * innov;
@@ -86,8 +99,8 @@ namespace VE3NEA.SkySSTV
     /// floored so early (uncertain) pulses are not rejected.</summary>
     public double GetMaxError(int pulseNo)
     {
-      double var = (double)pulseNo * pulseNo * p11 + 2.0 * pulseNo * p12 + p22 + ObsVar;
-      return Math.Max(12.0, 3.0 * Math.Sqrt(Math.Max(0, var)));
+      double var = (double)pulseNo * pulseNo * p11 + 2.0 * pulseNo * p12 + p22 + obsVar;
+      return Math.Max(minGate, 3.0 * Math.Sqrt(Math.Max(0, var)));
     }
   }
 }

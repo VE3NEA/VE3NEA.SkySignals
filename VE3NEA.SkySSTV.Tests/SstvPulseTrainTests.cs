@@ -28,8 +28,10 @@ namespace VE3NEA.SkySSTV.Tests
     [Fact]
     public void RejectsOffGridPulse()
     {
+      // 700 samples ≈ 14.6 ms: well past the early-train gate (~3σ of the 2.2 ms onset jitter + fit
+      // variance ≈ 7-8 ms while the fit is young)
       var tr = Seed();
-      tr.TryAddPulse(P((int)(Period * 3 + 300))).Should().BeFalse("300 samples off the predicted slot");
+      tr.TryAddPulse(P((int)(Period * 3 + 700))).Should().BeFalse("14.6 ms off the predicted slot");
       tr.PulseCnt.Should().Be(3);
     }
 

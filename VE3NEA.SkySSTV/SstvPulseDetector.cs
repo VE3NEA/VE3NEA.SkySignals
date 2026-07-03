@@ -24,10 +24,13 @@ namespace VE3NEA.SkySSTV
   internal sealed class SstvPulseDetector
   {
     private const double FreqWindowMs = 4.0;      // coherence window: several 1200 Hz cycles, < any sync
-    internal const double ScoreThreshold = 0.18;  // bipolar score to register a pulse (clean sync ≈ 0.33+)
+    internal const double ScoreThreshold = 0.18;  // spawn tier: score to seed a new hypothesis (clean sync ≈ 0.33+)
+    internal const double AssocThreshold = 0.10;  // associate tier: soft pulses that may only CONFIRM a train
 
-    /// <summary>Per-pulse detection threshold, default <see cref="ScoreThreshold"/> — overridable for the
-    /// low-SNR threshold experiments (the 04-18 UmKA-1 hardest case).</summary>
+    /// <summary>Per-pulse emission threshold, default <see cref="ScoreThreshold"/>. The extractor runs its
+    /// detectors at <see cref="AssocThreshold"/> — the two-tier soft-evidence scheme (plan §4.1): every
+    /// emitted pulse may associate with an existing train (the tight RLS gate discriminates), but the
+    /// extractor spawns a triplet only from <see cref="ScoreThreshold"/>-strong members.</summary>
     internal double Threshold { get; init; } = ScoreThreshold;
 
     private const int RenormInterval = 4096;      // oscillator re-normalization cadence (samples)

@@ -35,6 +35,8 @@ namespace VE3NEA.SkySSTV
   {
     private const double BlockSeconds = 0.25;      // line extraction granularity, ~ line-period scale
     private const double TripletTolMs = 7.0;       // 3rd-pulse collinearity gate (Hopper ±20 @ 2.76 kHz)
+    private const double MergeWingMs = 20.0;       // grid-continuation gate for merging a fragment train
+    private const double MergeGapSeconds = 12.0;   // max fade between a train and the fragment it absorbs
     private const double PeriodTol = 0.03;         // triplet spacing gate: ±3 % of a mode's nominal period
     private const double SwitchHysteresis = 1.5;   // a challenger must beat the incumbent by this factor
     private const double PruneSeconds = 8.0;       // pulse-buffer tail (> the retire timeout)
@@ -157,7 +159,12 @@ namespace VE3NEA.SkySSTV
     // ----------------------------------------------------------------------------------------------------
 
 
-    /// <summary>Associate-or-spawn for the newest pulse in the buffer (Hopper <c>ProcessPulse</c>).</summary>
+    /// <summary>Associate-or-spawn for the newest pulse in the buffer (Hopper <c>ProcessPulse</c>).
+    /// Two-tier soft evidence (plan §4.1, the streaming soft-comb): ANY pulse — down to the detectors'
+    /// low associate tier — may confirm an existing train through the tight RLS gate, accumulating weak
+    /// consistent evidence across line periods; but only <see cref="SstvPulseDetector.ScoreThreshold"/>-
+    /// strong pulses may form the spawn triplet, so clutter at the soft tier can never create a
+    /// hypothesis, only support one.</summary>
     private void ProcessPulse()
     {
       int newest = pulses.Count - 1;
@@ -171,8 +178,17 @@ namespace VE3NEA.SkySSTV
           return;
         }
 
-      // spawn: the pulse plus two buffered ones must form a period-consistent triplet for some mode of
-      // the pulse's sync-duration family
+      // no overlapping trains (user decision 2026-07-03): one FM channel carries one transmission at a
+      // time, so while a promoted train is actively tracking, no new hypothesis may spawn — a genuinely
+      // new transmission spawns after the incumbent retires (candidates still compete freely before
+      // promotion, so the mode competition is preserved). This makes a mid-burst duplicate categorically
+      // impossible rather than merely gated.
+      foreach (var train in trains)
+        if (train.State == SstvTrainState.Active) return;
+
+      // spawn: the pulse plus two buffered ones must form a period-consistent triplet — of spawn-tier
+      // strength — for some mode of the pulse's sync-duration family
+      if (p0.Power < SstvPulseDetector.ScoreThreshold) return;
       foreach (var (spec, minPeriod, maxPeriod) in modeGates)
       {
         if (Math.Abs(spec.SyncMs - p0.DurMs) > 0.5) continue;
@@ -182,6 +198,7 @@ namespace VE3NEA.SkySSTV
         {
           double dist = p0.Time - (double)pulses[i].Time;
           if (dist > 2 * maxPeriod + tripletTol) break;
+          if (pulses[i].Power < SstvPulseDetector.ScoreThreshold) continue;
 
           if (dist >= minPeriod && dist <= maxPeriod) mid = i;
 
@@ -267,6 +284,17 @@ namespace VE3NEA.SkySSTV
           case SstvTrainState.VisOnly:
             if (train.HasEnoughPulses)
             {
+              // merge-on-promote: if an existing train's grid continues onto this candidate, it is a
+              // fragment of the same transmission (a fade where the sync timing wandered past the RLS
+              // gate re-spawns mid-burst) — absorb it instead of emitting a duplicate image
+              if (train is not SstvVisPulseTrain && FindMergeHost(train) is SstvPulseTrain host)
+              {
+                foreach (var p in train.Pulses) host.AddPulse(p);
+                if (host.State == SstvTrainState.Retired) host.State = SstvTrainState.Active;
+                MarkDirty(train.Regr.FirstPulseTime);
+                trains.RemoveAt(i);
+                break;
+              }
               train.State = SstvTrainState.Active;
               train.AddOldPulses(pulses);
               MarkDirty(train.Regr.FirstPulseTime);
@@ -293,6 +321,27 @@ namespace VE3NEA.SkySSTV
     }
 
     private void MarkDirty(double time) => dirtyBlock = Math.Min(dirtyBlock, (int)(time / blockSize));
+
+    /// <summary>An existing same-mode train whose grid <b>continues</b> onto the promoting
+    /// <paramref name="candidate"/>: it precedes the candidate by no more than <see cref="MergeGapSeconds"/>
+    /// (a bridgeable fade) and predicts the candidate's first pulse within <see cref="MergeWingMs"/>
+    /// (loose enough for the fade-timing wander that split them, far tighter than a chance alignment of
+    /// two independent transmissions).</summary>
+    private SstvPulseTrain? FindMergeHost(SstvPulseTrain candidate)
+    {
+      int candStart = (int)Math.Round(candidate.Regr.GetPulseTime(0));
+      double wing = MergeWingMs / 1000.0 * fs;
+      foreach (var host in trains)
+      {
+        if (host == candidate || host.Format != candidate.Format) continue;
+        if (host.State != SstvTrainState.Active && host.State != SstvTrainState.Retired) continue;
+        if (host.Regr.LastPulseTime >= candStart) continue;
+        if (candStart - host.Regr.LastPulseTime > MergeGapSeconds * fs) continue;
+        double expected = host.Regr.GetPulseTime(host.Regr.GetPulseNo(candStart));
+        if (Math.Abs(candStart - expected) <= wing) return host;
+      }
+      return null;
+    }
 
     /// <summary>(Re-)extract the scan lines of blocks [<see cref="dirtyBlock"/>, <paramref name="throughBlock"/>]
     /// (Hopper <c>UpdateLines</c>): drop the lines of dirty blocks, then per block let the best train claim

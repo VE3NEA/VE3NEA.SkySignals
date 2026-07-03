@@ -101,7 +101,9 @@ namespace VE3NEA.SkySSTV
       foreach (var spec in SstvModes.All)
         if (!families.Contains(spec.SyncMs)) families.Add(spec.SyncMs);
       var detectors = new SstvPulseDetector[families.Count];
-      for (int i = 0; i < families.Count; i++) detectors[i] = new SstvPulseDetector(fs, families[i]);
+      for (int i = 0; i < families.Count; i++)
+        detectors[i] = new SstvPulseDetector(fs, families[i])
+        { Threshold = SstvPulseDetector.AssocThreshold };   // two-tier soft evidence (plan §4.1)
 
       int pad = (int)Math.Round(0.05 * fs);                  // lead-in: > 2× the longest sync template
       int maxLatency = (int)Math.Round(0.10 * fs);           // bound on detector emission lag past an onset

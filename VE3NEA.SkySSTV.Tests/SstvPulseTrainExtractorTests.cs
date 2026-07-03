@@ -166,6 +166,71 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     [Fact]
+    public void MidBurstPhaseJump_YieldsOneTrain()
+    {
+      // a mid-burst fade where the sync timing wanders past the RLS gate (here an 8.3 ms phase jump)
+      // used to re-spawn a duplicate hypothesis on the same transmission (the duplicate-image defect,
+      // fixed 2026-07-03). Now: while the first train is Active no new spawn is allowed; once it
+      // retires, the continuation spawns — and merge-on-promote folds it back into the original train
+      // because the old grid still predicts its start within the merge wing.
+      var pulses = Robot36Train(36000, 40);
+      pulses.AddRange(Robot36Train(36000 + 40 * 7200 + 400, 90));   // 400 samples = 8.3 ms jump
+      int end = pulses[^1].Time + 12000;
+      var extractor = Run(pulses, end);
+
+      var promoted = extractor.Trains
+        .Where(t => t.State == SstvTrainState.Active || t.State == SstvTrainState.Retired).ToList();
+      output.WriteLine($"promoted trains: {promoted.Count}, pulses on first: {promoted.FirstOrDefault()?.PulseCnt}");
+      promoted.Should().HaveCount(1, "one transmission must yield one train despite the phase jump");
+      promoted[0].PulseCnt.Should().BeGreaterThan(70, "the merged train holds both sides of the jump");
+    }
+
+    [Fact]
+    public void SeparateTransmissions_DoNotMerge()
+    {
+      // two bursts a minute apart (far beyond the merge gap) must stay two trains even if their grids
+      // happen to align — merging is only for fade-split fragments
+      var pulses = Robot36Train(48000, 60);
+      pulses.AddRange(Robot36Train(48000 + 60 * 7200 + 60 * 48000, 60));   // 60 s gap, grid-aligned
+      int end = pulses[^1].Time + 8 * 48000;
+      var extractor = Run(pulses, end);
+
+      extractor.Trains
+        .Where(t => t.State == SstvTrainState.Active || t.State == SstvTrainState.Retired)
+        .Should().HaveCount(2, "transmissions separated by a minute are distinct images");
+    }
+
+    [Fact]
+    public void SoftPulses_ConfirmButNeverSpawn()
+    {
+      // two-tier soft evidence (plan §4.1): associate-tier pulses (score < 0.18) can never seed a
+      // hypothesis, however period-consistent — but once a strong triplet exists, they confirm it and
+      // carry it to promotion (the weak-and-consistent evidence a hard 0.18 gate used to discard)
+      var soft = Robot36Train(36000, 60);
+      for (int i = 0; i < soft.Count; i++) soft[i] = P(soft[i].Time, power: 0.12f);
+      var extractor = Run(soft, soft[^1].Time + 12000);
+      extractor.Trains.Should().BeEmpty("soft pulses alone must not spawn any hypothesis");
+
+      // 6 strong pulses (the MinStrongPromote floor) + soft confirmations — the train must promote, and
+      // every on-grid soft pulse must associate
+      var mixed = Robot36Train(36000, 60);
+      for (int i = 6; i < mixed.Count; i++) mixed[i] = P(mixed[i].Time, power: 0.12f);
+      extractor = Run(mixed, mixed[^1].Time + 12000);
+      var train = extractor.Trains.Single();
+      output.WriteLine($"mixed train: state={train.State} pulses={train.PulseCnt}");
+      train.State.Should().Be(SstvTrainState.Active, "soft pulses must carry 6 strong ones to promotion");
+      train.PulseCnt.Should().Be(60, "every on-grid soft pulse associates");
+
+      // a bare triplet + soft-only confirmations must NOT promote: with the wide RLS gate, in-gate noise
+      // could fake that pattern (the measured soft-dominated phantom trains, mean power ≈ 0.16)
+      var phantom = Robot36Train(36000, 60);
+      for (int i = 3; i < phantom.Count; i++) phantom[i] = P(phantom[i].Time, power: 0.12f);
+      extractor = Run(phantom, phantom[^1].Time + 12000);
+      extractor.Trains.Where(t => t.State == SstvTrainState.Active || t.State == SstvTrainState.Retired)
+        .Should().BeEmpty("a spawn triplet plus only soft evidence must never promote");
+    }
+
+    [Fact]
     public void VisSeed_TripletBeforeAnchor_IsNotAdopted()
     {
       // the UmKA-1 hijack (found 2026-07-02): a period-consistent triplet minutes BEFORE the VIS anchor
