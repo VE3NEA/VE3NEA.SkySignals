@@ -61,6 +61,11 @@ namespace VE3NEA.SkySSTV
     /// P6(c) threshold experiments and the real-capture score measurements.</summary>
     public double MaxScore { get; private set; }
 
+    /// <summary>Probe-only tap on the un-thresholded score stream: called once per input sample with
+    /// (absolute onset sample, bipolar score) — the raw statistic the §4.1 soft-comb integrates across
+    /// line periods. Null (no cost) outside the experiments.</summary>
+    internal Action<long, double>? ScoreTap { get; init; }
+
     /// <summary><paramref name="windowMs"/> overrides the coherence-window length for the
     /// longer-coherent-integration experiments (wider = more coherent gain at 1200 Hz, blunter time
     /// peak; must stay under the family's sync duration).</summary>
@@ -134,6 +139,7 @@ namespace VE3NEA.SkySSTV
       long onset = m - 2 * l + 1;
       double score = (sumP - 0.5 * (sumL + sumR)) / l;
       if (score > MaxScore) MaxScore = score;
+      ScoreTap?.Invoke(onset + (win - 1) - win / 2, score);   // input-sample onset, as in Emit
 
       if (score > Threshold)
       {

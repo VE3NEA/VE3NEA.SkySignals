@@ -235,11 +235,21 @@ through that dropout in the first place. Also new: **`SstvSpectrogramHarness`**
 (`Real_SpectrogramProbe`) renders RF + discriminated-audio spectrogram PNGs per capture (ScottPlot
 Viridis, the FskDemod view) for visual inspection by a coding assistant.
 
+**Soft-comb statistic VALIDATED offline (2026-07-03, `Real_SoftCombProbe`):** combing the detector's
+un-thresholded score (new probe-only `ScoreTap` on `SstvPulseDetector`) over 160 Robot36 line periods of
+the 04-18 burst yields a coherent ridge at **z = 4.5**, all top-20 phases within ±1 ms of one phase and
+identical at chan ±6000 / ±4000 — the comb is insensitive to the FM-threshold clicking that kills single
+pulses — vs z = 2.3–2.6 on an equal-duration noise control. Single-pulse scores on the same data are
+non-separable (0.221–0.286 vs 0.181–0.202). Margin ≈ 2σ at 24 s, grows ~√N with transmission length. The
+statistic is proven; what remains is the **streaming realization**: a leaky per-mode comb ring over the
+score stream (bounded state, §1.13), a detection threshold ≈ z 3.5 with a shaped kernel / robust
+normalization to widen the margin, and seeding the MHT (comb hit → high-prior train at the comb phase,
+like a VIS seed).
+
 Next actions:
 
-1. **Full cross-pulse soft-comb accumulator** for the 04-18 class (tiered thresholds alone don't reach
-   it; window widening and global threshold lowering are measured dead ends) — also owns the two
-   sensitivity-floor residuals above (the UmKA ~503 split, late starts on weak bursts).
+1. **Streaming soft-comb accumulator** (statistic validated above) for the 04-18 class — also owns the
+   sensitivity-floor residuals (the UmKA ~503 post-dropout split, late starts on weak bursts).
 2. Remaining P6(c) experiments: de-emphasis, impulse blanking (mine `Hopper\Experiments\FmNoise`),
    per-burst deviation-matched (NOT fixed-narrower — see the sweep above) channel/video bandwidth.
 3. P7 regression corpus: `Real_TrainAccuracyProbe` + the ground-truth table are its seed.

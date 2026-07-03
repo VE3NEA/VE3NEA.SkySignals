@@ -323,6 +323,67 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("Result 2026-07-03 — the soft-comb VALIDATES on the hardest case: combing the " +
+      "un-thresholded score over 160 Robot36 periods of the 04-18 burst gives a coherent ridge at " +
+      "z=4.5 (all top-20 phases within ±1 ms of one phase, identical at chan ±6000 and ±4000 — the comb " +
+      "is insensitive to the FM-threshold clicking), vs z=2.3-2.6 on an equal-duration noise control. " +
+      "Single-pulse scores on the same data are non-separable (burst max 0.221-0.286 vs control " +
+      "0.181-0.202). Margin ~2 sigma at 24 s, grows as sqrt(N) with transmission length; the streaming " +
+      "comb should add a shaped kernel / robust normalization to widen it.")]
+    public void Real_SoftCombProbe()
+    {
+      string hardWav = Path.Combine(RecordingsDir, "2026-04-18_12_36_09_UmKA-1.iq.wav");
+      string ctrlWav = Path.Combine(RecordingsDir, "2026-07-01_11_29_08_UTMN2.iq.wav");
+      if (!File.Exists(hardWav) || !File.Exists(ctrlWav)) { output.WriteLine("captures absent; probe skipped"); return; }
+
+      var (iqH, srH) = WavIqReader.Read(hardWav);
+      var (iqC, srC) = WavIqReader.Read(ctrlWav);
+      var burst = iqH[..(int)(24 * srH)];
+      var control = iqC[(int)(60 * srC)..(int)(84 * srC)];
+
+      foreach (double chanBw in new[] { 6000.0, 4000.0 })
+      {
+        Report("burst  ", burst, srH, chanBw);
+        Report("control", control, srC, chanBw);
+      }
+
+      void Report(string name, Complex32[] iq, double sr, double chanBw)
+      {
+        var o = new SstvDecodeOptions { SampleRate = sr, ChannelBwHz = chanBw };
+        double[] sync = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+        var spec = SstvModes.Get(SstvMode.Robot36);
+
+        // tap the un-thresholded score stream from the Robot-family detector
+        var trace = new double[sync.Length];
+        var det = new SstvPulseDetector(sr, spec.SyncMs)
+        { ScoreTap = (t, s) => { if (t >= 0 && t < trace.Length) trace[t] = s; } };
+        det.Detect(sync);
+
+        // the batch comb (measurement only, §1.13-exempt): A[phase] = Σ_k score(phase + k·P)
+        int period = (int)Math.Round(spec.LinePeriodMs / 1000.0 * sr);
+        var comb = new double[period];
+        int periods = trace.Length / period;
+        for (int k = 0; k < periods; k++)
+          for (int ph = 0; ph < period; ph++)
+            comb[ph] += trace[k * period + ph];
+
+        double mean = 0; foreach (double v in comb) mean += v; mean /= period;
+        double var = 0; foreach (double v in comb) var += (v - mean) * (v - mean); var /= period;
+        double sd = Math.Sqrt(var);
+        int peakPh = 0;
+        for (int ph = 1; ph < period; ph++) if (comb[ph] > comb[peakPh]) peakPh = ph;
+
+        // is the peak an isolated ridge? count phases within 1 ms of the peak among the top-20 phases
+        var top = Enumerable.Range(0, period).OrderByDescending(ph => comb[ph]).Take(20).ToList();
+        int nearPeak = top.Count(ph => Math.Abs(ph - peakPh) < 0.001 * sr || period - Math.Abs(ph - peakPh) < 0.001 * sr);
+
+        output.WriteLine($"{name} chan ±{chanBw:0}: {periods} periods, comb peak z={(comb[peakPh] - mean) / sd:0.0} " +
+          $"@ phase {peakPh / sr * 1000:0.0} ms, top-20 within ±1 ms of peak: {nearPeak}/20, " +
+          $"single-pulse maxScore={det.MaxScore:0.000}");
+      }
+    }
+
+
     [ManualFact("Result 2026-07-02 (a decisive NEGATIVE): widening the coherence window HURTS everywhere " +
       "— hard case 0.286/0.239/0.200 and strong burst 0.420/0.377/0.329 at 4/6/8 ms. The 9 ms sync pulse " +
       "bounds single-pulse integration: a wider window eats the time template's flat top instead of " +
