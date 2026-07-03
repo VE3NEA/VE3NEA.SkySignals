@@ -19,6 +19,9 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <!-- FluentAssertions 7.x is the last Apache-2.0 release (v8+ is commercial). -->
     <PackageReference Include="FluentAssertions" Version="7.0.0" />
+    <!-- Spectrogram-inspection harness (SstvSpectrogramHarness): same ScottPlot heatmap the FskDemod
+         reference tool uses, so the PNGs a coding assistant inspects look identical. -->
+    <PackageReference Include="ScottPlot.WinForms" Version="5.1.58" />
   </ItemGroup>
 
   <ItemGroup>
