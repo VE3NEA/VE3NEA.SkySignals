@@ -104,12 +104,14 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [ManualFact("Result 2026-07-03 late (soft-comb wired): 21 images from ALL 9 captures — the 04-18 " +
-      "UmKA-1 transmission detects and decodes for the first time (comb-seeded train @0.1 s; video " +
-      "still speckle = the P6(c) below-FM-threshold fidelity gap, but timing locks: the post-24 s " +
-      "striping is vertical). Also new: the 12_37_50 @5 s candidate (likely-real, pending user " +
-      "confirmation) and the 04-19 @505 post-dropout partial. Previous result 2026-07-02: 18 images " +
-      "from 8 of 9, single discriminator pass, weak low-fill decodes are real transmissions.")]
+    [ManualFact("Result 2026-07-04 (locked P6(c) defaults: video chain ±4000 + blanker 0.5, decode from " +
+      "the IQ slice): 22 images from ALL 9 captures — the 21 baseline images regenerate (strong decodes " +
+      "spot-checked visually clean: UTMN2 @27 s, Monitor-3 @285 s) plus the new 11_09 @118 s Robot72 " +
+      "candidate (comb-discovered, likely-real pending user confirmation — see Real_TrainAccuracyProbe). " +
+      "Previous result 2026-07-03 late (soft-comb wired): 21 images from all 9 — 04-18 detects and " +
+      "decodes for the first time (comb-seeded train @0.1 s; video still speckle = the below-FM-threshold " +
+      "fidelity gap, but timing locks: the post-24 s striping is vertical); also new then: the 12_37_50 " +
+      "@5 s candidate (since user-confirmed) and the 04-19 @505 post-dropout partial.")]
     public void Real_DecodesToPng()
     {
       if (!Directory.Exists(RecordingsDir))
@@ -189,15 +191,20 @@ namespace VE3NEA.SkySSTV.Tests
       ("2026-07-01_12_41_24_VIZARD-meteo", new[] { (0.0, 15.0), (135.0, 175.0), (292.0, 328.0) }),
     };
 
-    [ManualFact("Result 2026-07-03 late (soft-comb wired in): 20 of 20 matched, 0 false, 0 missed — " +
-      "04-18 DETECTS AND DECODES FOR THE FIRST TIME (comb-seeded train 0.1-28 s), and the comb FOUND a " +
-      "transmission missing from the truth list (12_37_50 1-38 s: cadence, RF-spectrogram stripes, " +
-      "21-check persistence; user-confirmed — too weak for an image but detected). 1 DUP residual = " +
-      "the pre-existing 04-19 ~505 post-dropout continuation. Comb guards proven here: family-ring " +
-      "reset on train retirement (kills ridge-echo phantoms), the 12-check persistence gate (kills " +
-      "noise extremes), tight comb-train regressor priors (periodPpm 200 / phaseMs 1.5 — without them " +
-      "a soft noise first pulse wrenched the grid and 11_29's first transmission collapsed to 27 " +
-      "pulses).")]
+    [ManualFact("Result 2026-07-04 (locked P6(c) defaults: blanker 0.5 in the detection chain): 20 of 20 " +
+      "matched, 0 missed, 1 DUP (the accepted 04-19 ~505 post-dropout continuation), and 1 scorecard " +
+      "FALSE that is LIKELY A REAL DISCOVERY pending user confirmation — a comb-seeded Robot72 train at " +
+      "11_09 117.9-161 s (p=3): Robot72 is VIZARD's tagged mode, ~148 s sits exactly in its ~130-170 s " +
+      "cadence slot, and the Real_StreamingCombProbe 95-215 s slice (no residue of the 50-88 s " +
+      "transmission) re-confirms the ridge with real-regime persistence (z 4.3-4.7, 19 checks vs ~3 for " +
+      "noise grazers) — the 12_37_50 discovery pattern again. If confirmed, add (~130.0, ~165.0) to the " +
+      "11_09 Truth entry. The blanker also strengthens pulse support on nearly every weak burst " +
+      "(12_37_50 7->23, 04-19 tail 39->54, 11_29 first 119->139); blanker OFF exactly reproduces the " +
+      "2026-07-03 baseline (20 matched, 1 dup, 0 false). Previous result 2026-07-03 late (soft-comb " +
+      "wired in, no blanker): 20/20, 0 false, 0 missed; 04-18 detected+decoded for the first time " +
+      "(comb-seeded 0.1-28 s); comb found 12_37_50 1-38 s (user-confirmed); comb guards proven: " +
+      "family-ring reset on retirement, 12-check persistence, tight comb-train priors (periodPpm 200 / " +
+      "phaseMs 1.5).")]
     public void Real_TrainAccuracyProbe()
     {
       int nMatch = 0, nDup = 0, nFalse = 0, nMiss = 0;
@@ -327,11 +334,15 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
-    [ManualFact("Result 2026-07-03 late (comb FINISHED and wired): burst first confirmed hit 10.5 s " +
-      "z=5.2, 55 confirmed checks, anchor 77.1 ms = the batch phase; control and both noise-fire " +
-      "segments clean; the 12_37 0-40 s segment fires z 3.9-4.1 for 21 checks — cadence + RF stripes " +
-      "say it is a REAL Monitor-3 transmission (pending user ground-truth confirmation). What closed " +
-      "the false fires: (a) touch-count variance normalization (1-lambda^2k)/(1-lambda^2) before " +
+    [ManualFact("Result 2026-07-04 (locked P6(c) defaults, blanker 0.5): the blanker SHARPENS the comb — " +
+      "burst 12.0 s z=5.3 49 checks (was 5.2/55), 12_37 17.2 s z=4.6 56 checks (was 3.9-4.1/21), anchor " +
+      "still 77.1 ms; control and all noise segments stay clean, including 150-215 alone. The new " +
+      "95-215 s slice confirms Robot72 z=4.3-4.7 for 19 checks at ~148 s absolute — the scorecard's " +
+      "'FALSE' train, evidenced here without any 50-88 s residue: likely a real weak VIZARD " +
+      "transmission (see Real_TrainAccuracyProbe). Previous result 2026-07-03 late (comb finished and " +
+      "wired, no blanker): burst 10.5 s z=5.2, 55 checks, anchor 77.1 ms = the batch phase; control and " +
+      "both noise-fire segments clean; 12_37 fires z 3.9-4.1 for 21 checks (real, user-confirmed). What " +
+      "closed the false fires: (a) touch-count variance normalization (1-lambda^2k)/(1-lambda^2) before " +
       "pooling (z 3.6 -> 3.4); (b) HitFactor 1.6 -> 1.8 — the threshold must cover the max over a " +
       "pass's worth of ~memory-length ring redraws, sqrt(2 ln(Neff*redraws)) ~ 3.4, not the " +
       "instantaneous 2.06; (c) the 12-check persistence gate — noise extremes wander off within ~3 " +
@@ -349,7 +360,10 @@ namespace VE3NEA.SkySSTV.Tests
 
       // the segments where the scorecard runs showed comb false-fires (no real transmission per the
       // ground-truth cadence): early 12_37 (a REAL-transmission candidate — RF stripes on cadence),
-      // early 11_09 (noise, 3-check run), 11_29 ~450 (noise) and 11_09 ~170-208 (the Robot72 phantom)
+      // early 11_09 (noise, 3-check run), 11_29 ~450 (noise) and 11_09 ~170-208 (the Robot72 phantom).
+      // 11_09 95-215 isolates the blanker-era Robot72 candidate at ~148 s (likely-real, see the
+      // Real_TrainAccuracyProbe annotation): the slice carries no residue of the 50-88 s transmission,
+      // yet the ridge confirms with real-regime persistence
       string m3Wav = Path.Combine(RecordingsDir, "2026-07-01_12_37_50_Monitor-3.iq.wav");
       string vzWav = Path.Combine(RecordingsDir, "2026-07-01_11_09_11_VIZARD-meteo.iq.wav");
       if (File.Exists(m3Wav))
@@ -362,6 +376,7 @@ namespace VE3NEA.SkySSTV.Tests
         var (iq4, sr4) = WavIqReader.Read(vzWav);
         Report("11_09 0-40 s", iq4[..(int)(40 * sr4)], sr4);
         Report("11_09 150-215", iq4[(int)(150 * sr4)..(int)(215 * sr4)], sr4);
+        Report("11_09 95-215", iq4[(int)(95 * sr4)..(int)(215 * sr4)], sr4);
       }
       Report("11_29 400-470", iqC[(int)(400 * srC)..(int)(470 * srC)], srC);
 
@@ -651,7 +666,13 @@ namespace VE3NEA.SkySSTV.Tests
       "(Frontend_BlankerAndChannelSweep) shows the OPPOSITE (blanker mildly negative): synthetic AWGN at " +
       "σ≤0.6 produces ≤0.05 % clicks — real FM noise is impulsive in a way the closed loop does not " +
       "model; trust the real grid. Pending: visual PNG judgment, blanker threshold 0.3 vs 0.5 call, " +
-      "then lock a decode-stage ChannelBwHz (or dev-matched rule) + BlankerThreshold default.")]
+      "then lock a decode-stage ChannelBwHz (or dev-matched rule) + BlankerThreshold default. " +
+      "Re-run 2026-07-03 on the clean Monitor-3 285 s train only (m3_1102b, blanker grid extended to " +
+      "0.7): the locked defaults hold — blanker removes all clicks (0.69→0.00 %) with no sync-score " +
+      "cost; rowNoise bottoms at blank 0.3 (25.9 @ ±4000/±4500) with 0.5 within 0.1–0.3 of it; 0.7 " +
+      "over-blanks (rowNoise up ~1.4–2.1 everywhere) — do not raise the default. chan ±4000 ≈ ±4500 " +
+      "beat ±6000; chan4000+blank0.5 reads 26.0 vs the 25.9 grid optimum: no regression on the " +
+      "cleanest burst.")]
     public void Real_P6cDecodeGridProbe()
     {
       // P6(c): the decode-stage front end (detection stays at the ±6000 default). Grid: Stage-1 channel BW ×
@@ -664,6 +685,7 @@ namespace VE3NEA.SkySSTV.Tests
         ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0),
         ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0),
         ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0),
+        ("m3_1102b", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0),
       };
 
       foreach (var (tag, file, t0, t1) in cases)
@@ -688,7 +710,7 @@ namespace VE3NEA.SkySSTV.Tests
         output.WriteLine($"--- {tag}: {best.Format} train @{firstSync / sr:0.0}s p={best.PulseCnt}");
 
         foreach (double chanBw in new[] { 6000.0, 4500.0, 4000.0 })
-          foreach (double blank in new[] { 0.0, 0.3, 0.5 })
+          foreach (double blank in new[] { 0.0, 0.3, 0.5, 0.7 })
           {
             var o = new SstvDecodeOptions
             { SampleRate = sr, ChannelBwHz = chanBw, BlankerThreshold = blank,
@@ -728,6 +750,69 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("Result 2026-07-04 — DeEmphasisUs default LOCKED at 0 (off). Raw metrics mildly favor " +
+      "tau: rowNoise falls monotonically (utmn2236 26.6->24.3, m3_1237 72.3->64.5 at 750 µs) and " +
+      "maxScore ticks up (m3_1237 0.200->0.239). But Real_PreEmphasisSlopeProbe shows the TX does NOT " +
+      "pre-emphasize (tilt ≈ -1 dB flat at ±15 kHz, vs +1.4/+3.2 dB predicted for 75/750 µs), so this " +
+      "is the plan's null case — noise-vs-sharpness only; the synthetic closed loop (ground truth, " +
+      "Frontend_DeEmphasisSweep) prices that trade NEGATIVE (-0.8..-1.2 dB PSNR at 300/750 µs, 75 µs a " +
+      "wash), and visually the tau PNGs only smooth speckle slightly (strong bursts already clean, " +
+      "umka0418 stays speckle at every tau). Keeping the stage as an option for future " +
+      "pre-emphasizing transmitters.")]
+    public void Real_P6cDeEmphasisProbe()
+    {
+      // same burst set and metrics as Real_P6cDecodeGridProbe, chain fixed at the locked defaults, only
+      // the de-emphasis time constant varies (0 = off, 75 µs broadcast, 300 µs NBFM, 750 µs deep tilt)
+      (string tag, string file, double t0, double t1)[] cases =
+      {
+        ("utmn2236", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0),
+        ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0),
+        ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0),
+        ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0),
+        ("m3_1102b", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0),
+      };
+
+      foreach (var (tag, file, t0, t1) in cases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+
+        // locate the train once, at the fixed detection defaults, so every config decodes the same slice
+        var oDet = new SstvDecodeOptions { SampleRate = sr };
+        double[] discDet = SstvDecoder.Discriminator(seg, oDet);
+        double[] syncDet = SstvDecoder.SyncAudio(discDet, sr, oDet);
+        var hits = SstvVisDetector.DetectAll(syncDet, sr);
+        var extractor = SstvDecoder.ExtractTrains(syncDet, sr, hits);
+        SstvPulseTrain? best = null;
+        foreach (var train in extractor.Trains)
+          if (extractor.IsImageTrain(train) && (best == null || train.PulseCnt > best.PulseCnt)) best = train;
+        if (best == null) { output.WriteLine($"{tag}: no image train at detection defaults"); continue; }
+        int firstSync = (int)Math.Round(best.Regr.GetPulseTime(0));
+        var spec = SstvModes.Get(best.Format);
+        output.WriteLine($"--- {tag}: {best.Format} train @{firstSync / sr:0.0}s p={best.PulseCnt}");
+
+        foreach (double tau in new[] { 0.0, 75.0, 300.0, 750.0 })
+        {
+          var o = new SstvDecodeOptions
+          { SampleRate = sr, ChannelBwHz = 4000.0, BlankerThreshold = 0.5, DeEmphasisUs = tau,
+            Acquire = false, StartSample = firstSync };
+          double[] disc = SstvDecoder.Discriminator(seg, o);
+
+          var det = new SstvPulseDetector(sr, spec.SyncMs);
+          det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
+
+          var img = SstvDecoder.Decode(disc, best.Format, o);
+          string path = Path.Combine(OutDir, $"p6c_deemph_{tag}_tau{tau:0}.png");
+          img.SavePng(path);
+          output.WriteLine($"  tau {tau,3:0} us: maxScore={det.MaxScore:0.000} " +
+            $"rowNoise={RowNoise(img):0.0} -> {Path.GetFileName(path)}");
+        }
+      }
+    }
+
+
     [ManualFact("Result 2026-07-02: peak deviation ≈ 3.3 kHz on the strong bursts (Monitor-3 3310, UTMN2 " +
       "3303/3368 Hz); weaker bursts read 3.7–4.1 kHz (noise-inflated). Corroborated by the FskDemod " +
       "spectrogram (occupied width ≈ ±5 kHz, carrier centered). Basis for the chan ±6 kHz default and the " +
@@ -758,6 +843,82 @@ namespace VE3NEA.SkySSTV.Tests
         for (int i = n0; i < n1; i++) sum += sync[i] * sync[i];
         double dev = Math.Sqrt(sum / (n1 - n0)) * Math.Sqrt(2.0);
         output.WriteLine($"{stem}: mode={mode} burst@{res.FirstSyncSample / sr:0.0}s  peak deviation ≈ {dev:0} Hz");
+      }
+    }
+
+
+    [ManualFact("Result 2026-07-04 — NO transmitter pre-emphasis: at chan ±15000 (no sideband clipping) " +
+      "all four strong bursts read tilt -0.7..-1.3 dB ≈ flat (75 µs would read +1.4, ≥300 µs +3.2); the " +
+      "much steeper -2.4..-4.2 dB at chan ±4000 is the RX artifact — the narrow channel clips FM " +
+      "sidebands harder at higher subcarrier frequencies. Settles plan §6 item 2 on the null case and " +
+      "locks DeEmphasisUs = 0 together with Frontend_DeEmphasisSweep (see Real_P6cDeEmphasisProbe). " +
+      "Method: if the TX pre-emphasized, the recovered subcarrier's AMPLITUDE rises with its " +
+      "instantaneous frequency; measures the mean analytic amplitude per 100 Hz brightness bin over " +
+      "strong-burst interiors, tilt = 1550->2250 Hz amplitude ratio.")]
+    public void Real_PreEmphasisSlopeProbe()
+    {
+      // strong bursts only — amplitude bins need the subcarrier well above the noise
+      (string tag, string file, double t0, double t1)[] cases =
+      {
+        ("utmn2236 ", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0),
+        ("utmn2236a", "2026-06-30_22_36_37_UTMN2_Robot36",  37.0,  63.0),
+        ("m3_1102b ", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0),
+        ("vz_1109  ", "2026-07-01_11_09_11_VIZARD-meteo",   50.0,  88.0),
+      };
+
+      foreach (var (tag, file, t0, t1) in cases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(t0 * sr)..Math.Min(iq.Length, (int)(t1 * sr))];
+
+        // NO de-emphasis — we are measuring the TX tilt itself. Two channel widths separate the TX tilt
+        // from the RX artifact: a narrow channel clips FM sidebands harder at higher subcarrier
+        // frequencies (Carson ≈ ±(dev + f_sub) > ±4000), faking a negative tilt; ±15000 clips nothing.
+        foreach (double chanBw in new[] { 4000.0, 15000.0 })
+        {
+          var o = new SstvDecodeOptions { SampleRate = sr, ChannelBwHz = chanBw };
+          double[] disc = SstvDecoder.Discriminator(seg, o);
+
+          // subcarrier analytic signal: mix by 1900 Hz, ±900 Hz low-pass (wider than the brightness LPF
+          // so the filter's own skirt does not tilt the 1500-2300 Hz band); amplitude = |z|, freq = dφ
+          double w0 = 2 * Math.PI * 1900.0 / sr;
+          var re = new float[disc.Length];
+          var im = new float[disc.Length];
+          for (int i = 0; i < disc.Length; i++)
+          {
+            re[i] = (float)(disc[i] * Math.Cos(w0 * i));
+            im[i] = (float)(-disc[i] * Math.Sin(w0 * i));
+          }
+          float[] lp = global::VE3NEA.Dsp.BlackmanSincKernel(900.0 / sr, 401);
+          float[] zr = VE3NEA.LiquidFir.ConvolveSame(re, lp);
+          float[] zi = VE3NEA.LiquidFir.ConvolveSame(im, lp);
+
+          // mean amplitude per 100 Hz bin, 1500-2300 Hz, burst interior (1 s edges skipped)
+          var sumAmp = new double[8];
+          var cnt = new long[8];
+          int skip = (int)sr;
+          for (int i = Math.Max(1, skip); i < disc.Length - skip; i++)
+          {
+            double dphi = Math.Atan2(zi[i], zr[i]) - Math.Atan2(zi[i - 1], zr[i - 1]);
+            if (dphi > Math.PI) dphi -= 2 * Math.PI;
+            if (dphi < -Math.PI) dphi += 2 * Math.PI;
+            double freq = 1900.0 + dphi * sr / (2 * Math.PI);
+            int bin = (int)Math.Floor((freq - 1500.0) / 100.0);
+            if (bin < 0 || bin >= 8) continue;
+            sumAmp[bin] += Math.Sqrt((double)zr[i] * zr[i] + (double)zi[i] * zi[i]);
+            cnt[bin]++;
+          }
+
+          var bins = new string[8];
+          for (int b = 0; b < 8; b++)
+            bins[b] = cnt[b] > 0 ? $"{sumAmp[b] / cnt[b]:0}" : "-";
+          double tilt = cnt[0] > 0 && cnt[7] > 0
+            ? 20.0 * Math.Log10((sumAmp[7] / cnt[7]) / (sumAmp[0] / cnt[0])) : double.NaN;
+          output.WriteLine($"{tag} chan ±{chanBw:0}: amp/bin [{string.Join(" ", bins)}]  " +
+            $"tilt 1550->2250 = {tilt:+0.0;-0.0} dB");
+        }
       }
     }
 

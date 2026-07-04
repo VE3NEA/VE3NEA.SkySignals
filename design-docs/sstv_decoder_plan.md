@@ -1,57 +1,41 @@
-# SSTV Decoder Plan (VE3NEA.Sstv)
+# SSTV Decoder Plan (VE3NEA.SkySSTV)
 
 Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
 ## Current Status
 
-**Phase: P6(b) robust mode+timing recovery COMPLETE (2026-07-03).** The extractor MHT, VIS seeding and
-the streaming soft-comb (`SstvSoftComb` + `SstvCombPulseTrain`) are all built and wired. Accuracy
-scorecard (`Real_TrainAccuracyProbe`): **20 of 20 ground-truth transmissions matched, one train each,
-0 false, 0 missed** — including the 04-18 hardest case (below-FM-threshold, comb-seeded) and a
-transmission the comb itself discovered (12_37_50 1–38 s, user-confirmed). 21 images decode from all
-9 real captures (`Real_DecodesToPng`). Code: repo `VE3NEA.SkySignals`, branch `sstv`, project
-`VE3NEA.SkySSTV`. Suite: **97 pass / 12 manual-skip**. Each probe's latest findings (and the run
-history) live in the `[ManualFact]` annotations in the test harnesses; RXSSTV reference decodes of the
-same transmissions are in `C:\Ham\RX-SSTV-2\History` (match by timestamp) for quality comparison.
+**Phase: P6(c) COMPLETE (2026-07-04) — all front-end defaults locked, uncommitted on branch `sstv`.**
+Locked: `ChannelBwHz = 6000` (detection), `VideoChannelBwHz = 4000` + `BlankerThreshold = 0.5` (both
+chains), `BrightnessBwHz = 600`, `DeEmphasisUs = 0` (OFF — `Real_PreEmphasisSlopeProbe` measured NO
+transmitter pre-emphasis: subcarrier amplitude tilt ≈ −1 dB ≈ flat at a clipping-free ±15 kHz channel,
+vs the +1.4 / +3.2 dB a 75 / ≥300 µs pre-emphasis would imprint, so de-emphasis is the unmatched null
+case and the synthetic closed loop prices it at −1 dB PSNR; stage kept as an option). Fast suite:
+**99 pass / 15 manual-skip / 0 FAIL** — verify with `dotnet test VE3NEA.SkySSTV.Tests`.
+`Tracking_CoastsThroughMidImageFade` was a margin artifact of the ±4000 video chain (tail 27.9 dB vs
+clean 28.3; blanker not involved) — threshold recalibrated 28.0 → 27.0 in `SstvP3Tests.cs`. Scorecard
+(`Real_TrainAccuracyProbe`, blanker now in the detection chain): **20/20 matched, 0 missed**, the known
+04-19 DUP, and one comb-seeded Robot72 train at 11_09 117.9–161 s counted FALSE but **likely real**
+(VIZARD's tagged mode, its ~130–170 s cadence slot, real-regime comb persistence — z 4.3–4.7 for 19
+checks — from a slice with no residue of the neighbor transmission); blanker OFF exactly reproduces the
+P6(b) baseline, and it strengthens pulse support on nearly every weak burst. 22 images decode from all
+9 captures (`Real_DecodesToPng`). Run history lives in the `[ManualFact]` annotations
+(`SstvImageHarness.cs`); RXSSTV reference decodes in `C:\Ham\RX-SSTV-2\History`.
 
-Known residuals (accepted, documented in the probe annotations):
-
-- UmKA 04-19 484–515 emits a second partial after a real >6 s sync dropout at ~500 s (the scorecard's
-  one DUP): the family comb rings are reset when the first train retires, so the comb cannot bridge it.
-- The below-FM-threshold transmissions (04-18 0–24 s, 12_37_50 1–38 s) detect and time-lock but decode
-  to RGB speckle — the P6(c) front-end fidelity gap.
-
-**P6(c) IN PROGRESS (2026-07-03):** the envelope-gated impulse blanker is implemented
-(`SstvDecodeOptions.BlankerThreshold`, default 0 = off; design mined from Hopper `FmNoise` DevVsMag —
-clicks live in envelope fades) and the decode-stage chan-BW × blanker grid ran on 4 real bursts
-(`Real_P6cDecodeGridProbe`): blanker wins on ALL real bursts (clicks 2.4→0 %, 04-18 maxScore
-0.221→0.324 at chan ±4000 + blank 0.5, rowNoise down everywhere, strong bursts don't regress); the
-synthetic closed loop (`Frontend_BlankerAndChannelSweep`) shows the opposite because AWGN barely
-clicks — trust the real grid. `p6c_*.png` written to the recordings `decoded` folder.
-
-**User judgment (2026-07-03):** `p6c_m3_1237` shows no image at any setting (12_37_50 is
-detect-only, unrecoverable); on the other 3 bursts **chan4000 + blank 0.5 is visually best**.
-Defaults LOCKED accordingly: `VideoChannelBwHz = 4000` (new option; `Decode(Complex32[],…)` runs the
-video chain with it, detection keeps `ChannelBwHz = 6000`), `BlankerThreshold = 0.5` (both chains);
-harness image decodes now go through the video chain (decode from the IQ slice, not the detection
-disc).
-
-**INTERRUPTED mid-validation (session limit):** with the new defaults the fast suite is 97 pass /
-**1 FAIL: `SstvP3Tests.Tracking_CoastsThroughMidImageFade`** — not yet investigated (suspect: the
-blanker gates the test's simulated fade envelope and perturbs what the tracker sees, or the ±4000
-video chain shifted its PSNR/assertion margin). Nothing else run after the lock.
+Known residuals (accepted, documented in the probe annotations): the 04-19 ~505 s post-dropout DUP
+(comb rings reset on retirement cannot bridge a >6 s dropout); the below-FM-threshold transmissions
+(04-18 0–24 s, 12_37_50 1–38 s) detect and time-lock but decode to RGB speckle.
 
 Next steps:
 
-1. Fix/diagnose `Tracking_CoastsThroughMidImageFade` under the locked defaults (first look: does the
-   test's fade simulation drop the envelope so the blanker rewrites the fade? If so the test may need
-   `BlankerThreshold = 0` locally, or the blanker's max-gap bound is wrong for multi-line fades).
-2. Re-run `Real_TrainAccuracyProbe` (must stay 20/20 with blanker 0.5 in the detection chain) and
-   `Real_DecodesToPng` (regenerate images with the locked video chain), update their annotations.
-3. De-emphasis experiment (not yet run), then P6(c) is done.
-4. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table).
-5. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
+1. **USER:** confirm the 11_09 ~130–165 s Robot72 candidate on the spectrogram (same procedure as the
+   12_37_50 confirmation); if real, add `(130.0, 165.0)` to the 11_09 entry of `Truth` in
+   `SstvImageHarness.cs:Real_TrainAccuracyProbe` → scorecard becomes 21/21, 0 false.
+2. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table).
+3. P7.5 streaming API refactor (§7: convert the whole-array entry points to the push-based streaming
+   decoder §1.13 requires, before the UI is wired).
+4. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
 
+---
 
 Goal: decode satellite SSTV from a 48 kHz complex-IQ stream and surface the
 progressively-built image in SkyRoof's TelemetryPanel. Satellites generate SSTV
@@ -66,24 +50,31 @@ mode/VIS constants and the broad structure, not the algorithms.
 
 ## 1. Decisions (locked during the interview)
 
-1. **New assembly `VE3NEA.Sstv`**, depending only on `VE3NEA.Dsp` (shared DSP via
+1. **New assembly `VE3NEA.SkySSTV`**, depending only on `VE3NEA.Dsp` (shared DSP via
    project-path reference, per the SkyRoof-LiquidFir memory). 
    
-   The new assembly lives in the VE3NEA.Tlm solution, side by side with VE3NEA.Tlm assembly. 
+   The new assembly lives in the VE3NEA.SkySignals solution, side by side with VE3NEA.SkyTlm assembly. 
 
    SkyRoof references
-   both `VE3NEA.Tlm` and `VE3NEA.Sstv`. SSTV is continuous image reception and emits
-   a bitmap, not `Frame`s; it does **not** belong in `VE3NEA.Tlm` (whose
+   both `VE3NEA.SkyTlm` and `VE3NEA.SkySSTV`. SSTV is continuous image reception and emits
+   a bitmap, not `Frame`s; it does **not** belong in `VE3NEA.SkyTlm` (whose
    `StreamingPipeline` is burst->frame->CRC and literally rejects SSTV as analog noise).
 
 2. **Front-end reuses already-wrapped natives** (`VE3NEA.Dsp.NativeLiquidDsp` /
    `LiquidFir`): complex channel FIR -> `freqdem` (outer FM demod) -> audio.
    No new P/Invoke needed for the core chain.
 
-3. **De-emphasis: optional, OFF by default.** Brightness is the *instantaneous
-   frequency* of the subcarrier (amplitude-independent), so de-emphasis cannot change
-   it; it only reshapes post-FM noise the audio bandpass already handles. Keep a toggle
-   (e.g. 300 us NBFM) and decide empirically in the experiment phase.
+3. **De-emphasis: optional, OFF by default — but try the inverse of the transmitter's
+   pre-emphasis.** Brightness is the *instantaneous frequency* of the subcarrier
+   (amplitude-independent), so de-emphasis cannot change the *signal* brightness; it only
+   reshapes the post-FM noise (whose discriminator PSD rises +6 dB/oct — exactly what a
+   first-order de-emphasis low-pass cuts). But most FM voice transmitters **pre-emphasize
+   the audio (+6 dB/oct) before modulation**, so the *matched* receiver de-emphasis is the
+   classic FM SNR win, and its time constant is a **known standard, not a free parameter**.
+   These satellites use amateur/NBFM transmitters — e.g. the **ISS runs a Kenwood TM-D710GA**,
+   which pre-emphasizes the data-path audio in its 1200-baud mode (flat in 9600-baud) — so the
+   amateur/land-mobile pre-emphasis (≈ 750 µs) is the first inverse to try. Keep the
+   `DeEmphasisUs` toggle; default OFF, set from the P6(c) experiment (§6 item 2).
 
 4. **Brightness measurement: quadrature downconvert + phase-diff.** Mix audio down by
    1900 Hz (`nco_crcf`), lowpass (`LiquidFir`) -> instantaneous freq
@@ -436,7 +427,7 @@ Per §1.13, the batch shortcuts taken in P1-P4 must be converted to streaming (s
 state) **before** the filter sweep and before implementing §4.1 recovery. **Judgment call (agreed
 2026-07-01): the remaining items below are folded into the P6(b) Hopper port** — the port replaces them
 wholesale, so converting them to streaming form first would be throwaway work; they are deleted, not
-refactored, when the extractor lands. Current batch operations to remove (all in `VE3NEA.Sstv`):
+refactored, when the extractor lands. Current batch operations to remove (all in `VE3NEA.SkySSTV`):
 
 - ~~**`SstvDecoder.AnalyticSignal` — whole-signal FFT** (the brightness path).~~ **DONE (P6a):** replaced by
   the streaming NCO mix-to-baseband + complex BlackmanSinc low-pass (`BrightnessBwHz`) + instantaneous
@@ -477,7 +468,7 @@ mode events incrementally, with a rolling few-second buffer for the §1.13 re-re
 proves - the exact streaming + MHT architecture §1.13/§4.1/§6.0 call for, so P6(a)/(b) is largely a **port**,
 not a new design. Structure: `TSstvReceiver.Process(block)` -> `TFrontEnd` -> `TPulseTrainExtractor` (the MHT)
 -> `TSstvDemodulator`, with a rolling buffer (`Dump`/`SamplesDumped`) and incremental re-render. Port map to
-`VE3NEA.Sstv`:
+`VE3NEA.SkySSTV`:
 
 | Hopper unit | Target module | Idea to port |
 | --- | --- | --- |
@@ -514,8 +505,36 @@ image leaves around the SSTV segments (mode from VIS/MHT, not the sidecar tag). 
    truth (encoder + injected noise/Doppler/slant matched to the real-capture conditions),
    plus reference-free metrics on the real Robot36/Robot72 decodes (sync-pulse SNR,
    line-to-line brightness consistency, edge sharpness).
-2. **De-emphasis on/off** and time constant: does it improve real-IQ PSNR / reference-free
-   metrics, or only color noise? Set the default from the result.
+2. **De-emphasis = the inverse of the transmitter's pre-emphasis (try the standard time
+   constants).** FM voice transmitters commonly apply a first-order **+6 dB/oct pre-emphasis** to
+   the audio before modulation; the matched receiver **de-emphasis** is the same first-order
+   low-pass (−6 dB/oct, corner f = 1/(2πτ)) and cuts the parabolic high-frequency FM noise. The
+   time constants are standardized — sweep each as `DeEmphasisUs` and keep the one that best
+   improves the real-IQ reference-free metrics (rowNoise / edge SNR):
+   - **750 µs (corner ≈ 212 Hz)** — EIA land-mobile / amateur narrowband-FM pre-emphasis (+6 dB/oct
+     over ~300–3000 Hz). **Most likely for these satellites**, whose transmitters are NBFM-class:
+     the **ISS SSTV runs a Kenwood TM-D710GA**, which pre-emphasizes in 1200-baud data mode (its
+     9600-baud mode is flat). The 212 Hz corner is *below* the 1100–2300 Hz subcarrier band, so
+     across the band the pre-emphasis is a near-constant +6 dB/oct tilt and the inverse tilts the
+     band down toward the high end.
+   - **75 µs (corner ≈ 2122 Hz)** — broadcast FM, ITU-R BS.450, Americas/Korea. Corner sits inside
+     the subcarrier band.
+   - **50 µs (corner ≈ 3183 Hz)** — broadcast FM, ITU-R BS.450, Europe / rest of world.
+   Per §1.3 the *signal* brightness is amplitude-invariant, so a wrong (or absent-at-TX) guess only
+   reshapes the noise and the invisible subcarrier amplitude — it cannot corrupt the image, only
+   help the SNR or not. **Diagnostic to pick τ without a blind sweep:** if the TX pre-emphasized, the
+   recovered subcarrier's *amplitude* rises with its instantaneous frequency (bright pixels are
+   louder); measure that amplitude-vs-brightness slope on a strong real burst to read the
+   pre-emphasis off the signal directly, then de-emphasize with the matching τ. A per-transmitter
+   `9600-baud/flat` source (no pre-emphasis) is the null case — de-emphasis then only trades
+   subcarrier-edge sharpness for noise, judged on the metrics.
+
+   **RESOLVED 2026-07-04 — the null case: no TX pre-emphasis, `DeEmphasisUs` locked 0 (off).** The
+   amplitude-vs-brightness diagnostic above was implemented (`Real_PreEmphasisSlopeProbe`) and read
+   ≈ flat (−0.7..−1.3 dB tilt at a clipping-free channel; the −2.4..−4.2 dB seen at ±4000 is the RX
+   channel clipping FM sidebands, not the TX). The blind sweep agreed: real rowNoise falls with τ but
+   only as over-smoothing; the synthetic closed loop loses 0.8–1.2 dB PSNR at 300/750 µs. Stage kept
+   as an option for future pre-emphasizing transmitters.
 3. **Noise shaping:** evaluate whether any pre/de-emphasis or shaped brightness filtering
    improves perceived/measured image SNR at the FM threshold.
 4. Lock the chosen defaults into the mode/chain config.
@@ -550,9 +569,25 @@ image leaves around the SSTV segments (mode from VIS/MHT, not the sidecar tag). 
   (this port), D (thresholds), E (freq gate), F (CorrFactor pixel clock), I (constants), O (freqdem +
   single discriminator pass) — folds into (b)/(c) per §9 "Open".
 - **P7** Real regression corpus (Robot36 + Robot72 captures) + docs.
+- **P7.5 Streaming API refactor (do before P8).** P6 made every *algorithm* streaming-capable (bounded
+  rings, oscillator recurrences, re-anchored running sums — §6.0), but the *public surface* is still
+  whole-array batch and so does not yet satisfy §1.13: `SstvDecoder` is a `static class` whose
+  `Decode(Complex32[])` / `Discriminator` / `Brightness` / `SyncAudio` / `ChannelFilter` each allocate and
+  process the entire recording in one call, and `ExtractTrains` scans the whole `sync[]` array. Convert this
+  to the **push-based decoder** §6.0/§6.1 specify: an instance `SstvDecoder` fed IQ **blocks**
+  (`Process(Complex32[] block)` like `StreamingPipeline`/`ThreadedProcessor<Complex32>`), holding a **rolling
+  few-second buffer** (Hopper's `Dump`/`SamplesDumped`), running the channel FIR / discriminator / blanker /
+  Stage-2 / brightness / detectors / extractor as **block-in, bounded-state** stages, and emitting scan
+  lines / mode events incrementally with the §1.13 dirty-block re-render on convergence. Concretely: (a) make
+  the FIR stages stream via `LiquidFir`'s stateful `firfilt` (drop the whole-array `ConvolveSame` return
+  shape — the filters are already streamable, only the API changes); (b) drive one **live** extractor
+  instance (this also collapses the detect-then-decode double `ExtractTrains` pass, §8); (c) fold the comb /
+  detectors on the block boundary they already assume; (d) keep the current static whole-array methods as
+  thin test-only wrappers over the streaming core so the closed-loop PSNR/harness tests still run. This is
+  the last decoder-side work before the UI depends on the streaming contract.
 - **P8 (last)** SkyRoof integration (dispatcher, image leaves, progressive render, META, auto-save) — see
-  §5. Deliberately the final phase: the decoder must decode real captures to PNG standalone (P6/P7) before
-  it is wired into the UI.
+  §5. Deliberately the final phase: the decoder must decode real captures to PNG standalone (P6/P7) and
+  present the push-based streaming contract (P7.5) before it is wired into the UI.
 
 ---
 
@@ -596,7 +631,11 @@ Review addenda (2026-07-01, item letters per §9):
   detection intact under a TCA-like sweep (see Current Status).
 - ~~**Discriminator:** wire the wrapped `freqdem` native per §1.2 or record the deviation (retro O), and share
   one discriminator pass between `DetectMode` and `Decode`~~ **DONE 2026-07-02** (retro O, see §9).
-- Phasing (§7) has no P5 — renumber or mark the gap intentional.
+- **Extractor runs twice per capture (accepted for now):** retro O shares one *discriminator* pass, but a
+  detect-then-decode sequence still runs `ExtractTrains` (the whole MHT scan) once in `DetectMode` and again
+  in `Decode`. Harmless in the batch harness; the P7.5 push-based decoder (§7) makes the extractor a single
+  live instance, so this collapses to one pass then. Not worth a shared-result cache before that refactor.
+- Phasing (§7) has no P5 — renumber or mark the gap intentional (P7.5 now fills the streaming slot before P8).
 
 ---
 

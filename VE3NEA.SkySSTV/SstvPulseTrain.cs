@@ -364,8 +364,9 @@ namespace VE3NEA.SkySSTV
   /// <summary>
   /// A soft-comb-seeded high-prior train (plan §4.1): created from a confirmed <see cref="SstvSoftComb"/>
   /// hit — mode and line phase known from the comb ridge — for the transmissions whose single pulses are
-  /// not threshold-separable from noise (the 04-18 class). The comb's two consecutive over-threshold checks
-  /// over ~100 line periods are far stronger evidence than the N-of-M pulse count, so the train is born
+  /// not threshold-separable from noise (the 04-18 class). The comb's <see cref="SstvSoftComb.ConfirmChecks"/>
+  /// consecutive over-threshold checks over ~100 line periods are far stronger evidence than the N-of-M
+  /// pulse count, so the train is born
   /// <see cref="SstvTrainState.Active"/> and back-dated one comb memory: the ridge is the integral of the
   /// last <see cref="SstvSoftComb.MemoryPeriods"/> periods, so the lines of that whole span belong to it.
   /// Because the burst may have no spawn-tier pulses at all, the block claim is held by a floor power over

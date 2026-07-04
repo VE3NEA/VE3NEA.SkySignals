@@ -37,6 +37,20 @@ namespace VE3NEA.SkySSTV
     public double BlankerThreshold { get; init; } = 0.5;
 
 
+    /// <summary>De-emphasis time constant (µs) applied to the discriminated audio; 0 (the default) disables
+    /// the stage (plan §1.3: brightness is the subcarrier's instantaneous frequency, amplitude-independent,
+    /// so de-emphasis can only reshape the post-FM noise). Default locked OFF by the P6(c) experiment
+    /// (2026-07-04): the real transmitters do NOT pre-emphasize (`Real_PreEmphasisSlopeProbe`: subcarrier
+    /// amplitude-vs-frequency tilt ≈ −1 dB flat at a clipping-free channel, vs +1.4/+3.2 dB a 75/750 µs
+    /// pre-emphasis would imprint), so de-emphasis is the unmatched null case — it trades subcarrier-edge
+    /// sharpness for noise, and the synthetic closed loop prices that at −0.8..−1.2 dB PSNR for 300/750 µs.
+    /// Single-pole −6 dB/oct roll-off, corner f = 1/(2πτ); set it to the inverse of the transmitter's
+    /// pre-emphasis if a future source does pre-emphasize (plan §6 item 2): 750 µs ≈ 212 Hz (EIA/amateur
+    /// NBFM — e.g. the ISS Kenwood TM-D710GA in 1200-baud mode), or the broadcast values 75 µs ≈ 2122 Hz /
+    /// 50 µs ≈ 3183 Hz (ITU-R BS.450).</summary>
+    public double DeEmphasisUs { get; init; } = 0.0;
+
+
     /// <summary>When true (P2 default) the decoder acquires the image start automatically — VIS header if
     /// present (plan §4), otherwise the winning sync train (plan §4.1). When false it decodes at the
     /// fixed <see cref="StartSample"/> (P1 behavior, for closed-loop tests with known timing).</summary>

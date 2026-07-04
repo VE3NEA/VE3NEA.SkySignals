@@ -98,6 +98,34 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [Fact]
+    public void Frontend_DeEmphasisSweep()
+    {
+      // P6(c) closed-loop de-emphasis experiment (plan §1.3/§6 item 2): exact ground truth on top of the
+      // locked decode chain (chan ±4000, blanker 0.5). Single-pole corners: 75 µs ≈ 2122 Hz (broadcast),
+      // 300 µs ≈ 531 Hz (NBFM), 750 µs ≈ 212 Hz. The real-capture verdict comes from
+      // Real_P6cDeEmphasisProbe; this sweep guards the clean/above-threshold end.
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = GrayscaleGradient(spec.Width, spec.Height);
+
+      foreach (double sigma in new[] { 0.0, 0.3, 0.5 })
+      {
+        var iq = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
+        { IncludeVis = false, DeviationHz = 3300.0, NoiseStdDev = sigma, NoiseSeed = 7 });
+
+        var line = $"sigma={sigma:0.0}:";
+        foreach (double tau in new[] { 0.0, 75.0, 300.0, 750.0 })
+        {
+          var o = new SstvDecodeOptions
+          { Acquire = false, Track = false, ChannelBwHz = 4000.0, DeEmphasisUs = tau };
+          var dec = SstvDecoder.Decode(SstvDecoder.Discriminator(iq, o), SstvMode.Robot36, o);
+          line += $"  tau={tau:0}us: PSNR={Psnr(src, dec):0.0} dB";
+        }
+        output.WriteLine(line);
+      }
+    }
+
+
     // ----------------------------------------------------------------------------------------------------
     //                                     VIS detection under noise
     // ----------------------------------------------------------------------------------------------------

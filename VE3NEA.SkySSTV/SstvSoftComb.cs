@@ -93,8 +93,9 @@ namespace VE3NEA.SkySSTV
     }
 
     /// <summary>Scan every warm ring for its peak z-score; return the best hit at or above the ring's
-    /// period-aware threshold, confirmed by two consecutive checks (peak z over threshold twice, at a
-    /// stable phase), or null. <paramref name="now"/> is the absolute sample time of the scan.
+    /// period-aware threshold, confirmed by <see cref="ConfirmChecks"/> consecutive checks (peak z over
+    /// threshold at a stable phase for that many checks), or null. <paramref name="now"/> is the absolute
+    /// sample time of the scan.
     /// The z normalization (mean/σ) is <b>pooled across each family's rings</b>: one ring holds only
     /// ~period/2L independent noise samples, so its self-estimated σ has Student-t tails that fire falsely;
     /// the family's rings accumulate identically-distributed noise (same leak, same per-touch σ), and

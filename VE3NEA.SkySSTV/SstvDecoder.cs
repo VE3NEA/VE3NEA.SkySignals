@@ -210,6 +210,7 @@ namespace VE3NEA.SkySSTV
       Complex32[] chan = ChannelFilter(iq, fs, o.ChannelBwHz);
       double[] disc = Discriminate(chan, fs);
       if (o.BlankerThreshold > 0) BlankImpulses(chan, disc, fs, o.BlankerThreshold);
+      if (o.DeEmphasisUs > 0) DeEmphasize(disc, fs, o.DeEmphasisUs);
       return disc;
     }
 
@@ -254,6 +255,19 @@ namespace VE3NEA.SkySSTV
         for (int j = a; j < i; j++)
           disc[j] = left + (right - left) * (j - a + 1) / (i - a + 1);
       }
+    }
+
+    /// <summary>Classic FM de-emphasis (plan §1.3, P6(c) experiment): a single-pole low-pass
+    /// <c>y += (x − y)·a</c> with corner 1/(2πτ), −6 dB/oct above it — the exact inverse of the parabolic
+    /// (+6 dB/oct amplitude) post-discriminator FM noise, so it flattens the noise floor across the
+    /// subcarrier band. Brightness is the instantaneous frequency of the dominant subcarrier tone, so the
+    /// LTI amplitude tilt itself is invisible to the video; only the noise reshaping (and the pole's small,
+    /// sub-pixel group delay) can matter. In-place, bounded state — streaming-realizable.</summary>
+    private static void DeEmphasize(double[] disc, double fs, double tauUs)
+    {
+      double a = 1.0 - Math.Exp(-1.0 / (tauUs * 1e-6 * fs));
+      double y = disc.Length > 0 ? disc[0] : 0;
+      for (int i = 0; i < disc.Length; i++) { y += (disc[i] - y) * a; disc[i] = y; }
     }
 
     /// <summary>Stage-2 audio bandpass (plan §3, retro item J): band-limit the discriminated audio to the
