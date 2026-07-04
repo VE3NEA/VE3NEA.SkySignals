@@ -819,6 +819,200 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("USER'S VISUAL JUDGMENT 2026-07-04 — variant w9x5_k4_ns wins everywhere an image exists " +
+      "(utmn2236, vz_1109, m3_1102 'best denoising', m3_1102b 'denoises and preserves fine structure'); " +
+      "umka0418 is better RAW (the only version showing some detail through the below-FM-threshold " +
+      "noise) and m3_1237 has no image at any setting. LOCKED into production as SstvWienerFilter " +
+      "(window 9x5, chroma k=4, no shrink, image-domain vertical-diff map), default ON via " +
+      "SstvDecodeOptions.WienerEnabled (off = the raw inspection path for the umka0418 class). " +
+      "Probe/prototype kept for future re-judgment. Original run notes: " +
+      "P6(d) steps 1+2 run 2026-07-04 (plan §6.2): " +
+      "Lee-filter variants (window × chroma k × shrink) on the P6(c) burst set, A/B'd across two noise " +
+      "maps — image-domain row-wise vertical-difference (p6d_*_w*.png) vs the demod-domain guard-band " +
+      "pilot calibrated to it (p6d_*_pilot_*.png). Key finding: the plan's 3×3 Immerkær estimator reads " +
+      "SEVERAL TIMES LOW on real bursts (its horizontal second difference vanishes on the horizontally-" +
+      "correlated post-±600Hz-LPF noise blobs; utmn2236 σnY read 6.4 vs 12.4 true) — with it neither map " +
+      "shrank anything. Replaced by the vertical first-difference median estimator (lines are independent " +
+      "time slices, so inter-line diffs carry the full noise power; chroma steps 2 rows over Robot36's " +
+      "duplicated rows) and the filter came alive: speckle collapses to local mean/neutral gray on every " +
+      "fade (utmn2236 rowNoise 26.6→15.1, m3_1102 46.6→14.1, umka0418's below-threshold speckle → uniform " +
+      "gray) while the m3_1102b text card stays fully readable. Visually the image-domain map beats the " +
+      "median-calibrated pilot map (pilot leaves more speckle); k and shrink barely change rowNoise — " +
+      "judge them on the chroma. Frontend_WienerSweep guards the closed loop: +5.2 dB at σ=0.5, no-op " +
+      "when clean, edges pass (colorbars +0.3).")]
+    public void Real_P6dWienerProbe()
+    {
+      // the P6(c) burst set + one strong VIZARD control (vz_1109); decode once per case at the locked
+      // defaults, then apply each prototype variant to the decoded image (zero decoder changes). The
+      // known mode is pinned per case so a wrong-format hypothesis in the slice cannot hijack the pick.
+      // vz_1109 is pinned Robot36 despite the "Robot 72" transmitter tag: the real cadence is 150 ms
+      // (a full 218-pulse Robot36 train; Robot72's 300 ms grid could hold at most ~110), and the
+      // full-file harness likewise decodes every real 11_09 burst as Robot36.
+      (string tag, string file, double t0, double t1, SstvMode mode)[] cases =
+      {
+        ("utmn2236", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0, SstvMode.Robot36),
+        ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0, SstvMode.Robot36),
+        ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0, SstvMode.Robot36),
+        ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0, SstvMode.Robot36),
+        ("m3_1102b", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0, SstvMode.Robot36),
+        ("vz_1109",  "2026-07-01_11_09_11_VIZARD-meteo",   50.0,  88.0, SstvMode.Robot36),
+      };
+
+      foreach (var (tag, file, t0, t1, mode) in cases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+
+        // locate the train once, at the fixed detection defaults, so every variant filters the same decode
+        var oDet = new SstvDecodeOptions { SampleRate = sr };
+        double[] discDet = SstvDecoder.Discriminator(seg, oDet);
+        double[] syncDet = SstvDecoder.SyncAudio(discDet, sr, oDet);
+        var hits = SstvVisDetector.DetectAll(syncDet, sr);
+        var extractor = SstvDecoder.ExtractTrains(syncDet, sr, hits);
+        SstvPulseTrain? best = null;
+        foreach (var train in extractor.Trains)
+          if (train.Format == mode && extractor.IsImageTrain(train) &&
+              (best == null || train.PulseCnt > best.PulseCnt)) best = train;
+        if (best == null) { output.WriteLine($"{tag}: no {mode} image train at detection defaults"); continue; }
+        int firstSync = (int)Math.Round(best.Regr.GetPulseTime(0));
+
+        var spec = SstvModes.Get(best.Format);
+        var o = new SstvDecodeOptions
+        { SampleRate = sr, ChannelBwHz = 4000.0, BlankerThreshold = 0.5, WienerEnabled = false,
+          Acquire = false, StartSample = firstSync };
+        double[] disc = SstvDecoder.Discriminator(seg, o);
+        var raw = SstvDecoder.Decode(disc, best.Format, o);
+        raw.SavePng(Path.Combine(OutDir, $"p6d_{tag}_raw.png"));
+        var (sy, scr, scb) = SstvWienerPrototype.NoiseSigmas(raw);
+        output.WriteLine($"--- {tag}: {best.Format} @{firstSync / sr:0.0}s p={best.PulseCnt} " +
+          $"rawRowNoise={RowNoise(raw):0.0} σn Y={sy:0.0} Cr={scr:0.0} Cb={scb:0.0}");
+
+        foreach ((int ww, int wh) in new[] { (7, 3), (9, 5) })
+          foreach (double ck in new[] { 2.0, 4.0 })
+            foreach (bool shrink in new[] { false, true })
+            {
+              var img = SstvWienerPrototype.Apply(raw, new SstvWienerOptions
+              { WindowW = ww, WindowH = wh, ChromaK = ck, ShrinkToNeutral = shrink });
+              string name = $"p6d_{tag}_w{ww}x{wh}_k{ck:0}_{(shrink ? "sh" : "ns")}.png";
+              img.SavePng(Path.Combine(OutDir, name));
+              output.WriteLine($"  w{ww}x{wh} k={ck:0} {(shrink ? "shrink" : "no-shrink")}: " +
+                $"rowNoise={RowNoise(img):0.0} -> {name}");
+            }
+
+        // demod-domain σ²n A/B (plan §6.2 item 2, map (a)): guard-band pilot power at 2600–3400 Hz —
+        // no SSTV energy lives there — averaged over each pixel's scan span on the train's line grid,
+        // then calibrated to the image-domain absolute scale (median-to-median). The pilot supplies
+        // the per-pixel localization (fades light up) that the Immerkær map cannot see in the
+        // horizontally-correlated post-LPF FM noise.
+        var (varY, varC) = PilotNoiseMaps(GuardBandPower(disc, sr), best, firstSync, spec, sr);
+        CalibrateMap(varY, sy * sy);
+        CalibrateMap(varC, (scr * scr + scb * scb) / 2);
+        foreach (double ck in new[] { 2.0, 4.0 })
+          foreach (bool shrink in new[] { false, true })
+          {
+            var img = SstvWienerPrototype.Apply(raw, new SstvWienerOptions
+            { ChromaK = ck, ShrinkToNeutral = shrink }, varY, varC);
+            string name = $"p6d_{tag}_pilot_k{ck:0}_{(shrink ? "sh" : "ns")}.png";
+            img.SavePng(Path.Combine(OutDir, name));
+            output.WriteLine($"  pilot w7x3 k={ck:0} {(shrink ? "shrink" : "no-shrink")}: " +
+              $"rowNoise={RowNoise(img):0.0} -> {name}");
+          }
+      }
+    }
+
+    /// <summary>Per-sample power of the 2600–3400 Hz guard band of the discriminated audio — the SSTV
+    /// tones end at 2300 Hz, so this band is pure post-FM noise; its power tracks the video-band noise
+    /// (both scale with 1/CNR) and localizes fades per sample.</summary>
+    private static double[] GuardBandPower(double[] disc, double sr)
+    {
+      float[] lp = global::VE3NEA.Dsp.BlackmanSincKernel(400.0 / sr, 401);
+      var bp = new float[lp.Length];
+      int center = lp.Length / 2;
+      double w0 = 2 * Math.PI * 3000.0 / sr;
+      for (int i = 0; i < lp.Length; i++) bp[i] = 2f * lp[i] * (float)Math.Cos(w0 * (i - center));
+
+      var x = new float[disc.Length];
+      for (int i = 0; i < disc.Length; i++) x[i] = (float)disc[i];
+      float[] y = VE3NEA.LiquidFir.ConvolveSame(x, bp);
+      var power = new double[disc.Length];
+      for (int i = 0; i < power.Length; i++) power[i] = (double)y[i] * y[i];
+      return power;
+    }
+
+    /// <summary>Per-pixel noise maps for the luma and (shared) chroma planes: mean pilot power over
+    /// each pixel's scan span, lines laid on the train's tracked grid. Uncalibrated — relative shape
+    /// only; <see cref="CalibrateMap"/> sets the absolute scale. Robot layouts only.</summary>
+    private static (double[] varY, double[] varC) PilotNoiseMaps(double[] pilot, SstvPulseTrain train,
+      int firstSync, SstvModeSpec spec, double sr)
+    {
+      int w = spec.Width, h = spec.Height;
+      var mapY = new double[w * h];
+      var mapC = new double[w * h];
+      int line0 = train.Regr.GetPulseNo(firstSync);
+      double Ms(double ms) => ms / 1000.0 * sr;
+
+      void FillRow(double[] map, int row, double segStart, double segSamples)
+      {
+        for (int p = 0; p < w; p++)
+        {
+          int a = (int)Math.Round(segStart + p * segSamples / w);
+          int b = (int)Math.Round(segStart + (p + 1) * segSamples / w);
+          double sum = 0; int cnt = 0;
+          for (int i = Math.Max(0, a); i < Math.Min(pilot.Length, b); i++) { sum += pilot[i]; cnt++; }
+          map[row * w + p] = cnt > 0 ? sum / cnt : -1;       // -1 = out of range, filled below
+        }
+      }
+
+      for (int line = 0; line < spec.LineCount && line < h; line++)
+      {
+        double yStart = train.Regr.GetPulseTime(line0 + line) + Ms(spec.SyncMs + spec.SyncPorchMs);
+        FillRow(mapY, line, yStart, Ms(spec.ScanYMs));
+        double c1 = yStart + Ms(spec.ScanYMs + spec.SepMs + spec.SepPorchMs);
+        FillRow(mapC, line, c1, Ms(spec.ScanChromaMs));
+        if (spec.Layout == SstvColorLayout.Robot72)
+        {
+          // both chroma scans carry noise for this row — average the second span in
+          var second = new double[w * h];
+          double c2 = c1 + Ms(spec.ScanChromaMs + spec.SepMs + spec.SepPorchMs);
+          FillRow(second, line, c2, Ms(spec.ScanChromaMs));
+          for (int p = 0; p < w; p++)
+          {
+            int i = line * w + p;
+            if (mapC[i] >= 0 && second[i] >= 0) mapC[i] = (mapC[i] + second[i]) / 2;
+          }
+        }
+      }
+
+      FillMissing(mapY);
+      FillMissing(mapC);
+      return (mapY, mapC);
+
+      static void FillMissing(double[] map)
+      {
+        var valid = new List<double>();
+        foreach (double v in map) if (v >= 0) valid.Add(v);
+        if (valid.Count == 0) return;
+        valid.Sort();
+        double med = valid[valid.Count / 2];
+        for (int i = 0; i < map.Length; i++) if (map[i] < 0) map[i] = med;
+      }
+    }
+
+    /// <summary>Scale a pilot map so its median equals the image-domain noise variance — the plan's
+    /// "image-domain calibration" role: the pilot gives the shape, Immerkær the absolute level.</summary>
+    private static void CalibrateMap(double[] map, double targetMedianVar)
+    {
+      var s = (double[])map.Clone();
+      Array.Sort(s);
+      double med = s[s.Length / 2];
+      if (med <= 0) return;
+      double k = targetMedianVar / med;
+      for (int i = 0; i < map.Length; i++) map[i] *= k;
+    }
+
+
     [ManualFact("Result 2026-07-02: peak deviation ≈ 3.3 kHz on the strong bursts (Monitor-3 3310, UTMN2 " +
       "3303/3368 Hz); weaker bursts read 3.7–4.1 kHz (noise-inflated). Corroborated by the FskDemod " +
       "spectrogram (occupied width ≈ ±5 kHz, carrier centered). Basis for the chan ±6 kHz default and the " +

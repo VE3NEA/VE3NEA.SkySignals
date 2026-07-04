@@ -88,5 +88,13 @@ namespace VE3NEA.SkySSTV
     /// <summary>Fraction of each pixel's sample span, centered, averaged by the matched integrator. &lt;1 trims
     /// the inter-pixel frequency-step transitions.</summary>
     public double PixelWindowFraction { get; init; } = 0.5;
+
+    /// <summary>Enable the Wiener (Lee) post-filter on the reconstructed Y/Cr/Cb planes
+    /// (<see cref="SstvWienerFilter"/>, plan §6.2). Default ON per the P6(d) visual judgment
+    /// (2026-07-04): the w9×5 / chroma-k4 / no-shrink variant gave the best denoising on every
+    /// decodable real burst while preserving fine structure (text). Disable to inspect the raw
+    /// reconstruction — on below-FM-threshold bursts (the umka0418 class) the raw image shows
+    /// marginally more detail through the noise.</summary>
+    public bool WienerEnabled { get; init; } = true;
   }
 }

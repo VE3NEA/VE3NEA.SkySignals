@@ -126,6 +126,38 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [Fact]
+    public void Frontend_WienerSweep()
+    {
+      // P6(d) synthetic guard (plan §6.2 item 3), now on the PRODUCTION post-filter (SstvWienerFilter,
+      // defaults locked by the 2026-07-04 visual judgment): with known injected noise the filtered
+      // closed-loop PSNR must not fall below the unfiltered decode — Wiener shrinkage with a correct
+      // σ²n is MMSE-favorable, so a regression means the σ²n calibration is wrong. Two sources: the
+      // smooth gradient (pure shrinkage gain) and colorbars (edges must pass at g ≈ 1).
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      foreach (var (name, src) in new[]
+        { ("gradient", GrayscaleGradient(spec.Width, spec.Height)),
+          ("colorbars", ColorBars(spec.Width, spec.Height)) })
+        foreach (double sigma in new[] { 0.0, 0.1, 0.3, 0.5 })
+        {
+          var iq = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
+          { IncludeVis = false, DeviationHz = 3300.0, NoiseStdDev = sigma, NoiseSeed = 7 });
+          var o = new SstvDecodeOptions
+          { Acquire = false, Track = false, ChannelBwHz = 4000.0, WienerEnabled = false };
+          double[] disc = SstvDecoder.Discriminator(iq, o);
+          var dec = SstvDecoder.Decode(disc, SstvMode.Robot36, o);
+          var filtered = SstvDecoder.Decode(disc, SstvMode.Robot36, o with { WienerEnabled = true });
+
+          double rawPsnr = Psnr(src, dec), fPsnr = Psnr(src, filtered);
+          output.WriteLine($"{name} sigma={sigma:0.0}: raw={rawPsnr:0.0} dB wiener={fPsnr:0.0} dB " +
+            $"({fPsnr - rawPsnr:+0.0;-0.0})");
+          if (sigma > 0)
+            fPsnr.Should().BeGreaterThanOrEqualTo(rawPsnr,
+              $"Wiener shrinkage must not regress PSNR under known noise ({name}, σ={sigma})");
+        }
+    }
+
+
     // ----------------------------------------------------------------------------------------------------
     //                                     VIS detection under noise
     // ----------------------------------------------------------------------------------------------------
@@ -221,6 +253,24 @@ namespace VE3NEA.SkySSTV.Tests
         {
           byte v = (byte)((x * 255 / (w - 1) + y * 255 / (h - 1)) / 2);
           img.Set(x, y, v, v, v);
+        }
+      return img;
+    }
+
+    /// <summary>Saturated color bars — strong chroma edges for the Wiener guard (the harness pattern
+    /// without the luma ramp).</summary>
+    private static RgbImage ColorBars(int w, int h)
+    {
+      (byte r, byte g, byte b)[] bars =
+      {
+        (255,255,255),(255,255,0),(0,255,255),(0,255,0),(255,0,255),(255,0,0),(0,0,255),(0,0,0)
+      };
+      var img = new RgbImage(w, h);
+      for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+        {
+          var (r, g, b) = bars[x * bars.Length / w];
+          img.Set(x, y, r, g, b);
         }
       return img;
     }

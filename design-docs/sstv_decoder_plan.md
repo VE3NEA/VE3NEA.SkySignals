@@ -4,42 +4,39 @@ Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
 
 ## Current Status
 
-**Phase: P6(c) COMPLETE (2026-07-04, committed on branch `sstv`); next: P6(d) Wiener post-filter
-experiments (§6.2).** All front-end defaults locked.
-Locked: `ChannelBwHz = 6000` (detection), `VideoChannelBwHz = 4000` + `BlankerThreshold = 0.5` (both
-chains), `BrightnessBwHz = 600`, `DeEmphasisUs = 0` (OFF — `Real_PreEmphasisSlopeProbe` measured NO
-transmitter pre-emphasis: subcarrier amplitude tilt ≈ −1 dB ≈ flat at a clipping-free ±15 kHz channel,
-vs the +1.4 / +3.2 dB a 75 / ≥300 µs pre-emphasis would imprint, so de-emphasis is the unmatched null
-case and the synthetic closed loop prices it at −1 dB PSNR; stage kept as an option). Fast suite:
-**99 pass / 15 manual-skip / 0 FAIL** — verify with `dotnet test VE3NEA.SkySSTV.Tests`.
-`Tracking_CoastsThroughMidImageFade` was a margin artifact of the ±4000 video chain (tail 27.9 dB vs
-clean 28.3; blanker not involved) — threshold recalibrated 28.0 → 27.0 in `SstvP3Tests.cs`. Scorecard
-(`Real_TrainAccuracyProbe`, blanker now in the detection chain): **20/20 matched, 0 missed**, the known
-04-19 DUP, and **1 genuine FALSE** (see residuals); blanker OFF exactly reproduces the P6(b) baseline,
-and blanker ON strengthens pulse support on nearly every weak burst. 21 real images decode from all
-9 captures (`Real_DecodesToPng`; +1 false image from the FALSE train). Run history lives in the
-`[ManualFact]` annotations (`SstvImageHarness.cs`); RXSSTV reference decodes in `C:\Ham\RX-SSTV-2\History`.
+**Phase: P6 COMPLETE (2026-07-04, P6(d) landed, uncommitted); next: P7 regression corpus.** The user
+judged the P6(d) PNGs: variant `w9x5_k4_ns` won everywhere an image exists and is **locked into
+production as `SstvWienerFilter`** (window 9×5, chroma k 4, no shrink, image-domain
+vertical-first-difference noise map — the planned Immerkær estimator read several× low on the
+horizontally-correlated post-LPF FM noise and was dropped, §6.2 UPDATE/RESOLVED). Default ON via
+`SstvDecodeOptions.WienerEnabled`; OFF is the raw inspection path (umka0418-class below-threshold
+bursts show marginally more detail raw). `Frontend_WienerSweep` guards the production filter
+(+3.9 dB PSNR at σ=0.5, no-op clean); the 21-image real baseline (`Real_DecodesToPng`) regenerates
+unchanged with filtered output. Side finding: VIZARD-meteo transmits a 150 ms (Robot36) cadence
+despite its "Robot 72" transmitter tag.
+All P6(c) front-end defaults stay locked (`ChannelBwHz 6000` detection, `VideoChannelBwHz 4000` +
+`BlankerThreshold 0.5`, `BrightnessBwHz 600`, `DeEmphasisUs 0`; rationale in `SstvDecodeOptions` docs).
+Fast suite: **100 pass / 16 manual-skip / 0 FAIL** — verify with `dotnet test VE3NEA.SkySSTV.Tests`.
+Run history lives in the `[ManualFact]` annotations (`SstvImageHarness.cs`); RXSSTV reference decodes
+in `C:\Ham\RX-SSTV-2\History`.
 
 Known residuals (accepted, documented in the probe annotations): the 04-19 ~505 s post-dropout DUP
 (comb rings reset on retirement cannot bridge a >6 s dropout); the below-FM-threshold transmissions
-(04-18 0–24 s, 12_37_50 1–38 s) detect and time-lock but decode to RGB speckle; and **NEW with the
-blanked detection chain — a telemetry-fed comb false positive**: a comb-seeded Robot72 train at 11_09
-117.9–161 s (p=3, fill 0.02) that emits a false image. User-checked (2026-07-04): that span holds only
-telemetry bursts, yet the ridge shows real-regime persistence (z 4.3–4.7, 19 checks), so the 12-check
-persistence gate cannot separate burst telemetry from SSTV — a guard (pulse-support floor for comb
-trains — real comb finds have p≥7, this has p=3 — or a telemetry-burst veto) is an open P7 item.
+(04-18 0–24 s, 12_37_50 1–38 s) detect and time-lock but decode to RGB speckle; and **a telemetry-fed
+comb false positive**: a comb-seeded Robot72 train at 11_09 117.9–161 s (p=3, fill 0.02) that emits a
+false image. User-checked (2026-07-04): that span holds only telemetry bursts, yet the ridge shows
+real-regime persistence (z 4.3–4.7, 19 checks), so the 12-check persistence gate cannot separate burst
+telemetry from SSTV — a guard (pulse-support floor for comb trains — real comb finds have p≥7, this has
+p=3 — or a telemetry-burst veto) is an open P7 item.
 
 Next steps:
 
-1. P6(d) streaming-Wiener post-filter experiments (§6.2): `Real_P6dWienerProbe` (Lee filter on the
-   P6(c) burst set, image-domain σ²n first, then the demod-domain map) + `Frontend_WienerSweep`
-   synthetic guard; write `p6d_*.png` and stop for the **user's visual judgment** before touching
-   production reconstruction.
-2. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table), including the comb
-   false-positive guard above (the 11_09 telemetry segment is the regression case).
-3. P7.5 streaming API refactor (§7: convert the whole-array entry points to the push-based streaming
-   decoder §1.13 requires, before the UI is wired).
-4. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
+1. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table), including the comb
+   false-positive guard (the 11_09 telemetry segment is the regression case; see residuals below).
+2. P7.5 streaming API refactor (§7: convert the whole-array entry points to the push-based streaming
+   decoder §1.13 requires, before the UI is wired); includes the streaming line-emission form of
+   `SstvWienerFilter` + the per-pixel gain/σ alpha channel (§6.2).
+3. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
 
 ---
 
@@ -584,6 +581,32 @@ Wiener (Lee) filter** driven by a demod-domain noise map:
      streaming form (per-pixel σ² accumulated during pixel integration, filter at line emission,
      per-pixel gain/σ into the alpha channel) implemented in the production reconstruction path.
 
+  **UPDATE 2026-07-04 — items 1–3 built and run (test-only `SstvWienerPrototype` + probe + guard).**
+  Two deviations from the design above, forced by measurement: **(a)** the 3×3
+  Immerkær residual is NOT usable as the image-domain σ²n — it reads several× low on real bursts
+  because its separable kernel needs a horizontal second difference, which vanishes on the
+  horizontally-correlated (post-±600 Hz-LPF) noise blobs; with it neither map shrank anything. The
+  image-domain estimator is now the **row-wise vertical first-difference median**
+  (σ = median|p[y]−p[y−step]| / 0.6745 / √2 — scan lines are independent time slices so inter-line
+  diffs carry the full noise power; step 2 for chroma over Robot36's duplicated rows; still row-local,
+  1–2 line lag). **(b)** the guard-band pilot map (a) is calibrated median-to-median against that
+  image-domain estimate rather than by the analytic parabolic-law scaling; on the first A/B the
+  image-domain map filters visibly better than the pilot (the pilot's median calibration leaves half
+  the map under-weighted) — the envelope/blank-flag refinements (b)–(c) stay unbuilt unless a future
+  judgment asks for better fade localization.
+
+  **RESOLVED 2026-07-04 — item 4, the user's visual judgment: variant `w9x5_k4_ns` wins on every
+  burst that carries an image** ("best denoising" on utmn2236 / vz_1109 / m3_1102, "denoises and
+  preserves fine structure" on the m3_1102b text card); umka0418 is better RAW (the only version
+  showing some detail through below-FM-threshold noise), m3_1237 has no image at any setting.
+  **Locked into production as `SstvWienerFilter`** (window 9×5, chroma k = 4, no shrink-to-neutral,
+  image-domain vertical-difference map), applied to the Y/Cr/Cb planes in both reconstructions before
+  the RGB conversion; default ON via `SstvDecodeOptions.WienerEnabled` (OFF = the raw inspection path
+  for the umka0418 class). `Frontend_WienerSweep` now guards the production filter (+3.9 dB at σ=0.5,
+  no-op clean, colorbar edges +1.0); the 21-image real baseline regenerates unchanged. The per-pixel
+  gain/σ → alpha-channel idea moves to the P7.5 streaming refactor with the rest of the line-emission
+  form.
+
 ---
 
 ## 7. Phasing
@@ -613,9 +636,10 @@ Wiener (Lee) filter** driven by a demod-domain noise map:
   inside these steps:** J, A, C, N, K, L, M and most of P are done (§9 "Done"); the open remainder — G/H
   (this port), D (thresholds), E (freq gate), F (CorrFactor pixel clock), I (constants), O (freqdem +
   single discriminator pass) — folds into (b)/(c) per §9 "Open".
-- **P6(d)** Streaming Wiener post-filter experiments (§6.2): prototype the noise-map + Lee-filter
-  variants in the test harness, write `p6d_*.png` for side-by-side review, and get the **user's visual
-  judgment** before any of it enters the production reconstruction code.
+- **P6(d) (done 2026-07-04)** Streaming Wiener post-filter experiments (§6.2): prototype the noise-map +
+  Lee-filter variants in the test harness, write `p6d_*.png` for side-by-side review, and get the
+  **user's visual judgment** before any of it enters the production reconstruction code — judged, and
+  the winning `w9x5_k4_ns` variant locked into production (`SstvWienerFilter`, §6.2 RESOLVED).
 - **P7** Real regression corpus (Robot36 + Robot72 captures) + docs.
 - **P7.5 Streaming API refactor (do before P8).** P6 made every *algorithm* streaming-capable (bounded
   rings, oscillator recurrences, re-anchored running sums — §6.0), but the *public surface* is still
