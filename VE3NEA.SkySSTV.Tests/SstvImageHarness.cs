@@ -104,11 +104,13 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [ManualFact("Result 2026-07-04 (locked P6(c) defaults: video chain ±4000 + blanker 0.5, decode from " +
-      "the IQ slice): 21 real images + 1 FALSE image from the 9 captures — the 21 baseline images " +
-      "regenerate (strong decodes spot-checked visually clean: UTMN2 @27 s, Monitor-3 @285 s); the " +
-      "11_09 @118 s Robot72 image is the telemetry-fed comb false positive (user-refuted — see " +
-      "Real_TrainAccuracyProbe; a product-visible false image until the P7 guard lands). " +
+    [ManualFact("Result 2026-07-04 late (P7 comb pulse-support guard landed): exactly the 21 real images " +
+      "from the 9 captures — the telemetry-fed 11_09 @118 s Robot72 false image no longer emits, every " +
+      "real image regenerates unchanged. Previous result 2026-07-04 (locked P6(c) defaults: video chain " +
+      "±4000 + blanker 0.5, decode from the IQ slice): 21 real images + 1 FALSE image — the 21 baseline " +
+      "images regenerate (strong decodes spot-checked visually clean: UTMN2 @27 s, Monitor-3 @285 s); " +
+      "the 11_09 @118 s Robot72 image was the telemetry-fed comb false positive (user-refuted — see " +
+      "Real_TrainAccuracyProbe). " +
       "Previous result 2026-07-03 late (soft-comb wired): 21 images from all 9 — 04-18 detects and " +
       "decodes for the first time (comb-seeded train @0.1 s; video still speckle = the below-FM-threshold " +
       "fidelity gap, but timing locks: the post-24 s striping is vertical); also new then: the 12_37_50 " +
@@ -192,29 +194,30 @@ namespace VE3NEA.SkySSTV.Tests
       ("2026-07-01_12_41_24_VIZARD-meteo", new[] { (0.0, 15.0), (135.0, 175.0), (292.0, 328.0) }),
     };
 
-    [ManualFact("Result 2026-07-04 (locked P6(c) defaults: blanker 0.5 in the detection chain): 20 of 20 " +
-      "matched, 0 missed, 1 DUP (the accepted 04-19 ~505 post-dropout continuation), and 1 genuine " +
-      "FALSE — a comb-seeded Robot72 train at 11_09 117.9-161 s (p=3, fill 0.02). It first looked like " +
-      "a real discovery (VIZARD's tagged mode, its cadence slot, and real-regime comb persistence: " +
-      "z 4.3-4.7 for 19 checks in the residue-free 95-215 s slice), but the USER REFUTED it " +
-      "(2026-07-04): that span holds only TELEMETRY bursts — so burst telemetry under the blanked " +
-      "chain can sustain a comb ridge that passes every current guard, and the 12-check persistence " +
-      "gate alone cannot separate telemetry from SSTV. A comb false-positive guard (e.g. a pulse-" +
-      "support floor for comb trains before image emission — real comb finds have p>=7, this has p=3 — " +
-      "or a telemetry-burst veto) is an open P7 item. The blanker also strengthens pulse support on " +
-      "nearly every weak burst (12_37_50 7->23, 04-19 tail 39->54, 11_29 first 119->139); blanker OFF " +
-      "exactly reproduces the 2026-07-03 baseline (20 matched, 1 dup, 0 false). Previous result " +
-      "2026-07-03 late (soft-comb wired in, no blanker): 20/20, 0 false, 0 missed; 04-18 " +
-      "detected+decoded for the first time (comb-seeded 0.1-28 s); comb found 12_37_50 1-38 s " +
-      "(user-confirmed); comb guards proven: family-ring reset on retirement, 12-check persistence, " +
-      "tight comb-train priors (periodPpm 200 / phaseMs 1.5).")]
+    [ManualFact("Result 2026-07-04 late (P7: comb pulse-support guard landed, scorecard now ASSERTED — " +
+      "this is the P7 regression gate): 20 of 20 matched, 0 missed, 0 false, 1 DUP (the accepted 04-19 " +
+      "~505 post-dropout continuation). The guard (MinCombPulses 6 in IsImageTrain) removes the 11_09 " +
+      "telemetry-fed Robot72 false image (p=3, fill 0.02) with every real match unchanged — the weakest " +
+      "comb-seeded matches keep p=21 (04-18) / p=23 (12_37_50 @2 s), far above the floor. " +
+      "Previous result 2026-07-04 (locked P6(c) defaults, pre-guard): 20 matched, 1 DUP, and 1 genuine " +
+      "FALSE — the comb-seeded Robot72 train at 11_09 117.9-161 s first looked like a real discovery " +
+      "(VIZARD's tagged mode, its cadence slot, and real-regime comb persistence: z 4.3-4.7 for 19 " +
+      "checks in the residue-free 95-215 s slice), but the USER REFUTED it (2026-07-04): that span " +
+      "holds only TELEMETRY bursts — burst telemetry under the blanked chain can sustain a comb ridge " +
+      "that passes the 12-check persistence gate, and only the pulse stream separates it (real comb " +
+      "finds p>=7 pre-blanker, p>=21 with the blanker; the telemetry ridge p=3) — hence the pulse-" +
+      "support floor. The blanker also strengthens pulse support on nearly every weak burst " +
+      "(12_37_50 7->23, 04-19 tail 39->54, 11_29 first 119->139); blanker OFF exactly reproduces the " +
+      "2026-07-03 baseline (20 matched, 1 dup, 0 false; that run was the soft-comb debut: 04-18 " +
+      "detected+decoded for the first time, comb found 12_37_50 1-38 s, both user-confirmed).")]
     public void Real_TrainAccuracyProbe()
     {
-      int nMatch = 0, nDup = 0, nFalse = 0, nMiss = 0;
+      int nMatch = 0, nDup = 0, nFalse = 0, nMiss = 0, nTruth = 0;
       foreach (var (file, spans) in Truth)
       {
         string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
         if (!File.Exists(wav)) { output.WriteLine($"{file}: ABSENT"); continue; }
+        nTruth += spans.Length;
 
         var (iq, sr) = WavIqReader.Read(wav);
         var o = new SstvDecodeOptions { SampleRate = sr };
@@ -248,7 +251,15 @@ namespace VE3NEA.SkySSTV.Tests
           if (!matched[i]) { nMiss++; output.WriteLine($"  MISS   truth {spans[i].t0:0}-{spans[i].t1:0}"); }
       }
       output.WriteLine($"=== TOTAL: {nMatch} matched, {nDup} duplicates, {nFalse} false, {nMiss} missed " +
-        $"(of {Truth.Sum(t => t.spans.Length)} transmissions)");
+        $"(of {nTruth} transmissions in {Truth.Length} captures)");
+
+      // the P7 regression gate: the scorecard above is asserted, so any decoder change that loses a
+      // transmission, emits a false image (the 11_09 telemetry ridge is the regression case for the
+      // comb pulse-support guard), or re-opens the duplicate-image defect fails this test
+      nMatch.Should().Be(nTruth, "every ground-truth transmission present on disk must be detected");
+      nMiss.Should().Be(0);
+      nFalse.Should().Be(0, "no image train may fall outside the ground-truth spans");
+      nDup.Should().BeLessThanOrEqualTo(1, "only the accepted 04-19 post-dropout continuation may duplicate");
     }
 
 
@@ -343,8 +354,9 @@ namespace VE3NEA.SkySSTV.Tests
       "95-215 s slice confirms Robot72 z=4.3-4.7 for 19 checks at ~148 s absolute — the scorecard's " +
       "FALSE train, evidenced here without any 50-88 s residue. USER-REFUTED (2026-07-04): the span " +
       "holds only telemetry bursts, so this is a telemetry-fed false ridge with REAL-REGIME persistence " +
-      "— persistence cannot separate burst telemetry from SSTV (see Real_TrainAccuracyProbe for the " +
-      "open guard item). Previous result 2026-07-03 late (comb finished and " +
+      "— persistence cannot separate burst telemetry from SSTV; the P7 pulse-support guard " +
+      "(MinCombPulses in IsImageTrain) now keeps this ridge off the image output (see " +
+      "Real_TrainAccuracyProbe). Previous result 2026-07-03 late (comb finished and " +
       "wired, no blanker): burst 10.5 s z=5.2, 55 checks, anchor 77.1 ms = the batch phase; control and " +
       "both noise-fire segments clean; 12_37 fires z 3.9-4.1 for 21 checks (real, user-confirmed). What " +
       "closed the false fires: (a) touch-count variance normalization (1-lambda^2k)/(1-lambda^2) before " +

@@ -34,6 +34,14 @@ namespace VE3NEA.SkySSTV
     private const double LeaderGate = 0.25;   // 300 ms @1900 ridge
     private const double BitGate = 0.20;      // 10/30 ms @1200 notch / start / stop
 
+    /// <summary>Full VIS header length in samples (leader + break + leader + 10 bits), as
+    /// <see cref="Detect"/> lays it out — the streaming decoder's tile-lookahead bound (P7.5).</summary>
+    public static int HeaderSamples(double fs)
+    {
+      int S(double ms) => (int)Math.Round(ms / 1000.0 * fs);
+      return 2 * S(SstvTones.VisLeaderMs) + S(SstvTones.VisBreakMs) + 10 * S(SstvTones.VisBitMs);
+    }
+
     /// <summary>Scan the <b>whole</b> stream for VIS headers (plan §4.1 follow-up: real bursts start
     /// minutes into a pass, so a leading-window-only search never sees them). Realized as tiled
     /// bounded-length <see cref="Detect"/> windows — allowed §1.13 block processing, one candidate per

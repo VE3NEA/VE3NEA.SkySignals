@@ -1,42 +1,39 @@
 # SSTV Decoder Plan (VE3NEA.SkySSTV)
 
-Status: design agreed via grill-me interview 2026-06-29. Not yet implemented.
+Status: design agreed via grill-me interview 2026-06-29. Implemented through P8 as of 2026-07-04.
 
 ## Current Status
 
-**Phase: P6 COMPLETE (2026-07-04, P6(d) landed, uncommitted); next: P7 regression corpus.** The user
-judged the P6(d) PNGs: variant `w9x5_k4_ns` won everywhere an image exists and is **locked into
-production as `SstvWienerFilter`** (window 9×5, chroma k 4, no shrink, image-domain
-vertical-first-difference noise map — the planned Immerkær estimator read several× low on the
-horizontally-correlated post-LPF FM noise and was dropped, §6.2 UPDATE/RESOLVED). Default ON via
-`SstvDecodeOptions.WienerEnabled`; OFF is the raw inspection path (umka0418-class below-threshold
-bursts show marginally more detail raw). `Frontend_WienerSweep` guards the production filter
-(+3.9 dB PSNR at σ=0.5, no-op clean); the 21-image real baseline (`Real_DecodesToPng`) regenerates
-unchanged with filtered output. Side finding: VIZARD-meteo transmits a 150 ms (Robot36) cadence
-despite its "Robot 72" transmitter tag.
-All P6(c) front-end defaults stay locked (`ChannelBwHz 6000` detection, `VideoChannelBwHz 4000` +
-`BlankerThreshold 0.5`, `BrightnessBwHz 600`, `DeEmphasisUs 0`; rationale in `SstvDecodeOptions` docs).
-Fast suite: **100 pass / 16 manual-skip / 0 FAIL** — verify with `dotnet test VE3NEA.SkySSTV.Tests`.
-Run history lives in the `[ManualFact]` annotations (`SstvImageHarness.cs`); RXSSTV reference decodes
-in `C:\Ham\RX-SSTV-2\History`.
+**Phase: ALL PHASES COMPLETE — P8 SkyRoof integration landed 2026-07-04 (uncommitted in BOTH repos);
+next: visual check on a live pass, then commit.**
 
-Known residuals (accepted, documented in the probe annotations): the 04-19 ~505 s post-dropout DUP
-(comb rings reset on retirement cannot bridge a >6 s dropout); the below-FM-threshold transmissions
-(04-18 0–24 s, 12_37_50 1–38 s) detect and time-lock but decode to RGB speckle; and **a telemetry-fed
-comb false positive**: a comb-seeded Robot72 train at 11_09 117.9–161 s (p=3, fill 0.02) that emits a
-false image. User-checked (2026-07-04): that span holds only telemetry bursts, yet the ridge shows
-real-regime persistence (z 4.3–4.7, 19 checks), so the 12-check persistence gate cannot separate burst
-telemetry from SSTV — a guard (pulse-support floor for comb trains — real comb finds have p≥7, this has
-p=3 — or a telemetry-burst veto) is an open P7 item.
+P8 (§5, SkyRoof repo, branch `sstv`): `TelemetryDecocder` now takes `(signalParams, telemetry, sstv)`
+flags and builds `StreamingPipeline` and/or `SstvDecoder`; `Process()` feeds both (`args.Data.AsSpan(0,
+args.Count)` for SSTV), `Dispose()` calls `Sstv.Flush()` after the worker joins so the partial image
+finalizes at LOS / transmitter switch. **§5.1 mixed-mode DECIDED: concurrent decoders, self-gating** —
+`SignalParamsResolver.HasSstv` detects "SSTV" anywhere in the mode/description strings, so a mixed
+UmKA-1-style transmitter (classifies FSK) runs both decoders at once. `TelemetryPanel`: SSTV joins the
+decodable set with no framing/baud requirement (`IsTelemetryDecodable`/`IsSstvDecodable` split); image
+leaves under the pass node (`SstvImageInfo` in `node.Tag`, id→node map lives in the event-subscription
+closure); right pane = `ImagePanel` (PictureBox Zoom + META TextBox) shown for image nodes; progressive
+`ImageUpdated` re-renders in place; on finalize the PNG + JSON sidecar auto-save to
+`<UserData>\SstvImages` **on the worker thread before marshaling** (a closing panel cannot lose it);
+Save As / Copy context menu on the picture. `SkyRoof.csproj` vendors `VE3NEA.SkySSTV.dll` exactly like
+SkyTlm (`RefreshVendoredSstv`, copy under `Vendor\VE3NEA.SkySSTV\`).
 
-Next steps:
+Verified 2026-07-04: `dotnet test VE3NEA.SkySSTV.Tests` → 113 pass / 16 manual-skip / 0 FAIL;
+`dotnet build SkyRoof.sln -c Release -p:Platform=x64` → 0 errors, no new warnings; end-to-end wire
+check drove the REAL `TelemetryDecocder` (pooled 4096-sample blocks → worker thread → dispose/flush)
+over `2026-06-30_22_36_37_UTMN2_Robot36.iq.wav` → 2 final Robot36 images 240/240 rows @27.5 s /
+@182.6 s + 23 progressive updates, matching the P7 scorecard for that capture.
 
-1. P7 regression corpus (seed: `Real_TrainAccuracyProbe` + its ground-truth table), including the comb
-   false-positive guard (the 11_09 telemetry segment is the regression case; see residuals below).
-2. P7.5 streaming API refactor (§7: convert the whole-array entry points to the push-based streaming
-   decoder §1.13 requires, before the UI is wired); includes the streaming line-emission form of
-   `SstvWienerFilter` + the per-pixel gain/σ alpha channel (§6.2).
-3. P8 SkyRoof integration (§5; `IsImageTrain` is the leaf-emission gate).
+P7/P7.5 details (regression gate, streaming core, front-end locks, known residuals) live in §7 and the
+`[ManualFact]` annotations (`SstvImageHarness.cs`); RXSSTV reference decodes in `C:\Ham\RX-SSTV-2\History`.
+
+Remaining:
+
+1. Visual check in the live app (real pass or IQ playback) — progressive render, META pane, auto-save.
+2. Commit both repos (SkySignals: P6–P7.5 decoder work; SkyRoof branch `sstv`: the P8 integration).
 
 ---
 
@@ -385,8 +382,10 @@ burst near 196.9 s; carrier was centered at -32 Hz, so this is not an AFC proble
 - Add `Modulation.SSTV` to TelemetryPanel's decodable set (currently FSK/GFSK/GMSK/BPSK)
   and to `SignalParamsResolver` so SSTV transmitters resolve to `SignalParams` with
   `Modulation.SSTV`.
-- `SstvDecoder` events: `ModeDetected(mode)`, `ImageStarted(meta)`,
-  `ScanLineDecoded(lineIndex, pixels)`, `ImageCompleted(image, meta)`. Panel subscribes
+- `SstvDecoder` events *(as actually built in P7.5)*: `ImageUpdated(SstvImageEvent)` /
+  `ImageCompleted(SstvImageEvent)` — the event carries mode, id, start time, FromVis, ValidRows and the
+  full-geometry progressive `RgbImage`, subsuming the originally sketched
+  `ModeDetected`/`ImageStarted`/`ScanLineDecoded` granularity. Panel subscribes
   the way it subscribes to `FrameDecoded`/`BurstDecoded`.
 - TelemetryPanel: image leaves under the pass node; right pane = progressive `PictureBox`
   + META; auto-save PNG + JSON sidecar on finalize; Save As / Copy context menu.
@@ -419,6 +418,13 @@ within a pass, the dispatcher can no longer be a static per-transmitter switch o
 FSK vs SSTV by the pre-gate + VIS/sync confirmation above, or run both decoders
 concurrently and let each self-gate (FSK bursts fail the SSTV VIS/sync test and are
 ignored by `SstvDecoder`; SSTV segments present no valid FSK frames).
+
+**DECIDED (P8, 2026-07-04): run both concurrently.** `SignalParamsResolver.HasSstv` flags "SSTV"
+anywhere in the transmitter's mode/description strings; `TelemetryDecocder(signalParams, telemetry,
+sstv)` builds the telemetry pipeline and/or the SSTV decoder from the two independently-derived flags,
+and each self-gates (the P7 `MinCombPulses` guard is exactly the FSK-burst rejector on the SSTV side).
+Segment routing was rejected: it needs a router that is itself a detector, while concurrency costs only
+CPU on the few transmitters that advertise both.
 
 ---
 
@@ -640,8 +646,20 @@ Wiener (Lee) filter** driven by a demod-domain noise map:
   Lee-filter variants in the test harness, write `p6d_*.png` for side-by-side review, and get the
   **user's visual judgment** before any of it enters the production reconstruction code — judged, and
   the winning `w9x5_k4_ns` variant locked into production (`SstvWienerFilter`, §6.2 RESOLVED).
-- **P7** Real regression corpus (Robot36 + Robot72 captures) + docs.
-- **P7.5 Streaming API refactor (do before P8).** P6 made every *algorithm* streaming-capable (bounded
+- **P7 (done 2026-07-04)** Real regression corpus (Robot36 + Robot72 captures) + docs — the ground-truth
+  scorecard `Real_TrainAccuracyProbe` is now ASSERTED (20 matched / 0 false / 0 missed / ≤1 accepted dup
+  over the 9 captures), and the comb false-positive guard landed: `MinCombPulses 6` in
+  `SstvPulseTrainExtractor.IsImageTrain` (the 11_09 telemetry ridge carried p=3; every real comb find has
+  p≥21 blanker-era, ≥7 pre-blanker — see the IsImageTrain doc and the probe annotations).
+- **P7.5 Streaming API refactor (done 2026-07-04; do before P8).** Delivered as specified below:
+  `SstvDecoder` is a sealed partial class with the push-based instance surface (`Process(block)` / `Flush()`
+  / `ImageUpdated`+`ImageCompleted` events, §6.2 Wiener-gain alpha in `RgbImage.A`) built on new streaming
+  parts — `StreamingFir`/`StreamingFirComplex` (VE3NEA.Dsp stateful `firfilt`), `SstvStreamingDiscriminator`,
+  `SstvStreamingBrightness`, `SstvDetectionChain` (the live extractor graph), VIS tiling over a rolling sync
+  buffer, a comb-back-date-sized brightness ring, and `SstvImageBuilder` (dirty-rewind re-render via
+  `SstvPulseTrainExtractor.TakeLineRewind`, finalize-on-retire). The static whole-array methods are thin
+  wrappers over the same core; `SstvStreamingStageTests` pins sample-exact batch/streaming equivalence.
+  Original spec: P6 made every *algorithm* streaming-capable (bounded
   rings, oscillator recurrences, re-anchored running sums — §6.0), but the *public surface* is still
   whole-array batch and so does not yet satisfy §1.13: `SstvDecoder` is a `static class` whose
   `Decode(Complex32[])` / `Discriminator` / `Brightness` / `SyncAudio` / `ChannelFilter` each allocate and
@@ -673,8 +691,8 @@ Wiener (Lee) filter** driven by a demod-domain noise map:
 - FM deviation assumption for satellite SSTV (drives Stage-1 BW); make configurable.
 - Extended 16-bit VIS support (defer unless a target sat needs it).
 - Image dimensions / aspect handling per layout; partial-line rendering policy.
-- Mixed-mode dispatch (§5.1): segment routing vs concurrent FSK+SSTV decoders - pick one
-  during SkyRoof integration.
+- ~~Mixed-mode dispatch (§5.1): segment routing vs concurrent FSK+SSTV decoders - pick one
+  during SkyRoof integration.~~ **DECIDED P8 2026-07-04:** concurrent, self-gating (see §5.1).
 - **Real-capture findings (P4.5 harness, 2026-07-01)** — synthetic decode-to-PNG works end to end
   (DetectMode -> Decode -> PNG, correct images for Robot36/Robot72/PD). Real `.iq.wav` captures do **not**
   yet decode: on UTMN2_Robot36 the carrier is centered (mean inst-freq −32 Hz, **confirms the §1.6 no-AFC

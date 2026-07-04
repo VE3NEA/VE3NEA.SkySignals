@@ -324,6 +324,39 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     [Fact]
+    public void CombSeed_WithScantPulseSupport_IsNotAnImage()
+    {
+      // the comb false-positive guard (P7): burst telemetry can sustain a comb ridge with real-regime
+      // persistence (the user-refuted 11_09 Robot72 train, p=3, fill 0.02), so a comb-seeded train whose
+      // floor power claims the back-dated span but which collects almost no on-grid pulses must be kept
+      // off the image output — while a real comb find (p≥21, the test above) still passes
+      int anchor = 36000 + 100 * 7200;                       // seed after one full comb memory
+      var pulses = new List<SstvPulse>();                    // 3 on-grid soft pulses after the anchor
+      for (int k = 101; k < 104; k++) pulses.Add(P(36000 + k * 7200, power: 0.12f));
+      int end = pulses[^1].Time + 12000;
+
+      var extractor = new SstvPulseTrainExtractor(Fs);
+      int i = 0;
+      bool seeded = false;
+      for (int blockEnd = Block; blockEnd < end + Block; blockEnd += Block)
+      {
+        if (!seeded && blockEnd > anchor) { extractor.AddCombTrain(SstvMode.Robot36, anchor); seeded = true; }
+        var batch = new List<SstvPulse>();
+        while (i < pulses.Count && pulses[i].Time < blockEnd) batch.Add(pulses[i++]);
+        extractor.Process(batch, Math.Min(blockEnd, end));
+      }
+      extractor.Finish(end);
+
+      var train = extractor.Trains.OfType<SstvCombPulseTrain>().Single();
+      int claimed = extractor.ClaimedLines(train);
+      output.WriteLine($"scant comb train: pulses={train.PulseCnt} claimed={claimed}");
+      train.PulseCnt.Should().BeLessThan(6, "the telemetry pattern offers almost no on-grid pulses");
+      claimed.Should().BeGreaterThan(60, "the comb floor still claims the back-dated span's lines");
+      extractor.IsImageTrain(train).Should().BeFalse(
+        "a comb train without pulse support must not emit an image");
+    }
+
+    [Fact]
     public void CombSeed_SuppressedWhileTrainActive()
     {
       // the no-overlap rule applies to comb seeds: while a promoted train is tracking, a comb hit (the

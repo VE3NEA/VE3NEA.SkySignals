@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 
@@ -16,6 +17,11 @@ namespace VE3NEA.SkySSTV
     public byte[] G { get; }
     public byte[] B { get; }
 
+    /// <summary>Optional per-pixel confidence plane (plan §6.2: the Wiener gain — 255 where the local
+    /// signal dominates, low where the pixel collapsed to its neighborhood mean). Null until
+    /// <see cref="EnsureAlpha"/>; the PNG/bitmap adapters ignore it (it is UI metadata, not color).</summary>
+    public byte[]? A { get; private set; }
+
     public RgbImage(int width, int height)
     {
       Width = width;
@@ -23,6 +29,17 @@ namespace VE3NEA.SkySSTV
       R = new byte[width * height];
       G = new byte[width * height];
       B = new byte[width * height];
+    }
+
+    /// <summary>Allocate the confidence plane (initially opaque).</summary>
+    public byte[] EnsureAlpha()
+    {
+      if (A == null)
+      {
+        A = new byte[Width * Height];
+        Array.Fill(A, (byte)255);
+      }
+      return A;
     }
 
     public void Set(int x, int y, byte r, byte g, byte b)

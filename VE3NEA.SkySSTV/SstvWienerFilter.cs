@@ -26,10 +26,16 @@ namespace VE3NEA.SkySSTV
     /// <summary>Filter the three planes in place. Chroma noise is estimated over a 2-row step because
     /// Robot36/PD chroma rows are nearest-neighbor duplicates (vertical upsampling).</summary>
     public static void Apply(double[] y, double[] cr, double[] cb, int w, int h)
+      => Apply(y, cr, cb, w, h, null);
+
+    /// <summary>Filter variant capturing the luma plane's per-pixel Wiener gain (plan §6.2: the
+    /// confidence that goes into the image's alpha channel — g ≈ 1 where real detail passed, g ≈ 0
+    /// where the pixel collapsed to its local mean). <paramref name="yGain"/> must hold w·h values.</summary>
+    public static void Apply(double[] y, double[] cr, double[] cb, int w, int h, double[]? yGain)
     {
-      Lee(y, w, h, RowNoiseVar(y, w, h, 1), 1.0);
-      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), ChromaK);
-      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), ChromaK);
+      Lee(y, w, h, RowNoiseVar(y, w, h, 1), 1.0, yGain);
+      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), ChromaK, null);
+      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), ChromaK, null);
     }
 
     /// <summary>Per-row noise variance: σ = median_x|p[y] − p[y−step]| / 0.6745 / √2 (the Gaussian
@@ -62,7 +68,7 @@ namespace VE3NEA.SkySSTV
       return v;
     }
 
-    private static void Lee(double[] p, int w, int h, double[] rowVar, double k)
+    private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain = null)
     {
       // 2D prefix sums of x and x² give O(1) window mean/variance
       var s1 = new double[(w + 1) * (h + 1)];
@@ -89,6 +95,7 @@ namespace VE3NEA.SkySSTV
           double mu = Box(s1, w, x0, y0, x1, y1) / n;
           double varLoc = Math.Max(0, Box(s2, w, x0, y0, x1, y1) / n - mu * mu);
           double g = varLoc > vn ? (varLoc - vn) / varLoc : 0.0;
+          if (gain != null) gain[y * w + x] = g;
           outp[y * w + x] = mu + g * (p[y * w + x] - mu);
         }
       }

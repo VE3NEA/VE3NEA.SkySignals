@@ -41,6 +41,7 @@ namespace VE3NEA.SkySSTV
     private const double SwitchHysteresis = 1.5;   // a challenger must beat the incumbent by this factor
     private const double PruneSeconds = 8.0;       // pulse-buffer tail (> the retire timeout)
     private const double MinLineFraction = 0.25;   // an image train must claim ≥ ¼ of the mode's lines
+    private const int MinCombPulses = 6;           // comb-seeded image trains need this much pulse support
 
     private readonly double fs;
     private readonly int blockSize;
@@ -55,6 +56,7 @@ namespace VE3NEA.SkySSTV
     private readonly List<SstvScanLine> lines = new();
     private int dirtyBlock;
     private int pendingDirty = int.MaxValue;     // dirty mark set between lifecycle passes (comb seeding)
+    private int rewindLow = int.MaxValue;        // lowest Lines index (re)written since TakeLineRewind
 
     public IReadOnlyList<SstvPulseTrain> Trains => trains;
     public IReadOnlyList<SstvScanLine> Lines => lines;
@@ -62,6 +64,16 @@ namespace VE3NEA.SkySSTV
     /// <summary>The train that retired during the last <see cref="Process"/> call, if any — the future
     /// image-finalize hook (plan §1.10).</summary>
     public SstvPulseTrain? RetiredTrain { get; private set; }
+
+    /// <summary>Lowest <see cref="Lines"/> index (re)written since the last call — the streaming image
+    /// builder re-renders from here (the §1.13 dirty-block re-render window). Returns
+    /// <see cref="int.MaxValue"/> when nothing changed; resets on read.</summary>
+    public int TakeLineRewind()
+    {
+      int r = rewindLow;
+      rewindLow = int.MaxValue;
+      return r;
+    }
 
     public SstvPulseTrainExtractor(double fs)
     {
@@ -175,10 +187,19 @@ namespace VE3NEA.SkySSTV
     /// weak transmissions (user-confirmed on the FskDemod spectrogram — e.g. the 12_37_50 Monitor-3
     /// ~157 s burst), and pure noise already fails at promotion (the MHT triplet + N-of-M gates, pinned
     /// by the synthetic clutter tests). <see cref="FillRatio"/> stays as a quality diagnostic for the
-    /// image META, not a gate.</summary>
+    /// image META, not a gate.
+    ///
+    /// <para>One exception (the comb false-positive guard, P7, 2026-07-04): a <b>comb-seeded</b> train is
+    /// born promoted on the ridge alone, so it bypasses every pulse-count gate — and burst telemetry under
+    /// the blanked chain can sustain a ridge with real-regime persistence (the user-refuted 11_09 Robot72
+    /// train at 117.9–161 s). The pulse stream still separates cleanly: every real comb find carries
+    /// ≥ 21 associated pulses (04-18 p=21, 12_37_50 p=23; pre-blanker minimum 7), the telemetry ridge
+    /// only 3 — so a comb train must also show <see cref="MinCombPulses"/> pulses of support before it
+    /// may emit an image.</para></summary>
     public bool IsImageTrain(SstvPulseTrain train)
     {
       if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) return false;
+      if (train is SstvCombPulseTrain && train.PulseCnt < MinCombPulses) return false;
       return ClaimedLines(train) >= MinLineFraction * SstvModes.Get(train.Format).LineCount;
     }
 
@@ -388,6 +409,7 @@ namespace VE3NEA.SkySSTV
     private void UpdateLines(int throughBlock)
     {
       while (lines.Count > 0 && lines[^1].BlkNo >= dirtyBlock) lines.RemoveAt(lines.Count - 1);
+      rewindLow = Math.Min(rewindLow, lines.Count);
 
       for (int b = Math.Max(dirtyBlock, 0); b <= throughBlock; b++)
       {
