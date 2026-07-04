@@ -105,9 +105,10 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     [ManualFact("Result 2026-07-04 (locked P6(c) defaults: video chain ±4000 + blanker 0.5, decode from " +
-      "the IQ slice): 22 images from ALL 9 captures — the 21 baseline images regenerate (strong decodes " +
-      "spot-checked visually clean: UTMN2 @27 s, Monitor-3 @285 s) plus the new 11_09 @118 s Robot72 " +
-      "candidate (comb-discovered, likely-real pending user confirmation — see Real_TrainAccuracyProbe). " +
+      "the IQ slice): 21 real images + 1 FALSE image from the 9 captures — the 21 baseline images " +
+      "regenerate (strong decodes spot-checked visually clean: UTMN2 @27 s, Monitor-3 @285 s); the " +
+      "11_09 @118 s Robot72 image is the telemetry-fed comb false positive (user-refuted — see " +
+      "Real_TrainAccuracyProbe; a product-visible false image until the P7 guard lands). " +
       "Previous result 2026-07-03 late (soft-comb wired): 21 images from all 9 — 04-18 detects and " +
       "decodes for the first time (comb-seeded train @0.1 s; video still speckle = the below-FM-threshold " +
       "fidelity gap, but timing locks: the post-24 s striping is vertical); also new then: the 12_37_50 " +
@@ -192,19 +193,21 @@ namespace VE3NEA.SkySSTV.Tests
     };
 
     [ManualFact("Result 2026-07-04 (locked P6(c) defaults: blanker 0.5 in the detection chain): 20 of 20 " +
-      "matched, 0 missed, 1 DUP (the accepted 04-19 ~505 post-dropout continuation), and 1 scorecard " +
-      "FALSE that is LIKELY A REAL DISCOVERY pending user confirmation — a comb-seeded Robot72 train at " +
-      "11_09 117.9-161 s (p=3): Robot72 is VIZARD's tagged mode, ~148 s sits exactly in its ~130-170 s " +
-      "cadence slot, and the Real_StreamingCombProbe 95-215 s slice (no residue of the 50-88 s " +
-      "transmission) re-confirms the ridge with real-regime persistence (z 4.3-4.7, 19 checks vs ~3 for " +
-      "noise grazers) — the 12_37_50 discovery pattern again. If confirmed, add (~130.0, ~165.0) to the " +
-      "11_09 Truth entry. The blanker also strengthens pulse support on nearly every weak burst " +
-      "(12_37_50 7->23, 04-19 tail 39->54, 11_29 first 119->139); blanker OFF exactly reproduces the " +
-      "2026-07-03 baseline (20 matched, 1 dup, 0 false). Previous result 2026-07-03 late (soft-comb " +
-      "wired in, no blanker): 20/20, 0 false, 0 missed; 04-18 detected+decoded for the first time " +
-      "(comb-seeded 0.1-28 s); comb found 12_37_50 1-38 s (user-confirmed); comb guards proven: " +
-      "family-ring reset on retirement, 12-check persistence, tight comb-train priors (periodPpm 200 / " +
-      "phaseMs 1.5).")]
+      "matched, 0 missed, 1 DUP (the accepted 04-19 ~505 post-dropout continuation), and 1 genuine " +
+      "FALSE — a comb-seeded Robot72 train at 11_09 117.9-161 s (p=3, fill 0.02). It first looked like " +
+      "a real discovery (VIZARD's tagged mode, its cadence slot, and real-regime comb persistence: " +
+      "z 4.3-4.7 for 19 checks in the residue-free 95-215 s slice), but the USER REFUTED it " +
+      "(2026-07-04): that span holds only TELEMETRY bursts — so burst telemetry under the blanked " +
+      "chain can sustain a comb ridge that passes every current guard, and the 12-check persistence " +
+      "gate alone cannot separate telemetry from SSTV. A comb false-positive guard (e.g. a pulse-" +
+      "support floor for comb trains before image emission — real comb finds have p>=7, this has p=3 — " +
+      "or a telemetry-burst veto) is an open P7 item. The blanker also strengthens pulse support on " +
+      "nearly every weak burst (12_37_50 7->23, 04-19 tail 39->54, 11_29 first 119->139); blanker OFF " +
+      "exactly reproduces the 2026-07-03 baseline (20 matched, 1 dup, 0 false). Previous result " +
+      "2026-07-03 late (soft-comb wired in, no blanker): 20/20, 0 false, 0 missed; 04-18 " +
+      "detected+decoded for the first time (comb-seeded 0.1-28 s); comb found 12_37_50 1-38 s " +
+      "(user-confirmed); comb guards proven: family-ring reset on retirement, 12-check persistence, " +
+      "tight comb-train priors (periodPpm 200 / phaseMs 1.5).")]
     public void Real_TrainAccuracyProbe()
     {
       int nMatch = 0, nDup = 0, nFalse = 0, nMiss = 0;
@@ -338,8 +341,10 @@ namespace VE3NEA.SkySSTV.Tests
       "burst 12.0 s z=5.3 49 checks (was 5.2/55), 12_37 17.2 s z=4.6 56 checks (was 3.9-4.1/21), anchor " +
       "still 77.1 ms; control and all noise segments stay clean, including 150-215 alone. The new " +
       "95-215 s slice confirms Robot72 z=4.3-4.7 for 19 checks at ~148 s absolute — the scorecard's " +
-      "'FALSE' train, evidenced here without any 50-88 s residue: likely a real weak VIZARD " +
-      "transmission (see Real_TrainAccuracyProbe). Previous result 2026-07-03 late (comb finished and " +
+      "FALSE train, evidenced here without any 50-88 s residue. USER-REFUTED (2026-07-04): the span " +
+      "holds only telemetry bursts, so this is a telemetry-fed false ridge with REAL-REGIME persistence " +
+      "— persistence cannot separate burst telemetry from SSTV (see Real_TrainAccuracyProbe for the " +
+      "open guard item). Previous result 2026-07-03 late (comb finished and " +
       "wired, no blanker): burst 10.5 s z=5.2, 55 checks, anchor 77.1 ms = the batch phase; control and " +
       "both noise-fire segments clean; 12_37 fires z 3.9-4.1 for 21 checks (real, user-confirmed). What " +
       "closed the false fires: (a) touch-count variance normalization (1-lambda^2k)/(1-lambda^2) before " +
@@ -361,9 +366,10 @@ namespace VE3NEA.SkySSTV.Tests
       // the segments where the scorecard runs showed comb false-fires (no real transmission per the
       // ground-truth cadence): early 12_37 (a REAL-transmission candidate — RF stripes on cadence),
       // early 11_09 (noise, 3-check run), 11_29 ~450 (noise) and 11_09 ~170-208 (the Robot72 phantom).
-      // 11_09 95-215 isolates the blanker-era Robot72 candidate at ~148 s (likely-real, see the
-      // Real_TrainAccuracyProbe annotation): the slice carries no residue of the 50-88 s transmission,
-      // yet the ridge confirms with real-regime persistence
+      // 11_09 95-215 isolates the blanker-era Robot72 false train at ~148 s (user-refuted 2026-07-04:
+      // only telemetry bursts there — see the Real_TrainAccuracyProbe annotation): the slice carries no
+      // residue of the 50-88 s transmission, yet the telemetry-fed ridge confirms with real-regime
+      // persistence
       string m3Wav = Path.Combine(RecordingsDir, "2026-07-01_12_37_50_Monitor-3.iq.wav");
       string vzWav = Path.Combine(RecordingsDir, "2026-07-01_11_09_11_VIZARD-meteo.iq.wav");
       if (File.Exists(m3Wav))
