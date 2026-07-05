@@ -61,5 +61,35 @@ namespace VE3NEA.SkyTlm.Tests.Unit
         if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
       }
     }
+
+    [Fact]
+    public void SyncFiles_KeepsReadOnlyEdit_RefreshesUnclaimedStale_LeavesUserOnly()
+    {
+      string folder = Path.Combine(Path.GetTempPath(), "tlm_defs_" + Path.GetRandomFileName());
+      try
+      {
+        // a shipped file the user claimed with "readOnly": true (edited), an unclaimed stale shipped file, and
+        // an unrelated user-only file.
+        Directory.CreateDirectory(folder);
+        string claimed = Path.Combine(folder, "aistechsat-2.json");
+        string stale = Path.Combine(folder, "hades-sa.json");
+        string userFile = Path.Combine(folder, "my-notes.json");
+        string claimedContent = "{ \"readOnly\": true, \"norad\": [43768], \"mine\": \"keep\" }";
+        File.WriteAllText(claimed, claimedContent);
+        File.WriteAllText(stale, "{ \"stale\": true }");
+        File.WriteAllText(userFile, "{ \"mine\": 1 }");
+
+        TelemetryRegistry.SyncFiles(folder);
+
+        // the readOnly-claimed edit survives verbatim; the unclaimed stale file is refreshed; user-only untouched.
+        File.ReadAllText(claimed).Should().Be(claimedContent, "a readOnly file is never overwritten");
+        File.ReadAllText(stale).Should().Contain("\"norad\": [68446]", "an unclaimed stale file is still refreshed");
+        File.ReadAllText(userFile).Should().Be("{ \"mine\": 1 }", "user-only files are left alone");
+      }
+      finally
+      {
+        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+      }
+    }
   }
 }

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Serilog;
 
 namespace VE3NEA.SkyTlm.Telemetry
@@ -44,7 +45,8 @@ namespace VE3NEA.SkyTlm.Telemetry
 
     /// <summary>Mirror the bundled definitions into <paramref name="folder"/>: create it if needed, write any
     /// file that is missing, and overwrite any whose content differs from the bundled version (so upgrades add
-    /// new satellites and refresh stale definitions). Files that exist only in the folder are left alone.</summary>
+    /// new satellites and refresh stale definitions). Files that exist only in the folder are left alone, as is
+    /// any on-disk file that claims itself with <c>"readOnly": true</c> (a user edit that must survive upgrades).</summary>
     public static void SyncFiles(string folder)
     {
       Directory.CreateDirectory(folder);
@@ -60,9 +62,35 @@ namespace VE3NEA.SkyTlm.Telemetry
         string path = Path.Combine(folder, fileName);
         bool exists = File.Exists(path);
         if (exists && File.ReadAllText(path) == bundled) continue;   // already up to date
+        if (exists && IsReadOnly(path))                              // user claimed this file (§2.6) — keep their edit
+        {
+          Log.Information("TelemetryRegistry: keeping read-only definition {File}", fileName);
+          continue;
+        }
 
         File.WriteAllText(path, bundled);
         Log.Information("TelemetryRegistry: {Action} definition {File}", exists ? "updated" : "added", fileName);
+      }
+    }
+
+    // true when the on-disk definition claims itself with a top-level "readOnly": true; on any read/parse
+    // error, returns false so a corrupt user file still gets refreshed rather than pinned forever.
+    private static bool IsReadOnly(string path)
+    {
+      try
+      {
+        using var doc = JsonDocument.Parse(File.ReadAllText(path),
+          new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+        if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+        foreach (var prop in doc.RootElement.EnumerateObject())
+          if (string.Equals(prop.Name, "readOnly", StringComparison.OrdinalIgnoreCase))
+            return prop.Value.ValueKind == JsonValueKind.True;
+        return false;
+      }
+      catch (Exception ex)
+      {
+        Log.Warning("TelemetryRegistry: could not check {Path} for readOnly — {Message}", path, ex.Message);
+        return false;
       }
     }
 
