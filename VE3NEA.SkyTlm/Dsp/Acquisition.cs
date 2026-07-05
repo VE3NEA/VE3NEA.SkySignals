@@ -7,7 +7,7 @@ namespace VE3NEA.SkyTlm.Dsp
   /// the CFO search span and the shape-selection gate.</summary>
   public sealed record MatchedDetectorOptions(
     double CfoMaxHz = 2000,
-    double MinShapeScore = 0.25); // burst-selection gate: log-power correlation of avg spectrum vs template (CpmTemplate.Match)
+    double MinShapeScore = 0.25); // burst-selection gate: log-power correlation of avg spectrum vs the best bank hypothesis (CpmTemplate.MatchBest)
 
   /// <summary>
   /// Acquisition: detect bursts, estimate the per-burst residual CFO feed-forward, and
@@ -23,12 +23,13 @@ namespace VE3NEA.SkyTlm.Dsp
 
       // two-stage acquisition, uniform across all FSK flavors (GMSK/GFSK/FSK/AFSK):
       //  1. DETECT candidate spans by ENERGY only (good coverage, modulation-agnostic).
-      //  2. SELECT real bursts by correlating each burst's AVERAGED spectrum with the expected modulation
-      //     template — the synthesized CPM PSD (two tones + filling for wide h, a bell for h≈0.5).
+      //  2. SELECT real bursts by correlating each burst's AVERAGED spectrum with the expected-shape
+      //     hypothesis bank — synthesized CPM PSDs (two tones + filling for wide h, a bell for h≈0.5),
+      //     best-matching hypothesis wins (the DB label alone often picks the wrong spectrum class).
       //     the correlation runs over a window 2× the signal width with the template's zero skirt, so flat
       //     noise rejects (see CpmTemplate.Match).
       var spans = BurstDetector.Detect(iq, fs, p, new BurstDetectorOptions { CfoMaxHz = o.CfoMaxHz });
-      var template = CpmTemplate.Synthesize(p);
+      var bank = CpmTemplate.SynthesizeBank(p);
 
       var bursts = new List<Burst>(spans.Count);
       if (spans.Count > 0)
@@ -38,7 +39,7 @@ namespace VE3NEA.SkyTlm.Dsp
         {
           var info = cfo.Analyze(iq, start, end);
           var meas = cfo.EstimateShape(iq, start, end, info.CfoHz);
-          double match = CpmTemplate.Match(meas, template);
+          double match = CpmTemplate.MatchBest(meas, bank).Match;
           if (match < o.MinShapeScore) continue;     // reject noise / wrong-shape (SSTV/CW/interferers)
           bursts.Add(new Burst(start, end, fs, info.CfoHz, snr)
           {

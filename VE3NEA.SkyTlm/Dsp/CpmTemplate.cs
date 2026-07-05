@@ -6,6 +6,16 @@ using VE3NEA;
 namespace VE3NEA.SkyTlm.Dsp
 {
   /// <summary>
+  /// One expected-shape hypothesis from <see cref="CpmTemplate.SynthesizeBank"/>: a candidate synthesized
+  /// spectrum with a short display name ("rect h=0.5", "gauss h=1") and its shape class — <see cref="Bell"/>
+  /// when the spectrum peaks at the carrier (smooth lobe: MSK, GMSK/GFSK), false for two-tone (a DC valley
+  /// between tones at ±dev). The class picks the per-hypothesis validation threshold
+  /// (<see cref="Core.StreamingOptions.EffectiveMinShapeScore(ShapeHypothesis)"/>): an analog interloper
+  /// (SSTV) can mimic a bell-shaped burst average but not two symmetric tones.
+  /// </summary>
+  public sealed record ShapeHypothesis(string Name, LearnedShape Shape, bool Bell);
+
+  /// <summary>
   /// Numerically-synthesized CPM power spectrum: modulate a long random NRZ stream with the actual frequency
   /// pulse (Gaussian premod for GMSK/GFSK, rectangular for plain FSK) and modulation index <c>h = 2·dev/Rs</c>,
   /// then take a Welch-averaged periodogram. This reproduces the real spectrum — two tones at <c>±dev</c> with
@@ -13,12 +23,13 @@ namespace VE3NEA.SkyTlm.Dsp
   /// <i>h</i>. Returned as a <see cref="LearnedShape"/> (baud-normalized, peak = 1); cached per parameter set.
   ///
   /// <para>Used as the expected-shape template for <b>burst selection</b> (see <see cref="Match"/>): after the
-  /// energy detector finds candidate spans, each burst's averaged spectrum is correlated with this template to
-  /// accept/reject it — uniformly across all FSK flavors. Also rendered in the WinForms shape view.</para>
+  /// energy detector finds candidate spans, each burst's averaged spectrum is correlated with the hypothesis
+  /// bank (<see cref="SynthesizeBank"/>) to accept/reject it — uniformly across all FSK flavors. Also rendered
+  /// in the WinForms shape view.</para>
   /// </summary>
   internal static class CpmTemplate
   {
-    private readonly record struct Key(Modulation Mod, int BaudHz, int DevHz);
+    private readonly record struct Key(PulseShape Pulse, int BaudHz, int DevHz);
     private static readonly ConcurrentDictionary<Key, LearnedShape> cache = new();
 
     /// <summary>Synthesized PSD template for the params, resampled onto the <see cref="LearnedShape"/> grid (cached).</summary>
@@ -30,17 +41,82 @@ namespace VE3NEA.SkyTlm.Dsp
       // raised-cosine (|RRC|²) baseband lobe, built analytically rather than by FM-synthesizing tones.
       if (p.Modulation is Modulation.BPSK or Modulation.QPSK)
       {
-        var pskKey = new Key(p.Modulation, (int)System.Math.Round(baud), 0);
+        var pskKey = new Key(PulseShape.None, (int)System.Math.Round(baud), 0);
         return cache.GetOrAdd(pskKey, _ => BuildPsk(baud, ModulationTemplate.PskRolloff));
       }
 
-      (PulseShape pulse, double bt, double dev) = p.Modulation switch
+      (PulseShape pulse, double bt, double dev) = ResolveCpm(p);
+      return Cached(pulse, bt, baud, dev);
+    }
+
+    /// <summary>
+    /// Expected-shape hypothesis bank for burst validation. The DB label + deviation pick a single spectral
+    /// model, but the labels are unreliable (SatNOGS "GFSK9k6" for unfiltered FSK, "MSK4k8" with the tone
+    /// spacing in the deviation field), and a wrong model changes the spectrum <b>class</b> — integer-h
+    /// rectangular CPFSK has discrete tones at ±dev where shaped / h≤1 signals have a smooth line-free lobe.
+    /// So an FSK-family burst is matched against a few canonical CPM shapes and the best fit wins (see
+    /// <see cref="MatchBest"/>): the labeled model, rectangular h=0.5 (true MSK), rectangular h=1 (Sunde FSK),
+    /// and Gaussian BT=0.5 at the labeled deviation (shaped GFSK). Hypotheses duplicating the labeled model
+    /// are dropped; non-CPM modulations keep the single labeled template.
+    /// </summary>
+    public static IReadOnlyList<ShapeHypothesis> SynthesizeBank(SignalParams p)
+    {
+      double baud = p.Baud;
+      // non-CPM labels: the single labeled template, with today's two-tone (0.55) threshold class
+      if (p.Modulation is not (Modulation.FSK or Modulation.AFSK or Modulation.GFSK or Modulation.GMSK))
+        return new[] { new ShapeHypothesis(p.Modulation.ToString(), Synthesize(p), Bell: false) };
+
+      var (pulse, bt, dev) = ResolveCpm(p);
+      var candidates = new (PulseShape pulse, double bt, double dev, bool labeled)[]
       {
-        Modulation.GMSK or Modulation.GFSK => (PulseShape.Gaussian, 0.5, p.Deviation ?? baud / 4.0),
-        Modulation.FSK or Modulation.AFSK => (PulseShape.Rectangular, 0.0, p.Deviation is double d && d > 0 ? d : baud * 0.5),
-        _ => (PulseShape.Gaussian, 0.5, p.Deviation ?? baud / 4.0),
+        (pulse, bt, dev, true),                            // the labeled model (the single-template behavior)
+        (PulseShape.Rectangular, 0.0, baud / 4.0, false),  // rect h=0.5: true MSK — smooth compact lobe
+        (PulseShape.Rectangular, 0.0, baud / 2.0, false),  // rect h=1: Sunde FSK — discrete tones at ±Rs/2
+        (PulseShape.Gaussian, 0.5, dev, false),            // Gaussian BT=0.5 at the labeled deviation: shaped GFSK
       };
-      var key = new Key(p.Modulation, (int)System.Math.Round(baud), (int)System.Math.Round(dev));
+
+      var bank = new List<ShapeHypothesis>(candidates.Length);
+      var seen = new HashSet<(PulseShape, int)>();
+      foreach (var c in candidates)
+      {
+        if (!seen.Add((c.pulse, (int)System.Math.Round(c.dev)))) continue;
+        var shape = Cached(c.pulse, c.bt, baud, c.dev);
+        // the labeled entry keeps the modulation-based class (the exact thresholds the single template got);
+        // canonical entries are classified from the shape itself (peak at the carrier = bell).
+        bool bell = c.labeled ? p.Modulation is Modulation.GMSK or Modulation.GFSK : shape.SampleAtBaud(0) >= 0.5;
+        string name = $"{(c.pulse == PulseShape.Gaussian ? "gauss" : "rect")} h={2 * c.dev / baud:0.##}";
+        bank.Add(new ShapeHypothesis(name, shape, bell));
+      }
+      return bank;
+    }
+
+    /// <summary>Best <see cref="Match"/> over the hypothesis bank: the highest score and the hypothesis that
+    /// produced it.</summary>
+    public static (double Match, ShapeHypothesis Best) MatchBest(LearnedShape measured, IReadOnlyList<ShapeHypothesis> bank)
+    {
+      double best = double.NegativeInfinity;
+      ShapeHypothesis bestHyp = bank[0];
+      foreach (var h in bank)
+      {
+        double m = Match(measured, h.Shape);
+        if (m > best) { best = m; bestHyp = h; }
+      }
+      return (best, bestHyp);
+    }
+
+    /// <summary>The (pulse, BT, deviation) triple a labeled CPM modulation maps to — the single-model rules
+    /// the synthesis has always used for the labeled template.</summary>
+    private static (PulseShape pulse, double bt, double dev) ResolveCpm(SignalParams p) => p.Modulation switch
+    {
+      Modulation.GMSK or Modulation.GFSK => (PulseShape.Gaussian, 0.5, p.Deviation ?? p.Baud / 4.0),
+      Modulation.FSK or Modulation.AFSK => (PulseShape.Rectangular, 0.0, p.Deviation is double d && d > 0 ? d : p.Baud * 0.5),
+      _ => (PulseShape.Gaussian, 0.5, p.Deviation ?? p.Baud / 4.0),
+    };
+
+    /// <summary>The synthesized shape for one (pulse, BT, baud, dev) model, via the cache.</summary>
+    private static LearnedShape Cached(PulseShape pulse, double bt, double baud, double dev)
+    {
+      var key = new Key(pulse, (int)System.Math.Round(baud), (int)System.Math.Round(dev));
       return cache.GetOrAdd(key, _ => Build(baud, dev, pulse, bt));
     }
 

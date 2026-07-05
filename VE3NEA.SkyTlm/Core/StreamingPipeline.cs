@@ -10,12 +10,15 @@ namespace VE3NEA.SkyTlm.Core
   /// <see cref="Burst"/> spans are <b>absolute</b> stream-sample indices, so the inspector can re-derotate/re-trace
   /// against the original samples exactly as the batch path does. <paramref name="MatchedFraction"/> /
   /// <paramref name="MeanFrameMatch"/> are the per-frame shape statistics behind <paramref name="Validated"/>.
+  /// <paramref name="Template"/> is the bank hypothesis the measured spectrum matched best (see
+  /// <see cref="CpmTemplate.SynthesizeBank"/>); null on the blind-FSK path, where no shape matching runs.
   /// </summary>
   public sealed record StreamingBurstReport(
     int Index, long StartSample, int Length, double TimeSeconds, bool Validated,
     Burst Burst, SoftSymbols Soft, GmskTrace? Trace, IReadOnlyList<Frame> Frames,
     LearnedShape MeasuredShape, double[] CorrelationLagHz, double[] Correlation,
-    double MatchedFraction, double MeanFrameMatch, int ShapedFrames);
+    double MatchedFraction, double MeanFrameMatch, int ShapedFrames,
+    ShapeHypothesis? Template = null);
 
   /// <summary>Tunables for <see cref="StreamingPipeline"/>.</summary>
   public sealed record StreamingOptions
@@ -80,16 +83,20 @@ namespace VE3NEA.SkyTlm.Core
     public int MinShapedFrames { get; init; } = 5;
 
     /// <summary>Secondary (high-confidence) validation: a burst whose burst-averaged spectrum correlates with
-    /// the template at least this strongly (<see cref="CpmTemplate.Match"/>, log power) is accepted even if the
+    /// a hypothesis of the shape bank (<see cref="CpmTemplate.SynthesizeBank"/>) at least this strongly
+    /// (<see cref="CpmTemplate.Match"/>, log power) is accepted even if the
     /// per-frame fraction falls short — averaging over the burst recovers the shape of a very weak signal whose
-    /// individual frames are too noisy to score. <c>null</c> (default) picks per modulation via
-    /// <see cref="EffectiveMinShapeScore"/>: 0.85 for bell shapes (SSTV's smeared average can reach ≈0.8
-    /// against a bell), 0.55 for two-tone FSK (no analog signal mimics two symmetric tones).</summary>
+    /// individual frames are too noisy to score. <c>null</c> (default) picks per hypothesis via
+    /// <see cref="EffectiveMinShapeScore(ShapeHypothesis)"/>: 0.85 for bell shapes (SSTV's smeared average can
+    /// reach ≈0.8 against a bell), 0.55 for two-tone FSK (no analog signal mimics two symmetric tones).</summary>
     public double? MinShapeScore { get; init; }
 
     /// <summary>The <see cref="MinShapeScore"/> actually applied for <paramref name="m"/>.</summary>
     public double EffectiveMinShapeScore(Modulation m) =>
       MinShapeScore ?? (m is Modulation.GMSK or Modulation.GFSK ? 0.85 : 0.55);
+
+    /// <summary>The <see cref="MinShapeScore"/> actually applied to bank hypothesis <paramref name="h"/>.</summary>
+    public double EffectiveMinShapeScore(ShapeHypothesis h) => MinShapeScore ?? (h.Bell ? 0.85 : 0.55);
 
     /// <summary>When <c>false</c>, surface <i>every</i> detected burst (flagged validated/rejected) — for
     /// visual inspection of bursts the gate would normally suppress. Default <c>true</c>: only validated
@@ -197,8 +204,7 @@ namespace VE3NEA.SkyTlm.Core
     private readonly BpskDemodulator? bpskCoherent;
     private readonly BpskDemodulator? bpskDifferential;
     private readonly IDeframer? deframer;
-    private readonly LearnedShape template;   // expected-shape template for the averaged-spectrum match (UI + secondary gate)
-    private readonly double minShapeScore;    // per-modulation effective secondary threshold
+    private readonly IReadOnlyList<ShapeHypothesis> templateBank;   // expected-shape hypotheses for the averaged-spectrum match (UI + secondary gate)
     private readonly CfoEstimator cfo;        // CFO + shape from the (already-computed) averaged STFT power
 
     // --- per-burst averaged power spectrum (the SAME STFT frames the detector runs on, summed over the
@@ -307,8 +313,7 @@ namespace VE3NEA.SkyTlm.Core
         bpskDifferential = new BpskDemodulator(new BpskDemodOptions { Differential = true, Manchester = p.Manchester == true });
       }
       deframer = Deframing.DeframerFactory.Create(p);
-      template = CpmTemplate.Synthesize(p);   // cached; the modeled spectrum for the averaged-spectrum match
-      minShapeScore = o.EffectiveMinShapeScore(p.Modulation);
+      templateBank = CpmTemplate.SynthesizeBank(p);   // cached; the modeled spectra for the averaged-spectrum match
       // estimator on the SAME FFT grid as the detector (Fft), so the averaged detection power spectrum feeds
       // its CFO/shape methods directly — no second FFT pass.
       cfo = new CfoEstimator(fs, o.CfoMaxHz, p, fftSize: Fft);
@@ -785,6 +790,8 @@ namespace VE3NEA.SkyTlm.Core
         BurstSpectralInfo info;
         LearnedShape measured;
         double match;
+        ShapeHypothesis? matchedHyp;  // the bank hypothesis behind `match` (null on the blind path)
+        bool shapePass;               // some hypothesis cleared its own per-shape threshold
         IDemodulator activeDemod;
         SignalParams pEffective;     // p with the resolved Deviation, used for all demod calls
         double? burstBlindDevHz;     // non-null on the blind/learned path
@@ -794,7 +801,7 @@ namespace VE3NEA.SkyTlm.Core
           // curated path: unchanged behavior
           info = cfo.AnalyzeSpectrum(avgQ);
           measured = cfo.EstimateShapeFromSpectrum(avgQ, info.CfoHz);
-          match = CpmTemplate.Match(measured, template);
+          (match, matchedHyp, shapePass) = MatchBank(measured);
           activeDemod = bpskCoherent != null
             ? (p.Differential == true && p.Framing != Framing.CCSDS ? bpskDifferential! : bpskCoherent)
             : this.demod!;
@@ -808,6 +815,8 @@ namespace VE3NEA.SkyTlm.Core
           info = new BurstSpectralInfo(cfoHz, 0, 0);
           measured = BlindDummyShape;
           match = 0;
+          matchedHyp = null;
+          shapePass = false;
           activeDemod = learnedDemod!;
           pEffective = p with { Deviation = learnedDeviationHz.Value };
           burstBlindDevHz = learnedDeviationHz.Value;
@@ -821,6 +830,8 @@ namespace VE3NEA.SkyTlm.Core
           info = new BurstSpectralInfo(est.CfoHz, 0, 0);
           measured = BlindDummyShape;
           match = 0;
+          matchedHyp = null;
+          shapePass = false;
           if (est.IsFsk)
           {
             // two-tone structure confirmed: demod with the estimated deviation
@@ -842,7 +853,7 @@ namespace VE3NEA.SkyTlm.Core
         // hopeless-segment skip: skip for the blind path — the FSK gate
         // already filtered junk above; for the curated path apply the existing shape-based check.
         bool canValidate = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)
-                           || match >= minShapeScore;
+                           || shapePass;
         if (!burstBlindDevHz.HasValue && !canValidate && !o.DecodeRejected
             && shapedFrames < o.MinShapedFrames && match < CrcRescueMinMatch)
           return;
@@ -933,7 +944,7 @@ namespace VE3NEA.SkyTlm.Core
         // e.g. an SSTV span is never lost to the gate. For blind bursts the FSK gate already validated the
         // spectrum; CRC-valid here promotes to a confirmed decode.
         bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)
-                         || match >= minShapeScore
+                         || shapePass
                          || burstFrames.Any(f => f.CrcValid == true)
                          || burstBlindDevHz.HasValue;   // blind FSK burst passed the gate → surface it
         if (o.GateByShape && !validated) return;
@@ -952,8 +963,9 @@ namespace VE3NEA.SkyTlm.Core
         LastTrace = trace;
         burstCounter = idx + 1;
 
-        // correlation curve behind the match (for the inspector's correlation plot), in Hz.
-        var (lagBaud, corr) = CpmTemplate.Correlation(measured, template);
+        // correlation curve behind the match (for the inspector's correlation plot), in Hz — against the
+        // best-matching bank hypothesis (the labeled model when no shape matching ran, i.e. the blind path).
+        var (lagBaud, corr) = CpmTemplate.Correlation(measured, (matchedHyp ?? templateBank[0]).Shape);
         var lagHz = new double[lagBaud.Length];
         for (int k = 0; k < lagBaud.Length; k++) lagHz[k] = lagBaud[k] * p.Baud;
 
@@ -962,13 +974,31 @@ namespace VE3NEA.SkyTlm.Core
             FrameDecoded?.Invoke(frame);
 
         BurstDecoded?.Invoke(new StreamingBurstReport(idx, segStartAbs, seg.Length, timeSeconds, validated,
-          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames));
+          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp));
       }
       catch (Exception ex)
       {
         // one bad burst must not sink the live stream (mirrors the batch pipeline's per-burst guards).
         Log.Warning(ex, "Streaming burst decode failed at sample {Start}", segStartAbs);
       }
+    }
+
+    /// <summary>Match the burst's measured averaged spectrum against every bank hypothesis. Returns the best
+    /// raw score and its hypothesis (for display and the CRC-rescue bar), plus whether ANY hypothesis cleared
+    /// its own per-shape threshold — a bell fit must clear the higher bell bar even when it outscores a
+    /// failing two-tone fit, so best-fit and pass are separate decisions.</summary>
+    private (double match, ShapeHypothesis best, bool pass) MatchBank(LearnedShape measured)
+    {
+      double best = double.NegativeInfinity;
+      ShapeHypothesis bestHyp = templateBank[0];
+      bool pass = false;
+      foreach (var h in templateBank)
+      {
+        double m = CpmTemplate.Match(measured, h.Shape);
+        if (m > best) { best = m; bestHyp = h; }
+        if (m >= o.EffectiveMinShapeScore(h)) pass = true;
+      }
+      return (best, bestHyp, pass);
     }
 
     /// <summary>An emitted frame, kept for overlap dedup: its bytes/time and — when the deframer reported the
