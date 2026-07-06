@@ -51,6 +51,14 @@ namespace VE3NEA.SkyTlm.Deframing
       float[] des = SoftBits.G3ruhDescramble(syms.Soft);
       var frames = ExtractFrames(SoftBits.NrziDecode(des));
 
+      // also try PLAIN AX.25 (NRZI only, no G3RUH scrambler) and merge — the same on-air framing without the
+      // self-synchronizing scrambler, used by the 1k2 AFSK links (e.g. CUBEBUG-2). The scrambled/unscrambled
+      // decision is not taken from the SatNOGS label (unreliable: it tags the AFSK transmitter "G3RUH", which is
+      // really the sibling 9k6 transmitter's framing) — both chains are run and the FCS gates false matches, the
+      // same self-selecting pattern the differential-PSK branch below uses. Descramble on a plain stream (and
+      // vice-versa) yields no valid flags, so this only ever adds real frames.
+      frames = Dedupe(frames.Concat(ExtractFrames(SoftBits.NrziDecode(syms.Soft))));
+
       // DIFFERENTIAL PSK is different: the differential detector reads phase TRANSITIONS, which already IS the
       // NRZI decode — so its soft bits are the scrambled data directly and the deframer must descramble ONLY.
       // applying NRZI a second time corrupts the frame. The differential detector's sign is not pinned by an

@@ -68,6 +68,7 @@ namespace VE3NEA.SkyTlm.Dsp
       Modulation.GMSK => new CpmFskDemodulator(ModProfile.Gmsk, options),
       Modulation.GFSK => new CpmFskDemodulator(ModProfile.Gfsk, options),
       Modulation.FSK => new CpmFskDemodulator(ModProfile.Fsk, options),   // wide-h 2-FSK, orthogonal MF
+      Modulation.AFSK => new AfskDemodulator(options),   // Bell-202 audio subcarrier over FM → FSK engine
       Modulation.BPSK => new BpskDemodulator(new BpskDemodOptions { Differential = false }),  // coherent default
       _ => null   // qpsk has no demodulator yet
     };

@@ -93,6 +93,10 @@ namespace VE3NEA.SkyTlm.Tests.Fixtures
       return G3ruhScramble(nrzi).ToArray();
     }
 
+    /// <summary>On-air bit stream for PLAIN AX.25 (no G3RUH scrambler, e.g. 1k2 AFSK): HDLC(frame+FCS) → NRZI.</summary>
+    public static int[] OnAirBitsPlain(byte[] frame, int flagsBefore = 16, int flagsAfter = 8)
+      => NrziEncode(HdlcBits(WithFcs(frame), flagsBefore, flagsAfter)).ToArray();
+
     /// <summary>Build a UI frame (no FCS yet): dest/src addresses, control 0x03, PID 0xF0, ASCII info.</summary>
     public static byte[] MakeUiFrame(string dest, string src, string info)
     {

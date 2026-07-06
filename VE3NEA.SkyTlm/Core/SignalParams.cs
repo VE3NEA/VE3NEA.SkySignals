@@ -84,6 +84,15 @@ namespace VE3NEA.SkyTlm.Core
     public double? ResolvedDeviation { get; set; }
 
     /// <summary>
+    /// AFSK only: audio subcarrier centre frequency in Hz (Bell-202 = 1700, midway between the 1200 Hz mark and
+    /// 2200 Hz space tones), from the satyaml <c>af_carrier</c> field. The AFSK demodulator FM-discriminates the
+    /// RF to recover this audio, then mixes it down by this frequency so the two tones straddle DC at ±<see
+    /// cref="Deviation"/> and the shared FSK engine can demodulate them. <c>null</c> ⇒ the Bell-202 default.
+    /// Irrelevant to every non-AFSK family.
+    /// </summary>
+    public double? AfCarrier { get; init; }
+
+    /// <summary>
     /// Reed-Solomon field basis for CCSDS/RS framing, from the satyaml <c>RS basis</c> field
     /// (<c>"conventional"</c> or <c>"dual"</c>); <c>null</c> when unknown or not RS-framed. Informational —
     /// carried through so an RS deframer can pick the correct Galois-field representation.

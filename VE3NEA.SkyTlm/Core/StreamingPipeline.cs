@@ -82,6 +82,21 @@ namespace VE3NEA.SkyTlm.Core
     /// of signal-bearing frames.</summary>
     public int MinShapedFrames { get; init; } = 5;
 
+    /// <summary>Eye-based validation for FSK-family bursts: a burst demodulated on the FM-discriminator path
+    /// (GMSK/GFSK/FSK) whose recovered eye is at least this clean (<see cref="SoftSymbols.EyeSnrDb"/>) and that
+    /// carries at least <see cref="MinEyeSymbols"/> symbols is accepted even when its spectral shape matches no
+    /// template. A clean two-level FSK eye is stronger proof of a real FSK burst than the PSD shape, and it
+    /// rescues carrier-dominated FSK (e.g. CUBEBUG-2: ~93% of the power is an unmodulated carrier line, so the
+    /// spectrum matches no modulation template although the data demodulates to an 11 dB eye). SSTV's scanning
+    /// tone, a CW spike and noise do not resolve into two clean symbol rails, so this does not weaken the
+    /// analog-interloper rejection the shape gate provides. 8 dB ≈ rails separated by 2.5σ — a decisively open
+    /// eye, comfortably above the ≤5 dB a demodulated non-FSK segment reaches.</summary>
+    public double MinEyeSnrDb { get; init; } = 8.0;
+
+    /// <summary>Minimum symbol count for the <see cref="MinEyeSnrDb"/> eye path — a short blip can score a high
+    /// eye from a handful of symbols by chance, while a real telemetry burst carries hundreds.</summary>
+    public int MinEyeSymbols { get; init; } = 128;
+
     /// <summary>Secondary (high-confidence) validation: a burst whose burst-averaged spectrum correlates with
     /// a hypothesis of the shape bank (<see cref="CpmTemplate.SynthesizeBank"/>) at least this strongly
     /// (<see cref="CpmTemplate.Match"/>, log power) is accepted even if the
@@ -939,12 +954,17 @@ namespace VE3NEA.SkyTlm.Core
         }
 
         // validation: per-frame shape (digital vs SSTV/CW) is primary; the averaged-spectrum match rescues
-        // very weak bursts whose individual frames are too noisy to score; and a CRC-valid frame is absolute
+        // very weak bursts whose individual frames are too noisy to score; a clean FSK eye rescues real FSK
+        // bursts whose spectrum matches no template (carrier-dominated FSK); and a CRC-valid frame is absolute
         // proof of digital signal — every detected burst was demodulated, so a telemetry frame embedded in
         // e.g. an SSTV span is never lost to the gate. For blind bursts the FSK gate already validated the
         // spectrum; CRC-valid here promotes to a confirmed decode.
+        bool eyePass = activeDemod is CpmFskDemodulator
+                       && soft.EyeSnrDb >= o.MinEyeSnrDb
+                       && soft.Count >= o.MinEyeSymbols;
         bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)
                          || shapePass
+                         || eyePass
                          || burstFrames.Any(f => f.CrcValid == true)
                          || burstBlindDevHz.HasValue;   // blind FSK burst passed the gate → surface it
         if (o.GateByShape && !validated) return;
