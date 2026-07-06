@@ -13,10 +13,12 @@ namespace VE3NEA.SkyTlm.Dsp
   /// audio, then two <b>continuous mark/space quadrature correlators</b> (quadrature-mix at each tone, matched-filter
   /// low-pass over ~1.5 symbols, take the envelope magnitude) whose difference <c>|mark| − |space|</c> is the soft
   /// decision signal. A whole-burst two-cluster threshold (<see cref="CpmFskDemodulator.CenterGlobal"/>) centres it,
-  /// then a direwolf-style transition-nudged DPLL (<see cref="DpllSync"/>) recovers symbol timing and the AX.25
-  /// deframer is reused unchanged — only this front end is AFSK-specific. (The shared Gardner PI loop was tried but
-  /// its whole-burst Oerder–Meyr seed is corrupted by the fading tail and it locks half a symbol off; the DPLL is
-  /// robust there. A whole-burst timing fit that beats the DPLL is future work — see the Phase 2 plan.)
+  /// then <see cref="RecoverTiming"/> recovers symbol timing non-causally: the direwolf transition-nudged DPLL
+  /// (<see cref="DpllStrobes"/>) gives a robust coarse lock, and a whole-burst clock-line fit + bidirectional pass
+  /// (Phase 2 T1/T2) reclaim the tracking lag and acquisition transient a first-order causal loop throws away. The
+  /// AX.25 deframer is reused unchanged — only this front end is AFSK-specific. (The shared Gardner PI loop was tried
+  /// but its whole-burst Oerder–Meyr seed is corrupted by the fading tail and it locks half a symbol off; the DPLL is
+  /// robust there. Set <c>AFSK_TIMING=dpll</c> to fall back to the plain causal loop.)
   /// Ported/validated against direwolf on the CUBEBUG-2 ground-truth recording (single CRC-valid frame at t≈197.6 s).
   /// Keeping the modulation tagged AFSK (not collapsed to FSK) also makes <see cref="CfoEstimator"/> use
   /// carrier-symmetry CFO, which locks the dominant unmodulated carrier line.
@@ -58,7 +60,7 @@ namespace VE3NEA.SkyTlm.Dsp
       CpmFskDemodulator.CenterGlobal(demod);   // whole-burst two-cluster threshold → decision signal centred on 0
 
       double sps = p.SampleRate / p.Baud;
-      var (soft, settledSps) = DpllSync(demod, sps);
+      var (soft, settledSps) = RecoverTiming(demod, sps);
       var (eyeDb, ambig) = CpmFskDemodulator.EyeQuality(soft);
       return new SoftSymbols
       {
@@ -70,14 +72,117 @@ namespace VE3NEA.SkyTlm.Dsp
       };
     }
 
+    /// <summary>Fewest strobes a whole-burst clock-line fit needs to be meaningful; below this (a runt burst) fall
+    /// back to the plain causal DPLL, whose per-sample output degrades gracefully.</summary>
+    private const int MinStrobesForFit = 8;
+
     /// <summary>
-    /// Direwolf-style digital PLL symbol timing: a phase accumulator advances by one symbol per revolution and
-    /// samples <paramref name="demod"/> at each wrap; every zero-crossing (bit transition) nudges the accumulator
-    /// toward the transition. A first-order, transition-tracked loop that acquires within a couple symbols and
-    /// re-locks through fades — more robust on the marginal AFSK burst than the Gardner PI loop, whose whole-burst
-    /// Oerder–Meyr seed is corrupted by the fading tail.
+    /// Whole-burst symbol timing (Phase 2: T1 log-and-fit clock-skew resample + T2 bidirectional DPLL). The direwolf
+    /// DPLL (<see cref="DpllStrobes"/>) is robust but causal and first-order: it lag-tracks the TX↔RX clock skew
+    /// (worst at the fading FCS tail) and acquires <i>through</i> the weak fade-in edge — leaving whole-burst timing
+    /// information on the table that, because we buffer the burst, we don't have to. <b>T1:</b> take the DPLL's own
+    /// strobe instants and weighted-least-squares fit a straight clock line <c>t(k)=φ₀+T·k</c> over the whole burst
+    /// (<see cref="WeightedLineFit"/>) — this averages ~all ~1200 strobes so timing-noise variance drops, and it
+    /// replaces the lagging/wandering tail strobes with the extrapolated ideal grid. <b>T2:</b> run the DPLL again on
+    /// the time-reversed burst so its acquisition transient lands on the opposite edge; the first-order tracking lag
+    /// is equal-and-opposite in the two directions, so averaging the two fitted grids cancels it. Finally resample
+    /// <paramref name="demod"/> at the averaged fractional instants with a cubic interpolator
+    /// (<see cref="global::VE3NEA.Dsp.Interp"/>). <c>AFSK_TIMING=dpll</c> selects the plain causal loop instead.
     /// </summary>
-    private static (float[] soft, double sps) DpllSync(float[] demod, double sps)
+    private static (float[] soft, double sps) RecoverTiming(float[] demod, double sps)
+    {
+      if (string.Equals(Environment.GetEnvironmentVariable("AFSK_TIMING"), "dpll", StringComparison.OrdinalIgnoreCase))
+        return DpllSyncLegacy(demod, sps);
+
+      // T1: forward DPLL strobes → weighted clock-line fit (φ₀, T).
+      double[] fwd = DpllStrobes(demod, sps, reversed: false);
+      if (fwd.Length < MinStrobesForFit) return DpllSyncLegacy(demod, sps);
+      var (phi0f, tf) = WeightedLineFit(fwd, demod);
+
+      // T2: reverse-time DPLL strobes → second fit. Its acquisition transient is on the opposite (far) edge, so the
+      // first-order tracking lag is equal-and-opposite and cancels when the two fitted grids are averaged.
+      double[] bwd = DpllStrobes(demod, sps, reversed: true);
+      bool bidir = bwd.Length >= MinStrobesForFit;
+      var (phi0b, tb) = bidir ? WeightedLineFit(bwd, demod) : (phi0f, tf);
+
+      int k = fwd.Length;
+      double period = bidir ? 0.5 * (tf + tb) : tf;
+      var soft = new float[k];
+      for (int j = 0; j < k; j++)
+      {
+        double instF = phi0f + tf * j;
+        // map the backward grid to the same physical symbol (its nearest index) before averaging the two instants.
+        double instB = bidir ? phi0b + tb * Math.Round((instF - phi0b) / tb) : instF;
+        soft[j] = global::VE3NEA.Dsp.Interp(demod, 0.5 * (instF + instB));
+      }
+      return (soft, period);
+    }
+
+    /// <summary>
+    /// One direwolf DPLL pass returning the fractional sample instant of every strobe (accumulator wrap) — the raw
+    /// material for the clock-line fit — instead of the sampled values. Same loop as <see cref="DpllSyncLegacy"/>
+    /// (advance 2³² per symbol, strobe at the wrap, nudge the phase toward every bit transition); when
+    /// <paramref name="reversed"/> the burst is scanned end-to-first so the acquisition transient falls on the far
+    /// edge (T2). Instants are always returned in forward (increasing) sample order.
+    /// </summary>
+    private static double[] DpllStrobes(float[] demod, double sps, bool reversed)
+    {
+      int n = demod.Length;
+      var strobes = new System.Collections.Generic.List<double>(n / Math.Max(1, (int)sps) + 16);
+      uint step = (uint)Math.Round(4294967296.0 / sps);   // 2^32 per symbol
+      int pll = 0; bool prevBit = false;
+      for (int i = 0; i < n; i++)
+      {
+        int idx = reversed ? n - 1 - i : i;
+        int prev = pll;
+        pll = unchecked((int)((uint)pll + step));
+        if (pll < 0 && prev >= 0)
+        {
+          double frac = (2147483648.0 - prev) / step;             // sub-sample wrap position within this step, (0,1]
+          double t = i - 1 + frac;                                 // strobe instant in scan-time
+          strobes.Add(reversed ? n - 1 - t : t);                  // → forward sample-time
+        }
+        bool bit = demod[idx] > 0;
+        if (bit != prevBit) pll = (int)(pll * 0.6f);               // nudge the phase toward the observed transition
+        prevBit = bit;
+      }
+      if (reversed) strobes.Reverse();                             // return forward-increasing instants
+      return strobes.ToArray();
+    }
+
+    /// <summary>
+    /// Weighted least-squares fit of a straight clock line <c>t(k)=φ₀+T·k</c> to the strobe instants, each weighted
+    /// by the local decision envelope <c>|demod|</c> so the noisy fading tail cannot pull the fit (unweighted
+    /// whole-burst timing is e/actly what the plain Oerder–Meyr estimate gets wrong on this burst). Returns the phase
+    /// offset φ₀ (sample instant of symbol 0) and the fitted symbol period T (samples/symbol — the skew-corrected
+    /// clock). Degenerate input (collinear weights) falls back to the endpoint slope.
+    /// </summary>
+    private static (double phi0, double period) WeightedLineFit(double[] strobes, float[] demod)
+    {
+      double sw = 0, sk = 0, skk = 0, st = 0, skt = 0;
+      for (int k = 0; k < strobes.Length; k++)
+      {
+        double w = Math.Abs(global::VE3NEA.Dsp.Interp(demod, strobes[k])) + 1e-6;
+        sw += w; sk += w * k; skk += w * (double)k * k; st += w * strobes[k]; skt += w * k * strobes[k];
+      }
+      double det = sw * skk - sk * sk;
+      if (Math.Abs(det) < 1e-9)
+      {
+        double slope = strobes.Length > 1 ? (strobes[^1] - strobes[0]) / (strobes.Length - 1) : 0;
+        return (strobes[0], slope);
+      }
+      double period = (sw * skt - sk * st) / det;
+      double phi0 = (st - period * sk) / sw;
+      return (phi0, period);
+    }
+
+    /// <summary>
+    /// Plain direwolf digital-PLL symbol timing (the Phase 1 causal loop, kept as the <c>AFSK_TIMING=dpll</c>
+    /// fallback and for A/B): a phase accumulator advances by one symbol per revolution and samples
+    /// <paramref name="demod"/> at each wrap; every bit transition nudges the accumulator toward the transition.
+    /// First-order and transition-tracked — acquires within a couple symbols and re-locks through fades.
+    /// </summary>
+    private static (float[] soft, double sps) DpllSyncLegacy(float[] demod, double sps)
     {
       int n = demod.Length;
       var soft = new System.Collections.Generic.List<float>(n / Math.Max(1, (int)sps) + 16);
