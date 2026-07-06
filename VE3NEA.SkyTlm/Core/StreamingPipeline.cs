@@ -18,7 +18,25 @@ namespace VE3NEA.SkyTlm.Core
     Burst Burst, SoftSymbols Soft, GmskTrace? Trace, IReadOnlyList<Frame> Frames,
     LearnedShape MeasuredShape, double[] CorrelationLagHz, double[] Correlation,
     double MatchedFraction, double MeanFrameMatch, int ShapedFrames,
-    ShapeHypothesis? Template = null);
+    ShapeHypothesis? Template = null, float[]? AveragedSpectrumRaw = null);
+
+  /// <summary>
+  /// One STFT frame's detection internals, surfaced to the Detection Inspector when a subscriber attaches to
+  /// <see cref="StreamingPipeline.DetectionFrameProcessed"/>. Emitted for <b>every</b> frame past warm-up
+  /// (not just signal-bearing ones), so the trace shows what the detector saw between bursts too. Zero-cost
+  /// when nobody subscribes (the full spectrum is not even captured). The spectrum is the raw, un-notched,
+  /// fftshifted per-bin power (DC at index <c>FftSize/2</c>), so the inspector plots exactly the input the
+  /// notch would otherwise alter.
+  /// </summary>
+  public sealed record DetectionFrame(
+    long AbsFrame, double TimeSeconds,
+    float[] PowerSpectrum,   // full 2048-bin fftshifted power, NOT DC-notched (DC at index FftSize/2)
+    double InbandPower,      // Σ in-band bins (pre-notch)
+    double OobMeanRaw,       // this frame's raw OOB per-bin mean
+    double NoiseFloorTrim,   // rolling interquartile trimmed-mean floor (npb)
+    double ZStat,            // averaged matched statistic, max over shifts
+    int BestShiftBins,       // argmax shift → CFO ≈ BestShiftBins*binHz
+    bool InBurst);           // Schmitt state after this frame
 
   /// <summary>Tunables for <see cref="StreamingPipeline"/>.</summary>
   public sealed record StreamingOptions
@@ -129,6 +147,14 @@ namespace VE3NEA.SkyTlm.Core
     /// <summary>Demodulator tunables. Defaults to <see cref="Demodulators.DefaultGmskOptions"/> so a burst
     /// decodes identically whether it arrives via a file or the live stream.</summary>
     public GmskDemodOptions GmskOptions { get; init; } = Demodulators.DefaultGmskOptions;
+
+    /// <summary>DC/LO-leakage notch: zero the centre 3 bins of every frame's noise-subtracted spectrum and of
+    /// the burst-averaged spectrum. Default <c>true</c> to hold the decode baseline. The notch's original
+    /// purpose (LO feedthrough / ADC DC offset) is moot on the SkyRoof slicer's spur- and imbalance-free
+    /// output, where instead it removes real near-DC signal energy — worst for bell-shaped h≈0.5 GMSK/MSK
+    /// whose carrier energy concentrates in exactly the 3 zeroed bins, lowering the matched z-statistic. The
+    /// Detection Inspector A/Bs this toggle; <c>--regress</c> decides whether to flip the default.</summary>
+    public bool NotchDc { get; init; } = true;
   }
 
   /// <summary>
@@ -288,6 +314,29 @@ namespace VE3NEA.SkyTlm.Core
     public event Action<Frame>? FrameDecoded;
     /// <summary>Raised once per decoded burst (after demod, whether or not it deframed), for the live inspector.</summary>
     public event Action<StreamingBurstReport>? BurstDecoded;
+    /// <summary>Raised once per STFT frame past warm-up (the Detection Inspector's per-frame trace). Attaching a
+    /// handler turns on full-spectrum capture; leaving it null keeps the production hot loop allocation-free.</summary>
+    public event Action<DetectionFrame>? DetectionFrameProcessed;
+
+    // --- detector band geometry (read-only, for the Detection Inspector's axes/threshold lines) ---
+    /// <summary>Half-width (Hz) of the in-band region the detector integrates over (the ±occHalfHz boundary).</summary>
+    public double OccHalfHz => occHalfHz;
+    /// <summary>Hz per STFT bin.</summary>
+    public double BinHz => binHz;
+    /// <summary>Detector FFT size (bins).</summary>
+    public int FftSize => Fft;
+    /// <summary>Detector STFT hop (samples between frames).</summary>
+    public int HopSize => Hop;
+    /// <summary>Stream sample rate (Hz).</summary>
+    public double SampleRate => fs;
+    /// <summary>Schmitt onset threshold in noise-sigma units.</summary>
+    public double OnSigma => o.OnSigma;
+    /// <summary>Schmitt release threshold in noise-sigma units.</summary>
+    public double OffSigma => o.OffSigma;
+
+    // full un-notched fftshifted power spectrum of the current frame, captured only while a
+    // DetectionFrameProcessed subscriber is attached; null (and never allocated) in production.
+    private float[]? fullSpecScratch;
 
     public StreamingPipeline(SignalParams p, StreamingOptions? options = null)
     {
@@ -429,8 +478,10 @@ namespace VE3NEA.SkyTlm.Core
       while (nextFrameOffset + Fft <= len)
       {
         long absFrame = (bufBaseAbs + nextFrameOffset) / Hop;
-        var (oob, _) = StftPsd.Frame(fft, buf, nextFrameOffset, window, binHz, occHalfHz, occBins, q);
-        ProcessFrame(absFrame, oob, ref frames);
+        // capture the whole un-notched spectrum only when the inspector is listening (else no allocation)
+        float[]? full = DetectionFrameProcessed != null ? (fullSpecScratch ??= new float[Fft]) : null;
+        var (oob, _) = StftPsd.Frame(fft, buf, nextFrameOffset, window, binHz, occHalfHz, occBins, q, full);
+        ProcessFrame(absFrame, oob, full, ref frames);
         nextFrameOffset += Hop;
       }
 
@@ -460,7 +511,7 @@ namespace VE3NEA.SkyTlm.Core
 
     // --- detector state machine ----------------------------------------------------------------
 
-    private void ProcessFrame(long absFrame, double oob, ref List<Frame>? frames)
+    private void ProcessFrame(long absFrame, double oob, float[]? fullSpectrum, ref List<Frame>? frames)
     {
       // rolling noise floor: trimmed mean of recent out-of-band frame powers (out-of-band is always noise, so we
       // update it every frame, including during a burst).
@@ -476,8 +527,9 @@ namespace VE3NEA.SkyTlm.Core
       // noise-subtracted frame spectrum (NOT clamped at 0 — zero-mean under noise, which keeps the matched
       // statistic unbiased), DC-notched so LO leakage can't masquerade as a matched carrier.
       for (int j = 0; j < q.Length; j++) excess[j] = (float)(q[j] - npb);
-      for (int j = occBins - 1; j <= occBins + 1; j++)
-        if ((uint)j < (uint)excess.Length) excess[j] = 0;
+      if (o.NotchDc)
+        for (int j = occBins - 1; j <= occBins + 1; j++)
+          if ((uint)j < (uint)excess.Length) excess[j] = 0;
 
       // this frame's per-shift matched z into the averaging ring (replace the oldest row).
       var row = zRing[zHead];
@@ -496,57 +548,78 @@ namespace VE3NEA.SkyTlm.Core
       for (int i = 0; i < nShifts; i++) { double v = zSum[i] / norm; if (v > zStat) zStat = v; }
 
       framesSeen++;
-      if (framesSeen < warmupFrames) return;   // not enough noise history to trust the threshold yet
-
-      if (!inBurst)
+      // the state machine may return early (warm-up, no-burst, step-up split); the finally emits the
+      // per-frame diagnostic trace for EVERY frame regardless, so the inspector's spectrogram is complete.
+      try
       {
-        if (zStat > o.OnSigma)
+        if (framesSeen < warmupFrames) return;   // not enough noise history to trust the threshold yet
+
+        if (!inBurst)
         {
-          inBurst = true;
+          if (zStat > o.OnSigma)
+          {
+            inBurst = true;
+            startFrameAbs = OnsetFrame(absFrame);
+            lastAboveAbs = absFrame;
+            ResetBurstStats();
+            burstPeakZ = burstLevelZ = zStat;
+            NoteSignalFrame(bestZ, bestW, bestS);
+          }
+          return;
+        }
+
+        if (zStat > Math.Max(o.OnSigma, burstLevelZ / o.ReleaseFraction))
+        {
+          // step-up split: a much stronger signal turned on inside the current (weaker) burst. Close the weak
+          // segment and re-trigger, so the strong burst gets a tight segment of its own — its CFO and symbol
+          // timing must not be estimated over seconds of the weaker interferer.
+          CloseSpan(startFrameAbs, absFrame - 1, startGuard: true, endGuard: false, defer: false, ref frames);
           startFrameAbs = OnsetFrame(absFrame);
           lastAboveAbs = absFrame;
           ResetBurstStats();
           burstPeakZ = burstLevelZ = zStat;
           NoteSignalFrame(bestZ, bestW, bestS);
+          return;
         }
-        return;
-      }
 
-      if (zStat > Math.Max(o.OnSigma, burstLevelZ / o.ReleaseFraction))
-      {
-        // step-up split: a much stronger signal turned on inside the current (weaker) burst. Close the weak
-        // segment and re-trigger, so the strong burst gets a tight segment of its own — its CFO and symbol
-        // timing must not be estimated over seconds of the weaker interferer.
-        CloseSpan(startFrameAbs, absFrame - 1, startGuard: true, endGuard: false, defer: false, ref frames);
-        startFrameAbs = OnsetFrame(absFrame);
-        lastAboveAbs = absFrame;
-        ResetBurstStats();
-        burstPeakZ = burstLevelZ = zStat;
+        burstLevelZ += 0.1 * (zStat - burstLevelZ);   // ~10-frame (≈0.2 s) time constant
+        if (zStat > burstPeakZ) burstPeakZ = zStat;
+        if (zStat > Math.Max(o.OffSigma, burstPeakZ * o.ReleaseFraction)) lastAboveAbs = absFrame;
         NoteSignalFrame(bestZ, bestW, bestS);
-        return;
-      }
 
-      burstLevelZ += 0.1 * (zStat - burstLevelZ);   // ~10-frame (≈0.2 s) time constant
-      if (zStat > burstPeakZ) burstPeakZ = zStat;
-      if (zStat > Math.Max(o.OffSigma, burstPeakZ * o.ReleaseFraction)) lastAboveAbs = absFrame;
-      NoteSignalFrame(bestZ, bestW, bestS);
+        if ((absFrame - startFrameAbs) * (long)Hop >= maxBurstSamples)
+        {
+          // capped flush: emit what we have as a window (no end guard — later samples may not be in yet) and
+          // continue accumulating a fresh segment from here, so a continuous carrier keeps producing frames.
+          CloseSpan(startFrameAbs, absFrame, startGuard: true, endGuard: false, defer: false, ref frames);
+          startFrameAbs = absFrame + 1;
+          lastAboveAbs = absFrame;
+          ResetBurstStats();
+          burstPeakZ = burstLevelZ = zStat;   // the next window's release/split track their own level
+        }
+        else if (absFrame - lastAboveAbs > hangFrames)
+        {
+          // true end-of-burst: defer the decode so the soft-bit window can extend a max frame past the end.
+          CloseSpan(startFrameAbs, lastAboveAbs, startGuard: true, endGuard: true, defer: true, ref frames);
+          inBurst = false;
+        }
+      }
+      finally
+      {
+        if (DetectionFrameProcessed != null && fullSpectrum != null)
+          EmitDetectionFrame(absFrame, oob, fullSpectrum, npb, zStat, bestS);
+      }
+    }
 
-      if ((absFrame - startFrameAbs) * (long)Hop >= maxBurstSamples)
-      {
-        // capped flush: emit what we have as a window (no end guard — later samples may not be in yet) and
-        // continue accumulating a fresh segment from here, so a continuous carrier keeps producing frames.
-        CloseSpan(startFrameAbs, absFrame, startGuard: true, endGuard: false, defer: false, ref frames);
-        startFrameAbs = absFrame + 1;
-        lastAboveAbs = absFrame;
-        ResetBurstStats();
-        burstPeakZ = burstLevelZ = zStat;   // the next window's release/split track their own level
-      }
-      else if (absFrame - lastAboveAbs > hangFrames)
-      {
-        // true end-of-burst: defer the decode so the soft-bit window can extend a max frame past the end.
-        CloseSpan(startFrameAbs, lastAboveAbs, startGuard: true, endGuard: true, defer: true, ref frames);
-        inBurst = false;
-      }
+    /// <summary>Publish this frame's detection internals to the inspector. Clones the captured full spectrum
+    /// (the frame keeps a snapshot) and sums the in-band bins pre-notch; only called with a live subscriber.</summary>
+    private void EmitDetectionFrame(long absFrame, double oob, float[] fullSpectrum, double npb, double zStat, int bestS)
+    {
+      double inband = 0;
+      for (int j = 0; j < q.Length; j++) inband += q[j];
+      DetectionFrameProcessed!.Invoke(new DetectionFrame(
+        absFrame, absFrame * (double)Hop / fs, (float[])fullSpectrum.Clone(),
+        inband, oob, npb, zStat, bestS, inBurst));   // bestS is already in shift units (−cfoBins..+cfoBins)
     }
 
     /// <summary>
@@ -677,14 +750,17 @@ namespace VE3NEA.SkyTlm.Core
     }
 
     /// <summary>Mean in-band power spectrum over the burst (the same STFT frames the detector ran on),
-    /// noise-subtracted and DC-notched — the form <see cref="CfoEstimator.AnalyzeSpectrum"/> expects.</summary>
-    private float[] BuildAveragedSpectrum()
+    /// noise-subtracted and — when <paramref name="notch"/> — DC-notched, the form
+    /// <see cref="CfoEstimator.AnalyzeSpectrum"/> expects. The inspector also builds the un-notched form
+    /// (<paramref name="notch"/> false) for its detail chart, so the near-DC energy the notch removes is visible.</summary>
+    private float[] BuildAveragedSpectrum(bool notch)
     {
       int L = burstPsdSum.Length;
       var q = new float[L];
       if (burstPsdCount == 0) return q;
       for (int j = 0; j < L; j++) q[j] = (float)Math.Max(0, burstPsdSum[j] / burstPsdCount - noisePerBin);
-      for (int j = occBins - 1; j <= occBins + 1; j++) if ((uint)j < (uint)L) q[j] = 0;   // notch DC/LO leakage
+      if (notch)
+        for (int j = occBins - 1; j <= occBins + 1; j++) if ((uint)j < (uint)L) q[j] = 0;   // notch DC/LO leakage
       return q;
     }
 
@@ -696,7 +772,7 @@ namespace VE3NEA.SkyTlm.Core
     /// further, a second tail-pass window ending there finishes a frame still in flight at the close —
     /// the decode is deferred until those samples have arrived.</summary>
     private sealed record PendingDecode(long SegStartAbs, long DetStartAbs, long DetEndAbs, long BareEndAbs,
-      long TargetEndAbs, float[] AvgQ, double Snr, double MatchedFrac, int ShapedFrames, double MeanMatch);
+      long TargetEndAbs, float[] AvgQ, float[] AvgQRaw, double Snr, double MatchedFrac, int ShapedFrames, double MeanMatch);
 
     /// <summary>
     /// Close a detected span: capture the burst's parameter estimates — <b>strictly</b> from its own
@@ -734,7 +810,9 @@ namespace VE3NEA.SkyTlm.Core
       // averaged power spectrum from the SAME STFT frames the detector ran on (no second FFT pass), and the
       // band-limited matched SNR: mean best-shift matched power over the signal-bearing frames vs the
       // per-bin noise floor (≈ signal-band SNR, not diluted by the CFO search margin).
-      var avgQ = BuildAveragedSpectrum();
+      var avgQ = BuildAveragedSpectrum(o.NotchDc);
+      // un-notched twin for the inspector's detail chart; identical array when the notch is already off.
+      var avgQRaw = o.NotchDc ? BuildAveragedSpectrum(false) : avgQ;
       double meanW = burstSigFrames > 0 ? burstWSum / burstSigFrames : 0;
       double snr = 10.0 * Math.Log10((Math.Max(0, meanW) + noisePerBin) / Math.Max(noisePerBin, 1e-30));
       double meanMatch = burstSigFrames > 0 ? burstMatchSum / burstSigFrames : 0;
@@ -747,7 +825,7 @@ namespace VE3NEA.SkyTlm.Core
                   && burstPeakZ * o.ReleaseFraction > o.OffSigma
                   ? tailSamples : 0;
       var pend = new PendingDecode(segStartAbs, sStartAbs, sEndAbs, sEndAbs, sEndAbs + tail,
-        avgQ, snr, matchedFrac, burstShapedFrames, meanMatch);
+        avgQ, avgQRaw, snr, matchedFrac, burstShapedFrames, meanMatch);
       if (tail > 0) pending.Enqueue(pend);
       else DecodePending(pend, ref frames);
     }
@@ -785,14 +863,14 @@ namespace VE3NEA.SkyTlm.Core
         }
       }
 
-      DecodeBurst(seg, p.AvgQ, segStart, p.DetStartAbs, (int)(p.DetEndAbs - p.DetStartAbs),
+      DecodeBurst(seg, p.AvgQ, p.AvgQRaw, segStart, p.DetStartAbs, (int)(p.DetEndAbs - p.DetStartAbs),
         p.Snr, p.MatchedFrac, p.ShapedFrames, p.MeanMatch, tailSeg, tailStartAbs, ref frames);
     }
 
     /// <summary><paramref name="seg"/> starts at <paramref name="segStartAbs"/> (the overlap-extended decode
     /// span); <paramref name="detStartAbs"/>/<paramref name="detLen"/> is the detected burst proper, used for
     /// the reported span and time.</summary>
-    private void DecodeBurst(Complex32[] seg, float[] avgQ, long segStartAbs, long detStartAbs, int detLen, double snr,
+    private void DecodeBurst(Complex32[] seg, float[] avgQ, float[] avgQRaw, long segStartAbs, long detStartAbs, int detLen, double snr,
       double matchedFrac, int shapedFrames, double meanMatch, Complex32[]? tailSeg, long tailStartAbs, ref List<Frame>? frames)
     {
       if (demod == null) return;   // modulation we don't demodulate (CW/SSTV/PSK) — nothing to do
@@ -994,7 +1072,7 @@ namespace VE3NEA.SkyTlm.Core
             FrameDecoded?.Invoke(frame);
 
         BurstDecoded?.Invoke(new StreamingBurstReport(idx, segStartAbs, seg.Length, timeSeconds, validated,
-          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp));
+          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp, avgQRaw));
       }
       catch (Exception ex)
       {

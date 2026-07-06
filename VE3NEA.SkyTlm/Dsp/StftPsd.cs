@@ -38,9 +38,12 @@ namespace VE3NEA.SkyTlm.Dsp
     /// (length 2·<paramref name="occBins"/>+1) with the in-band bin powers indexed by offset from the
     /// centre bin, and returns the mean out-of-band bin power (the per-bin noise floor for that frame)
     /// plus the count of in-band bins (for noise-floor scaling). <paramref name="q"/> is cleared first.
+    /// When <paramref name="fullShifted"/> is non-null (length <paramref name="size"/>) it is additionally
+    /// filled with the whole fftshifted per-bin power (DC at index size/2) — the diagnostic Detection
+    /// Inspector spectrum, un-notched and full-band; leave it null on the production path (no extra work).
     /// </summary>
     public static (double oobMean, int inbandBins) Frame(Fft<Complex32> fft, Complex32[] iq, int s0,
-      float[] window, double binHz, double occHalfHz, int occBins, float[] q)
+      float[] window, double binHz, double occHalfHz, int occBins, float[] q, float[]? fullShifted = null)
     {
       int size = window.Length;
       for (int i = 0; i < size; i++) fft.InputData[i] = iq[s0 + i] * window[i];
@@ -53,6 +56,7 @@ namespace VE3NEA.SkyTlm.Dsp
         double hz = (k <= size / 2 ? k : k - size) * binHz;
         var c = fft.OutputData[k];
         float pw = c.Real * c.Real + c.Imaginary * c.Imaginary;
+        if (fullShifted != null) fullShifted[(k + size / 2) % size] = pw;   // fftshift: DC → centre
         if (Math.Abs(hz) <= occHalfHz)
         {
           int j = (int)Math.Round(hz / binHz) + occBins;
