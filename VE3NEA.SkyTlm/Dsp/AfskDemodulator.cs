@@ -7,16 +7,19 @@ namespace VE3NEA.SkyTlm.Dsp
   /// <summary>
   /// AFSK-over-FM demodulator (Bell-202 audio subcarrier carried on an FM link, e.g. CUBEBUG-2's 1k2 downlink).
   /// The RF is FM, so the audio is one discriminator away; but that audio is itself a 1200 Hz (mark) / 2200 Hz
-  /// (space) tone pair, which the plain FSK slicer would sample directly as NRZI and close the eye. This adds the
-  /// missing audio→symbol stage: <b>FM-discriminate the RF → real audio → complex-mix down by the audio
-  /// subcarrier (<see cref="SignalParams.AfCarrier"/>) so the two tones straddle DC at ±<see
-  /// cref="SignalParams.Deviation"/></b>, then hand the resulting complex baseband to the shared
-  /// <see cref="CpmFskDemodulator"/> with the plain-2-FSK profile (the non-coherent orthogonal dual-tone matched
-  /// filter). The whole FSK engine — channel filter, Gardner timing, eye metric — and the AX.25 deframer are
-  /// reused unchanged; only this front end is AFSK-specific. This is the gr-satellites AFSK chain
-  /// (discriminate → freq-xlate by af_carrier → FSK demod at the tone half-spacing) expressed over the SkyTlm
-  /// engine. Keeping the modulation tagged AFSK (not collapsed to FSK) also makes <see cref="CfoEstimator"/> use
-  /// carrier-symmetry CFO, which locks the dominant unmodulated carrier line instead of the mark sideband.
+  /// (space) tone pair. Bell-202 is <b>non-orthogonal</b> (h = 2·500/1200 ≈ 0.83), so the shared FSK engine's
+  /// down-mix-and-orthogonal-boxcar detector — built for wide-h orthogonal FSK — closes the eye on carrier-dominated
+  /// passes. This front end instead runs the <b>direwolf "profile-A" tone correlator</b>: FM-discriminate the RF to
+  /// audio, then two <b>continuous mark/space quadrature correlators</b> (quadrature-mix at each tone, matched-filter
+  /// low-pass over ~1.5 symbols, take the envelope magnitude) whose difference <c>|mark| − |space|</c> is the soft
+  /// decision signal. A whole-burst two-cluster threshold (<see cref="CpmFskDemodulator.CenterGlobal"/>) centres it,
+  /// then a direwolf-style transition-nudged DPLL (<see cref="DpllSync"/>) recovers symbol timing and the AX.25
+  /// deframer is reused unchanged — only this front end is AFSK-specific. (The shared Gardner PI loop was tried but
+  /// its whole-burst Oerder–Meyr seed is corrupted by the fading tail and it locks half a symbol off; the DPLL is
+  /// robust there. A whole-burst timing fit that beats the DPLL is future work — see the Phase 2 plan.)
+  /// Ported/validated against direwolf on the CUBEBUG-2 ground-truth recording (single CRC-valid frame at t≈197.6 s).
+  /// Keeping the modulation tagged AFSK (not collapsed to FSK) also makes <see cref="CfoEstimator"/> use
+  /// carrier-symmetry CFO, which locks the dominant unmodulated carrier line.
   /// </summary>
   public sealed class AfskDemodulator : IDemodulator
   {
@@ -26,68 +29,135 @@ namespace VE3NEA.SkyTlm.Dsp
     /// <summary>Bell-202 tone half-spacing (Hz) = (2200 − 1200)/2 — the FSK deviation of the down-mixed baseband.</summary>
     public const double DefaultDeviationHz = 500.0;
 
-    private readonly CpmFskDemodulator inner;
+    /// <summary>Correlator low-pass cutoff as a fraction of the baud rate. 0.6·baud gives an effective matched-filter
+    /// integration of ≈1/(0.6·Rs) ≈ 1.7 symbols — the ablation sweet spot (≥1 symbol is essential, ~2.8-symbol
+    /// rectangular over-integrates into ISI).</summary>
+    private const double LowpassCutoffBaud = 0.6;
 
-    public AfskDemodulator(GmskDemodOptions? options = null)
-      => inner = new CpmFskDemodulator(ModProfile.Fsk, options);
+    /// <summary>Correlator low-pass window length in symbols — long enough to realize the <see cref="LowpassCutoffBaud"/>
+    /// skirt cleanly (the window sharpens the band edge; the cutoff, not the window, sets the integration time).</summary>
+    private const double LowpassWindowSymbols = 2.8;
+
+    /// <summary>One-sided pre-discriminator RF low-pass cutoff (Hz) ≈ a 12.5 kHz NBFM channel. Band-limiting the FM
+    /// signal before the nonlinear discriminator suppresses out-of-band noise that would otherwise turn into
+    /// impulsive click noise and flip symbols despite a good average eye. Override with <c>AFSK_RFBW</c> (0 = off).</summary>
+    private const double DefaultRfBandwidthHz = 6000.0;
+
+    // the correlator + DPLL front end is self-contained; the GMSK options are accepted for factory parity but the
+    // AFSK path has no GMSK-style tunables (its filter/timing constants live here).
+    public AfskDemodulator(GmskDemodOptions? options = null) { }
 
     public SoftSymbols Demodulate(Complex32[] iq, Burst burst, SignalParams p)
       => DemodulateSegment(Acquisition.Derotate(iq, burst), p);
 
-    /// <summary>Demodulate an already CFO-corrected RF segment: discriminate to audio, mix to baseband,
-    /// then run the shared FSK engine at the tone half-spacing.</summary>
+    /// <summary>Demodulate an already CFO-corrected RF segment: discriminate to audio, run the mark/space tone
+    /// correlator to a real decision signal, then recover timing + soft symbols with the shared engine.</summary>
     public SoftSymbols DemodulateSegment(Complex32[] seg, SignalParams p)
     {
-      Complex32[] baseband = AudioToBaseband(seg, p);
-      // the down-mixed baseband is a plain 2-FSK signal: tones at ±(tone half-spacing) about DC. Reuse the FSK
-      // engine (orthogonal MF) at that deviation. The audio→baseband step keeps the sample rate, so the settled
-      // samples/symbol the caller reads back still maps symbol index → stream time unchanged.
-      var pInner = p with
+      float[] demod = CorrelatorDemod(seg, p);
+      CpmFskDemodulator.CenterGlobal(demod);   // whole-burst two-cluster threshold → decision signal centred on 0
+
+      double sps = p.SampleRate / p.Baud;
+      var (soft, settledSps) = DpllSync(demod, sps);
+      var (eyeDb, ambig) = CpmFskDemodulator.EyeQuality(soft);
+      return new SoftSymbols
       {
-        Modulation = Modulation.FSK,
-        Deviation = p.Deviation ?? DefaultDeviationHz
+        Soft = soft,
+        SymbolRate = p.Baud,
+        SamplesPerSymbol = settledSps,
+        EyeSnrDb = eyeDb,
+        AmbiguousFraction = ambig
       };
-      return inner.DemodulateSegment(baseband, pInner);
     }
 
     /// <summary>
-    /// FM-discriminate the RF burst to the real audio waveform (<c>arg(x[n]·conj(x[n−1]))</c>, the message
-    /// signal), then complex-mix that audio down by the audio subcarrier so the 1200/2200 Hz tones move to
-    /// ∓(tone half-spacing) about DC — the symmetric-about-DC form the FSK engine and its orthogonal detector
-    /// expect. The real audio is carried in the real part of a complex buffer so the shared complex mixer can
-    /// rotate it; the mixer's image (at −af_carrier−tone) lands well outside the FSK channel filter's passband
-    /// and is dropped by the engine's own channel filter. The discriminator's constant scale is immaterial —
-    /// the orthogonal detector is magnitude-ratio normalized.
+    /// Direwolf-style digital PLL symbol timing: a phase accumulator advances by one symbol per revolution and
+    /// samples <paramref name="demod"/> at each wrap; every zero-crossing (bit transition) nudges the accumulator
+    /// toward the transition. A first-order, transition-tracked loop that acquires within a couple symbols and
+    /// re-locks through fades — more robust on the marginal AFSK burst than the Gardner PI loop, whose whole-burst
+    /// Oerder–Meyr seed is corrupted by the fading tail.
     /// </summary>
-    private static Complex32[] AudioToBaseband(Complex32[] seg, SignalParams p)
+    private static (float[] soft, double sps) DpllSync(float[] demod, double sps)
+    {
+      int n = demod.Length;
+      var soft = new System.Collections.Generic.List<float>(n / Math.Max(1, (int)sps) + 16);
+      uint step = (uint)Math.Round(4294967296.0 / sps);   // 2^32 per symbol
+      int pll = 0; bool prevBit = false;
+      for (int i = 0; i < n; i++)
+      {
+        int prev = pll;
+        pll = unchecked((int)((uint)pll + step));
+        if (pll < 0 && prev >= 0) soft.Add(demod[i]);       // accumulator wrapped → sample at the symbol centre
+        bool bit = demod[i] > 0;
+        if (bit != prevBit) pll = (int)(pll * 0.6f);         // nudge the phase toward the observed transition
+        prevBit = bit;
+      }
+      return (soft.ToArray(), sps);
+    }
+
+    /// <summary>
+    /// Direwolf profile-A tone correlator. FM-discriminate the RF burst to the real audio waveform
+    /// (<c>arg(x[n]·conj(x[n−1]))</c>, the message signal carrying the 1200/2200 Hz tones), then run two
+    /// quadrature correlators: quadrature-mix the audio down from the mark and space tone frequencies to DC (native
+    /// SIMD <see cref="global::VE3NEA.Dsp.Mix"/>), matched-filter low-pass each complex result over ~1.5 symbols
+    /// (<see cref="LiquidFir.ConvolveSame"/>), and take the envelope magnitude. The per-sample soft decision is the
+    /// <b>tone difference</b> <c>|mark| − |space|</c>. A pre-discriminator RF band-limit (<see cref="DefaultRfBandwidthHz"/>)
+    /// keeps out-of-band noise from becoming click-noise outliers in the nonlinear discriminator. The discriminator's
+    /// constant scale is immaterial (the downstream <see cref="CpmFskDemodulator.CenterGlobal"/> sets the threshold).
+    /// </summary>
+    private static float[] CorrelatorDemod(Complex32[] seg, SignalParams p)
     {
       int n = seg.Length;
-      var audio = new Complex32[n];
+
+      // band-limit the RF to ~Carson bandwidth BEFORE the nonlinear discriminator: out-of-band noise otherwise
+      // dominates the per-sample phase difference and produces impulsive click noise that flips symbols despite a
+      // good average eye. Zero-phase, so symbol timing is unaffected.
+      double rfBwHz = double.TryParse(Environment.GetEnvironmentVariable("AFSK_RFBW"), out var rb) ? rb : DefaultRfBandwidthHz;
+      if (rfBwHz > 0)
+      {
+        double fcRf = rfBwHz / p.SampleRate;
+        if (fcRf < 0.5)
+        {
+          int rfTaps = (int)Math.Round(6 * (p.SampleRate / p.Baud)) | 1;
+          rfTaps = Math.Max(41, Math.Min(rfTaps, 511));
+          seg = LiquidFir.ConvolveSame(seg, KernelCache.BlackmanSinc(fcRf, rfTaps));
+        }
+      }
+
+      // FM-discriminate the RF to real audio (rad/sample). Carried in the real part of a complex buffer so the
+      // shared complex mixer can rotate it; a constant CFO only adds a DC term (the tones stay at ±dev about af_carrier).
+      var mark = new Complex32[n];
       for (int i = 1; i < n; i++)
       {
-        // arg(seg[i] · conj(seg[i-1])) — instantaneous frequency (rad/sample) = the recovered audio sample
         float re = seg[i].Real * seg[i - 1].Real + seg[i].Imaginary * seg[i - 1].Imaginary;
         float im = seg[i].Imaginary * seg[i - 1].Real - seg[i].Real * seg[i - 1].Imaginary;
-        audio[i] = new Complex32((float)Math.Atan2(im, re), 0f);
+        mark[i] = new Complex32((float)Math.Atan2(im, re), 0f);
       }
-      audio[0] = n > 1 ? audio[1] : default;
+      mark[0] = n > 1 ? mark[1] : default;
+      var space = (Complex32[])mark.Clone();
 
-      // mix the audio subcarrier down to DC: multiply by exp(−j2π·fc·n). tones 1200/2200 → ∓(fc−tone) ≈ ∓500 Hz.
-      double fc = (p.AfCarrier ?? DefaultAfCarrierHz) / p.SampleRate;
-      global::VE3NEA.Dsp.Mix(audio, -fc);
-
-      // low-pass the down-mixed baseband to ±2·deviation (the gr-satellites af-carrier filter cutoff), removing
-      // the mixer image at −(af_carrier+tone) and the out-of-band FM-discriminator click noise before the tones
-      // reach the FSK engine — the FM discriminator is nonlinear, so its noise is broadband and the tone
-      // correlator sees a cleaner eye once it is filtered off here rather than only by the wider FSK channel filter.
+      // mark = af_carrier − dev (1200 Hz), space = af_carrier + dev (2200 Hz)
+      double afCarrier = p.AfCarrier ?? DefaultAfCarrierHz;
       double dev = p.Deviation ?? DefaultDeviationHz;
-      double cutoff = 2.0 * dev / p.SampleRate;
-      if (cutoff < 0.5)
-      {
-        int taps = Math.Max(41, Math.Min((int)Math.Round(6 * (p.SampleRate / p.Baud)) | 1, 511));
-        audio = LiquidFir.ConvolveSame(audio, KernelCache.BlackmanSinc(cutoff, taps));
-      }
-      return audio;
+      double markF = (afCarrier - dev) / p.SampleRate;   // cycles/sample
+      double spaceF = (afCarrier + dev) / p.SampleRate;
+
+      // quadrature-mix each tone down to DC, then matched-filter low-pass to its complex envelope. The windowed-sinc
+      // LP beat every boxcar length and the fade-normalized variant on the synthetic; a longer window only sharpens
+      // the band edge — the cutoff, not the window, sets the ~1.7-symbol integration time.
+      global::VE3NEA.Dsp.Mix(mark, -markF);
+      global::VE3NEA.Dsp.Mix(space, -spaceF);
+      double cutoff = LowpassCutoffBaud * p.Baud / p.SampleRate;
+      int taps = Math.Max(41, Math.Min((int)Math.Round(LowpassWindowSymbols * p.SampleRate / p.Baud) | 1, 511));
+      float[] lp = KernelCache.BlackmanSinc(cutoff, taps);
+      mark = LiquidFir.ConvolveSame(mark, lp);
+      space = LiquidFir.ConvolveSame(space, lp);
+
+      // tone difference |mark| − |space| is the soft decision (CenterGlobal handles the threshold downstream)
+      var demod = new float[n];
+      for (int i = 0; i < n; i++)
+        demod[i] = mark[i].Magnitude - space[i].Magnitude;
+      return demod;
     }
   }
 }

@@ -278,7 +278,7 @@ namespace VE3NEA.SkyTlm.Dsp
     /// midpoint of the two frequency clusters instead — the mean of samples above a provisional mean and the
     /// mean of those below — which sits at the eye centre even for an imbalanced/edge-noisy run.
     /// </summary>
-    private static void CenterGlobal(float[] f)
+    internal static void CenterGlobal(float[] f)
     {
       int n = f.Length;
       if (n == 0) return;
