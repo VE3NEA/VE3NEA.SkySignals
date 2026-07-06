@@ -13,12 +13,14 @@ namespace VE3NEA.SkyTlm.Dsp
   /// audio, then two <b>continuous mark/space quadrature correlators</b> (quadrature-mix at each tone, matched-filter
   /// low-pass over ~1.5 symbols, take the envelope magnitude) whose difference <c>|mark| − |space|</c> is the soft
   /// decision signal. A whole-burst two-cluster threshold (<see cref="CpmFskDemodulator.CenterGlobal"/>) centres it,
-  /// then <see cref="RecoverTiming"/> recovers symbol timing non-causally: the direwolf transition-nudged DPLL
-  /// (<see cref="DpllStrobes"/>) gives a robust coarse lock, and a whole-burst clock-line fit + bidirectional pass
-  /// (Phase 2 T1/T2) reclaim the tracking lag and acquisition transient a first-order causal loop throws away. The
-  /// AX.25 deframer is reused unchanged — only this front end is AFSK-specific. (The shared Gardner PI loop was tried
-  /// but its whole-burst Oerder–Meyr seed is corrupted by the fading tail and it locks half a symbol off; the DPLL is
-  /// robust there. Set <c>AFSK_TIMING=dpll</c> to fall back to the plain causal loop.)
+  /// then <see cref="RecoverTiming"/> recovers symbol timing with the direwolf transition-nudged causal DPLL
+  /// (<see cref="DpllSyncLegacy"/>). A non-causal whole-burst clock-line fit + bidirectional pass (Phase 2 T1/T2,
+  /// <see cref="DpllStrobes"/>/<see cref="WeightedLineFit"/>) is opt-in via <c>AFSK_TIMING=fit</c> but is not the
+  /// default: it helped a synthetic fading tail yet regressed every burst of the real CUBEBUG-2 pass (a straight clock
+  /// line can't follow the within-burst timing curvature the adaptive loop tracks).
+  /// The AX.25 deframer is reused unchanged — only this front end is AFSK-specific. (The shared Gardner PI loop was
+  /// tried but its whole-burst Oerder–Meyr seed is corrupted by the fading tail and it locks half a symbol off; the
+  /// DPLL is robust there.)
   /// Ported/validated against direwolf on the CUBEBUG-2 ground-truth recording (single CRC-valid frame at t≈197.6 s).
   /// Keeping the modulation tagged AFSK (not collapsed to FSK) also makes <see cref="CfoEstimator"/> use
   /// carrier-symmetry CFO, which locks the dominant unmodulated carrier line.
@@ -87,11 +89,15 @@ namespace VE3NEA.SkyTlm.Dsp
     /// the time-reversed burst so its acquisition transient lands on the opposite edge; the first-order tracking lag
     /// is equal-and-opposite in the two directions, so averaging the two fitted grids cancels it. Finally resample
     /// <paramref name="demod"/> at the averaged fractional instants with a cubic interpolator
-    /// (<see cref="global::VE3NEA.Dsp.Interp"/>). <c>AFSK_TIMING=dpll</c> selects the plain causal loop instead.
+    /// (<see cref="global::VE3NEA.Dsp.Interp"/>). Opt-in via <c>AFSK_TIMING=fit</c>; the default is the causal loop
+    /// (<see cref="DpllSyncLegacy"/>), which beat this fit on the real CUBEBUG-2 pass.
     /// </summary>
     private static (float[] soft, double sps) RecoverTiming(float[] demod, double sps)
     {
-      if (string.Equals(Environment.GetEnvironmentVariable("AFSK_TIMING"), "dpll", StringComparison.OrdinalIgnoreCase))
+      // default is the causal DPLL. On the real CUBEBUG-2 pass the whole-burst line fit regressed every burst (eye
+      // ~0.4-1.8 dB lower) and lost the only CRC-valid frame (2026-07-06): a straight clock line can't follow the
+      // within-burst timing curvature the adaptive loop tracks. T1+T2 is opt-in via AFSK_TIMING=fit (fade-tail case).
+      if (!string.Equals(Environment.GetEnvironmentVariable("AFSK_TIMING"), "fit", StringComparison.OrdinalIgnoreCase))
         return DpllSyncLegacy(demod, sps);
 
       // T1: forward DPLL strobes → weighted clock-line fit (φ₀, T).
@@ -177,8 +183,8 @@ namespace VE3NEA.SkyTlm.Dsp
     }
 
     /// <summary>
-    /// Plain direwolf digital-PLL symbol timing (the Phase 1 causal loop, kept as the <c>AFSK_TIMING=dpll</c>
-    /// fallback and for A/B): a phase accumulator advances by one symbol per revolution and samples
+    /// Plain direwolf digital-PLL symbol timing (the Phase 1 causal loop, now the default; <c>AFSK_TIMING=fit</c>
+    /// opts into the T1/T2 fit instead): a phase accumulator advances by one symbol per revolution and samples
     /// <paramref name="demod"/> at each wrap; every bit transition nudges the accumulator toward the transition.
     /// First-order and transition-tracked — acquires within a couple symbols and re-locks through fades.
     /// </summary>
