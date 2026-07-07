@@ -155,6 +155,13 @@ namespace VE3NEA.SkyTlm.Core
     /// whose carrier energy concentrates in exactly the 3 zeroed bins, lowering the matched z-statistic. The
     /// Detection Inspector A/Bs this toggle; <c>--regress</c> decides whether to flip the default.</summary>
     public bool NotchDc { get; init; } = true;
+
+    /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
+    /// (CFO, SNR, shape match) but is <b>never</b> demodulated or deframed — no <see cref="IDemodulator"/>,
+    /// no blind-FSK estimation, no CRC. For the Detection Inspector, which only needs the detector's own
+    /// internals and must not pay for (or be skewed by) a full decode of every recording it loads. Default
+    /// <c>false</c>: the production/decode path.</summary>
+    public bool DetectOnly { get; init; } = false;
   }
 
   /// <summary>
@@ -873,6 +880,11 @@ namespace VE3NEA.SkyTlm.Core
     private void DecodeBurst(Complex32[] seg, float[] avgQ, float[] avgQRaw, long segStartAbs, long detStartAbs, int detLen, double snr,
       double matchedFrac, int shapedFrames, double meanMatch, Complex32[]? tailSeg, long tailStartAbs, ref List<Frame>? frames)
     {
+      if (o.DetectOnly)
+      {
+        EmitDetectOnlyReport(seg, avgQ, avgQRaw, segStartAbs, detStartAbs, detLen, snr, matchedFrac, shapedFrames, meanMatch);
+        return;
+      }
       if (demod == null) return;   // modulation we don't demodulate (CW/SSTV/PSK) — nothing to do
       try
       {
@@ -1079,6 +1091,42 @@ namespace VE3NEA.SkyTlm.Core
         // one bad burst must not sink the live stream (mirrors the batch pipeline's per-burst guards).
         Log.Warning(ex, "Streaming burst decode failed at sample {Start}", segStartAbs);
       }
+    }
+
+    /// <summary>Detection-only twin of <see cref="DecodeBurst"/>: computes the same burst spectral stats
+    /// (CFO, shape, matched-bank score) the curated decode path derives from <paramref name="avgQ"/>, but
+    /// never runs the demodulator/deframer — no blind-FSK estimation, no CRC, no frames. Used by
+    /// <see cref="StreamingOptions.DetectOnly"/> so the Detection Inspector gets a <see cref="StreamingBurstReport"/>
+    /// per closed span without paying for (or being skewed by) a full decode.</summary>
+    private void EmitDetectOnlyReport(Complex32[] seg, float[] avgQ, float[] avgQRaw, long segStartAbs, long detStartAbs, int detLen,
+      double snr, double matchedFrac, int shapedFrames, double meanMatch)
+    {
+      var info = cfo.AnalyzeSpectrum(avgQ);
+      var measured = cfo.EstimateShapeFromSpectrum(avgQ, info.CfoHz);
+      var (match, matchedHyp, shapePass) = MatchBank(measured);
+
+      bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames) || shapePass;
+      if (o.GateByShape && !validated) return;
+
+      double timeSeconds = detStartAbs / fs;
+      int idx = burstCounter;
+
+      var abs = new Burst((int)detStartAbs, (int)(detStartAbs + detLen), fs, info.CfoHz, snr)
+      {
+        ShapeScore = match,
+        BandwidthHz = info.BandwidthHz
+      };
+      LastBurst = abs;
+      LastBurstTimeSeconds = timeSeconds;
+      burstCounter = idx + 1;
+
+      var (lagBaud, corr) = CpmTemplate.Correlation(measured, matchedHyp.Shape);
+      var lagHz = new double[lagBaud.Length];
+      for (int k = 0; k < lagBaud.Length; k++) lagHz[k] = lagBaud[k] * p.Baud;
+
+      var soft = new SoftSymbols { Soft = Array.Empty<float>(), SymbolRate = p.Baud };
+      BurstDecoded?.Invoke(new StreamingBurstReport(idx, segStartAbs, seg.Length, timeSeconds, validated,
+        abs, soft, null, Array.Empty<Frame>(), measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp, avgQRaw));
     }
 
     /// <summary>Match the burst's measured averaged spectrum against every bank hypothesis. Returns the best
