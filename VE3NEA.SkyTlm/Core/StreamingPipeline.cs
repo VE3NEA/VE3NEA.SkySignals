@@ -1049,7 +1049,11 @@ namespace VE3NEA.SkyTlm.Core
         // proof of digital signal — every detected burst was demodulated, so a telemetry frame embedded in
         // e.g. an SSTV span is never lost to the gate. For blind bursts the FSK gate already validated the
         // spectrum; CRC-valid here promotes to a confirmed decode.
-        bool eyePass = activeDemod is CpmFskDemodulator
+        // AfskDemodulator is the other FM-discriminator-path demod with a real eye metric — it computes
+        // EyeSnrDb via the same CpmFskDemodulator.EyeQuality() helper (see AfskDemodulator.DemodulateSegment),
+        // just from its own tone-correlator front end. It hits exactly the carrier-dominated case this rescue
+        // documents (CUBEBUG-2), so excluding it here left every AFSK burst without this rescue path.
+        bool eyePass = activeDemod is CpmFskDemodulator or AfskDemodulator
                        && soft.EyeSnrDb >= o.MinEyeSnrDb
                        && soft.Count >= o.MinEyeSymbols;
         bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)

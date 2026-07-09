@@ -32,6 +32,9 @@ namespace VE3NEA.SkyTlm.Dsp
     private readonly record struct Key(PulseShape Pulse, int BaudHz, int DevHz);
     private static readonly ConcurrentDictionary<Key, LearnedShape> cache = new();
 
+    private readonly record struct AfskKey(int BaudHz, int MarkHz, int SpaceHz, int RfDevHz);
+    private static readonly ConcurrentDictionary<AfskKey, LearnedShape> afskCache = new();
+
     /// <summary>Synthesized PSD template for the params, resampled onto the <see cref="LearnedShape"/> grid (cached).</summary>
     public static LearnedShape Synthesize(SignalParams p)
     {
@@ -65,6 +68,10 @@ namespace VE3NEA.SkyTlm.Dsp
       // non-CPM labels: the single labeled template, with today's two-tone (0.55) threshold class
       if (p.Modulation is not (Modulation.FSK or Modulation.AFSK or Modulation.GFSK or Modulation.GMSK))
         return new[] { new ShapeHypothesis(p.Modulation.ToString(), Synthesize(p), Bell: false) };
+
+      // AFSK-over-FM has no RF-domain deviation to plug into the plain two-tone CPFSK model below (see
+      // SynthesizeAfskBank) — its RF spectrum is a different shape entirely.
+      if (p.Modulation == Modulation.AFSK) return SynthesizeAfskBank(p);
 
       var (pulse, bt, dev) = ResolveCpm(p);
       var candidates = new (PulseShape pulse, double bt, double dev, bool labeled)[]
@@ -102,6 +109,37 @@ namespace VE3NEA.SkyTlm.Dsp
         if (m > best) { best = m; bestHyp = h; }
       }
       return (best, bestHyp);
+    }
+
+    /// <summary>
+    /// AFSK-over-FM hypothesis bank. <see cref="SignalParams.Deviation"/> for AFSK is the <b>audio</b> tone
+    /// half-spacing after FM discrimination (Bell-202: 500 Hz mark/space straddling <see
+    /// cref="SignalParams.AfCarrier"/> — see <see cref="AfskDemodulator"/>), not an RF-domain deviation, so the
+    /// plain two-tone CPFSK model <see cref="ResolveCpm"/> builds for FSK does not represent this signal's
+    /// RF/IQ spectrum at all: it is a carrier-dominated FM subcarrier — the continuous-phase Bell-202 audio tone
+    /// itself frequency-modulates the RF carrier, at an RF deviation the transmitter sets and
+    /// <see cref="SignalParams"/> has no field for. Numerically synthesize that two-stage (audio-CPFSK-into-RF-FM)
+    /// signal at a small sweep of plausible RF deviations bracketing the ~6 kHz Carson bandwidth
+    /// <see cref="AfskDemodulator.DefaultRfBandwidthHz"/> assumes, and let <see cref="MatchBest"/> pick whichever
+    /// the measured burst actually looks like.
+    /// </summary>
+    private static IReadOnlyList<ShapeHypothesis> SynthesizeAfskBank(SignalParams p)
+    {
+      double baud = p.Baud;
+      double audioDev = p.Deviation is double d && d > 0 ? d : AfskDemodulator.DefaultDeviationHz;
+      double afCarrier = p.AfCarrier ?? AfskDemodulator.DefaultAfCarrierHz;
+      double markHz = afCarrier - audioDev, spaceHz = afCarrier + audioDev;
+
+      var rfDevsHz = new[] { 1500.0, 2500.0, 3500.0, 4500.0 };
+      var bank = new List<ShapeHypothesis>(rfDevsHz.Length);
+      foreach (double rfDev in rfDevsHz)
+      {
+        var shape = CachedAfskSubcarrier(baud, markHz, spaceHz, rfDev);
+        // carrier-dominated FM: peaks at the carrier for any deviation in this range, so it is scored as a
+        // "bell" shape (the stricter analog-interloper threshold), same class as GMSK/GFSK.
+        bank.Add(new ShapeHypothesis($"AFSK subcarrier {rfDev / 1000:0.#}k", shape, Bell: true));
+      }
+      return bank;
     }
 
     /// <summary>The (pulse, BT, deviation) triple a labeled CPM modulation maps to — the single-model rules
@@ -190,6 +228,38 @@ namespace VE3NEA.SkyTlm.Dsp
       return (lag, corr);
     }
 
+    /// <summary>
+    /// The exact windowed, z-scored (mean-subtracted, unit-variance) dB slices that <see cref="Match"/> feeds
+    /// into <see cref="Ncc"/> — i.e. what the detector actually compares, not the full peak-normalized profile
+    /// <see cref="LearnedShape.Profile"/> holds. Returns the shared frequency-offset axis (Hz, lag 0) and both
+    /// z-scored curves; empty arrays when the window collapses (<see cref="Match"/> would return 0).
+    /// </summary>
+    public static (double[] hz, double[] measuredZ, double[] templateZ) MatchWindow(LearnedShape measured, LearnedShape template, double baud)
+    {
+      TemplateWindow(template, out double w);
+      double wEff = System.Math.Min(w, measured.ValidHalfBaud);
+      if (wEff <= 0) return (System.Array.Empty<double>(), System.Array.Empty<double>(), System.Array.Empty<double>());
+      const int M = 161;
+      var t = Slice(template, -wEff, wEff, M);
+      var s = Slice(measured, -wEff, wEff, M);
+      var hz = new double[M];
+      for (int k = 0; k < M; k++) hz[k] = (-wEff + 2.0 * wEff * k / (M - 1)) * baud;
+      return (hz, ZScore(ToLog(s)), ZScore(ToLog(t)));
+    }
+
+    /// <summary>Mean-subtract and unit-variance-scale a vector (population std). Flat input maps to all zeros.</summary>
+    private static double[] ZScore(double[] x)
+    {
+      int n = x.Length;
+      double m = 0; for (int i = 0; i < n; i++) m += x[i]; m /= n;
+      double v = 0; for (int i = 0; i < n; i++) { double d = x[i] - m; v += d * d; }
+      double sd = System.Math.Sqrt(v / n);
+      var y = new double[n];
+      if (sd <= 0) return y;
+      for (int i = 0; i < n; i++) y[i] = (x[i] - m) / sd;
+      return y;
+    }
+
     /// <summary>Half-width (baud) of the correlation window: 2× the template's significant support (≥5% of
     /// peak), so the central half holds the signal and the outer half is the template's zero skirt. 0 when the
     /// template has no support.</summary>
@@ -256,6 +326,102 @@ namespace VE3NEA.SkyTlm.Dsp
       for (int i = 0; i < n; i++) profile[i] = (float)(profile[i] / peak);
 
       return new LearnedShape { DeviationHz = dev, BandwidthHz = 0, Profile = profile, Count = 1 };
+    }
+
+    /// <summary>The synthesized AFSK-over-FM PSD template for one RF deviation, resampled onto the
+    /// <see cref="LearnedShape"/> grid (cached).</summary>
+    private static LearnedShape CachedAfskSubcarrier(double baud, double markHz, double spaceHz, double rfDevHz)
+    {
+      var key = new AfskKey((int)System.Math.Round(baud), (int)System.Math.Round(markHz), (int)System.Math.Round(spaceHz), (int)System.Math.Round(rfDevHz));
+      return afskCache.GetOrAdd(key, _ => BuildAfskSubcarrier(baud, markHz, spaceHz, rfDevHz));
+    }
+
+    private static LearnedShape BuildAfskSubcarrier(double baud, double markHz, double spaceHz, double rfDevHz)
+    {
+      var (freqHz, psd) = SynthesizeAfskSubcarrierPsd(baud, markHz, spaceHz, rfDevHz);
+
+      int n = LearnedShape.GridPoints;
+      var profile = new float[n];
+      double peak = 1e-30;
+      for (int i = 0; i < n; i++)
+      {
+        double f = LearnedShape.BaudAt(i) * baud;       // grid offset (Hz) from the carrier
+        float v = (float)Sample(freqHz, psd, f);
+        profile[i] = v;
+        if (v > peak) peak = v;
+      }
+      for (int i = 0; i < n; i++) profile[i] = (float)(profile[i] / peak);
+
+      return new LearnedShape { DeviationHz = rfDevHz, BandwidthHz = 0, Profile = profile, Count = 1 };
+    }
+
+    /// <summary>
+    /// Random-data AFSK-over-FM synthesis → Welch PSD: a continuous-phase Bell-202 audio tone (alternating
+    /// mark/space, non-coherent CPFSK at the data baud rate) itself frequency-modulates an RF carrier at
+    /// <paramref name="rfDevHz"/> peak deviation — the two-stage "FM of an FSK audio tone" that
+    /// <see cref="AfskDemodulator"/>'s FM-discriminate-then-tone-correlate front end assumes. Integrated
+    /// sample-by-sample (same Euler-integrator style as <see cref="SynthesizePsd"/>) rather than solved via the
+    /// classical Bessel-line FM spectrum, so the same random-data/Welch-PSD machinery applies unchanged.
+    /// Returns (freqHz ascending, peak-normalized power).
+    /// </summary>
+    private static (double[] freqHz, double[] psd) SynthesizeAfskSubcarrierPsd(double baud, double markHz, double spaceHz, double rfDevHz)
+    {
+      const int sps = 16;   // headroom above the 2·spaceHz + 2·rfDevHz instantaneous excursion
+      const int nSym = 1 << 16;
+      int n = nSym * sps;
+      double fsSyn = sps * baud;
+
+      // random mark/space bits (deterministic seed → stable, cacheable shape)
+      var rnd = new System.Random(0x5EED);
+      var s = new Complex32[n];
+      double audioPhase = 0, rfPhase = 0;
+      for (int k = 0; k < nSym; k++)
+      {
+        double toneHz = rnd.Next(2) == 0 ? markHz : spaceHz;
+        double audioStep = 2.0 * System.Math.PI * toneHz / fsSyn;
+        double rfStep = 2.0 * System.Math.PI * rfDevHz / fsSyn;
+        int b = k * sps;
+        for (int i = 0; i < sps; i++)
+        {
+          audioPhase += audioStep;                                  // continuous-phase audio tone (mark/space)
+          rfPhase += rfStep * System.Math.Cos(audioPhase);           // that tone FM-modulates the RF carrier
+          s[b + i] = new Complex32((float)System.Math.Cos(rfPhase), (float)System.Math.Sin(rfPhase));
+        }
+      }
+
+      const int L = 8192, hop = L / 2;
+      float[] win = global::VE3NEA.Dsp.BlackmanHarrisWindow(L);
+      var acc = new double[L];
+      int blocks = 0;
+      using (var fft = new Fft<Complex32>(L, NativeFftw.FftwFlags.Estimate))
+      {
+        for (int off = 0; off + L <= n; off += hop)
+        {
+          for (int i = 0; i < L; i++) fft.InputData[i] = s[off + i] * win[i];
+          fft.Execute();
+          for (int k = 0; k < L; k++)
+          {
+            var c = fft.OutputData[k];
+            acc[k] += (double)c.Real * c.Real + (double)c.Imaginary * c.Imaginary;
+          }
+          blocks++;
+        }
+      }
+
+      double binHz = fsSyn / L;
+      var freq = new double[L];
+      var val = new double[L];
+      double max = 1e-30;
+      for (int k = 0; k < L; k++)
+      {
+        int signed = k <= L / 2 ? k : k - L;
+        freq[k] = signed * binHz;
+        val[k] = blocks > 0 ? acc[k] / blocks : 0;
+        if (val[k] > max) max = val[k];
+      }
+      for (int k = 0; k < L; k++) val[k] /= max;
+      System.Array.Sort(freq, val);
+      return (freq, val);
     }
 
     /// <summary>Random-data CPM synthesis → Welch PSD. Returns (freqHz ascending, peak-normalized power).</summary>
