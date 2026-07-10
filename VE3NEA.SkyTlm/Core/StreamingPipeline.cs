@@ -115,8 +115,11 @@ namespace VE3NEA.SkyTlm.Core
 
     /// <summary>The fraction gate also needs at least this many shaped frames in absolute terms — a 2-frame
     /// noise or impulse blip trivially scores frac 1/1, while any real telemetry burst (≥ ~0.3 s) has dozens
-    /// of signal-bearing frames.</summary>
-    public int MinShapedFrames { get; init; } = 5;
+    /// of signal-bearing frames. Lowered 5→4 (2026-07-10, FN-minimization pass): 4 of the corpus FNs
+    /// failed only this bar at sf=3–4 with solid matched fractions (one at mf=1.00); at 4 the corpus gains
+    /// +0.01 val recall AND +1 CRC-valid frame (296→297) for −0.03 precision, and 4 dominates 3 (same
+    /// recall/crc, better precision).</summary>
+    public int MinShapedFrames { get; init; } = 4;
 
     /// <summary>Eye-based validation for FSK-family bursts: a burst demodulated on the FM-discriminator path
     /// (GMSK/GFSK/FSK) whose recovered eye is at least this clean (<see cref="SoftSymbols.EyeSnrDb"/>) and that
@@ -135,19 +138,20 @@ namespace VE3NEA.SkyTlm.Core
 
     /// <summary>Secondary (high-confidence) validation: a burst whose burst-averaged spectrum correlates with
     /// a hypothesis of the shape bank (<see cref="CpmTemplate.SynthesizeBank"/>) at least this strongly
-    /// (<see cref="CpmTemplate.Match"/>, log power) is accepted even if the
-    /// per-frame fraction falls short — averaging over the burst recovers the shape of a very weak signal whose
-    /// individual frames are too noisy to score. <c>null</c> (default) picks per hypothesis via
-    /// <see cref="EffectiveMinShapeScore(ShapeHypothesis)"/>: 0.85 for bell shapes (SSTV's smeared average can
-    /// reach ≈0.8 against a bell), 0.55 for two-tone FSK (no analog signal mimics two symmetric tones).</summary>
+    /// (<see cref="CpmTemplate.Match"/>, magnitude domain per <see cref="MagnitudeShapeScore"/>) is accepted
+    /// even if the per-frame fraction falls short — averaging over the burst recovers the shape of a very weak
+    /// signal whose individual frames are too noisy to score. <c>null</c> (default) applies the flat 0.72 bar
+    /// adopted 2026-07-10 for the magnitude scores (corpus: val recall 0.94→0.97+ at crc held 296; SSTV's
+    /// measured magnitude ceiling on the UmKA-1 truth spans is 0.72). The historical dB-score bars were
+    /// per-hypothesis (0.85 bell / 0.55 two-tone) — restore those if <see cref="MagnitudeShapeScore"/> is
+    /// ever turned back off.</summary>
     public double? MinShapeScore { get; init; }
 
     /// <summary>The <see cref="MinShapeScore"/> actually applied for <paramref name="m"/>.</summary>
-    public double EffectiveMinShapeScore(Modulation m) =>
-      MinShapeScore ?? (m is Modulation.GMSK or Modulation.GFSK ? 0.85 : 0.55);
+    public double EffectiveMinShapeScore(Modulation m) => MinShapeScore ?? 0.72;
 
     /// <summary>The <see cref="MinShapeScore"/> actually applied to bank hypothesis <paramref name="h"/>.</summary>
-    public double EffectiveMinShapeScore(ShapeHypothesis h) => MinShapeScore ?? (h.Bell ? 0.85 : 0.55);
+    public double EffectiveMinShapeScore(ShapeHypothesis h) => MinShapeScore ?? 0.72;
 
     /// <summary>When <c>false</c>, surface <i>every</i> detected burst (flagged validated/rejected) — for
     /// visual inspection of bursts the gate would normally suppress. Default <c>true</c>: only validated
@@ -192,6 +196,16 @@ namespace VE3NEA.SkyTlm.Core
     /// correlating against them systematically punishes low-SNR bursts (Phase 2a triage, KuzGTU-1 —
     /// visually-good matches scoring ~0.6). Default <c>false</c>: pre-experiment behavior.</summary>
     public bool SnrMatchedTemplateFloor { get; init; } = false;
+
+    /// <summary>When <c>true</c>, the burst-average shape match (<see cref="CpmTemplate.Match"/>) correlates
+    /// the magnitude (√power) spectra instead of dB. The dB Pearson structurally under-scores line-dominated
+    /// spectra (AFSK-over-FM: 9 of 161 window bins are template support, so the score is mostly valley noise
+    /// plus the line-width mismatch next to the razor-thin carrier — visually perfect fits score 0.6–0.8),
+    /// while in magnitude the same bursts score 0.90+ AND the GMSK-vs-SSTV separation improves (targets
+    /// 0.81–0.98 vs SSTV ≤ 0.72 on the UmKA-1 truth spans, where the dB scores overlap outright).
+    /// Default <c>true</c> — adopted 2026-07-10 together with the flat 0.72 <see cref="MinShapeScore"/> bar
+    /// (corpus: val recall 0.94→0.97+, FN gated-out 20→~10, crc pinned at 296).</summary>
+    public bool MagnitudeShapeScore { get; init; } = true;
 
     /// <summary>Widens the per-frame matched statistic's (<see cref="StreamingPipeline.MatchedSlide"/>/
     /// <see cref="StreamingPipeline.MatchAtShift"/>) support window to this factor times the template's ≥5%
@@ -1046,13 +1060,14 @@ namespace VE3NEA.SkyTlm.Core
         }
         else if (learnedDeviationHz.HasValue)
         {
-          // session-learned path: deviation already confirmed; find carrier only, reuse cached demod
+          // session-learned path: deviation already confirmed; find carrier only, reuse cached demod.
+          // The shape is still scored per burst (learned-deviation two-tone + the canonical blind bank):
+          // a locked deviation proves an EARLIER burst was FSK, not that this one is — without the score,
+          // any noise blip after the lock validated unconditionally.
           double cfoHz = BlindFskEstimator.EstimateCarrierFromKnownDev(avgQ, occBins, binHz, o.CfoMaxHz, learnedDeviationHz.Value);
           info = new BurstSpectralInfo(cfoHz, 0, 0);
-          measured = BlindDummyShape;
-          match = 0;
-          matchedHyp = null;
-          shapePass = false;
+          measured = cfo.EstimateShapeFromSpectrum(avgQ, cfoHz);
+          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(learnedDeviationHz.Value));
           activeDemod = learnedDemod!;
           pEffective = p with { Deviation = learnedDeviationHz.Value };
           burstBlindDevHz = learnedDeviationHz.Value;
@@ -1062,12 +1077,15 @@ namespace VE3NEA.SkyTlm.Core
           // cold-start blind path: estimate deviation + carrier from the burst's own averaged PSD.
           // avgQ covers the wide detection band (devMax = min(3·baud, fs/2−baud/2−cfoMax)) so the
           // estimator can see tones from h ≈ 0.3 up to h ≈ 6 when they fall within that window.
+          // Score the measured shape against the estimated-deviation two-tone (when found) + the
+          // canonical blind bank, so blind bursts ride the same validation paths as curated ones —
+          // the old binary IsFsk auto-validate both passed zero-stat noise (HADES-SA FPs) and left
+          // real bell-shaped blind bursts (IsFsk=false) with no shape score at all (match=0), which
+          // made them unrescuable by any threshold (4 of the 8 corpus FNs at the adopted 2d settings).
           var est = BlindFskEstimator.Estimate(avgQ, occBins, binHz, p.Baud, o.CfoMaxHz);
           info = new BurstSpectralInfo(est.CfoHz, 0, 0);
-          measured = BlindDummyShape;
-          match = 0;
-          matchedHyp = null;
-          shapePass = false;
+          measured = cfo.EstimateShapeFromSpectrum(avgQ, est.CfoHz);
+          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(est.IsFsk ? est.DeviationHz : null));
           if (est.IsFsk)
           {
             // two-tone structure confirmed: demod with the estimated deviation
@@ -1178,8 +1196,9 @@ namespace VE3NEA.SkyTlm.Core
         // very weak bursts whose individual frames are too noisy to score; a clean FSK eye rescues real FSK
         // bursts whose spectrum matches no template (carrier-dominated FSK); and a CRC-valid frame is absolute
         // proof of digital signal — every detected burst was demodulated, so a telemetry frame embedded in
-        // e.g. an SSTV span is never lost to the gate. For blind bursts the FSK gate already validated the
-        // spectrum; CRC-valid here promotes to a confirmed decode.
+        // e.g. an SSTV span is never lost to the gate. Blind bursts ride the same paths: their shape is
+        // scored against the estimated/learned-deviation two-tone + the canonical blind bank (the former
+        // `validated |= blind` auto-pass validated zero-stat noise and is gone).
         // AfskDemodulator is the other FM-discriminator-path demod with a real eye metric — it computes
         // EyeSnrDb via the same CpmFskDemodulator.EyeQuality() helper (see AfskDemodulator.DemodulateSegment),
         // just from its own tone-correlator front end. It hits exactly the carrier-dominated case this rescue
@@ -1190,8 +1209,7 @@ namespace VE3NEA.SkyTlm.Core
         bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames)
                          || shapePass
                          || eyePass
-                         || burstFrames.Any(f => f.CrcValid == true)
-                         || burstBlindDevHz.HasValue;   // blind FSK burst passed the gate → surface it
+                         || burstFrames.Any(f => f.CrcValid == true);
         if (o.GateByShape && !validated) return;
 
         if (burstFrames.Count > 0) { frames ??= new List<Frame>(); frames.AddRange(burstFrames); }
@@ -1269,6 +1287,10 @@ namespace VE3NEA.SkyTlm.Core
     /// its own per-shape threshold — a bell fit must clear the higher bell bar even when it outscores a
     /// failing two-tone fit, so best-fit and pass are separate decisions.</summary>
     private (double match, ShapeHypothesis best, bool pass) MatchBank(LearnedShape measured, double snrDb)
+      => MatchBank(measured, snrDb, templateBank);
+
+    private (double match, ShapeHypothesis best, bool pass) MatchBank(LearnedShape measured, double snrDb,
+      IReadOnlyList<ShapeHypothesis> bank)
     {
       // SNR-matched floor: clamp the dB comparison at the burst's measurable dynamic range (≈ −SNR − 6 dB
       // below the peak-normalized spectrum) so template nulls the noise floor hides can't drag the Pearson
@@ -1277,15 +1299,33 @@ namespace VE3NEA.SkyTlm.Core
         ? Math.Max(CpmTemplate.LogFloor, Math.Pow(10, -(snrDb + 6.0) / 10.0))
         : CpmTemplate.LogFloor;
       double best = double.NegativeInfinity;
-      ShapeHypothesis bestHyp = templateBank[0];
+      ShapeHypothesis bestHyp = bank[0];
       bool pass = false;
-      foreach (var h in templateBank)
+      foreach (var h in bank)
       {
-        double m = CpmTemplate.Match(measured, h.Shape, floor);
+        double m = CpmTemplate.Match(measured, h.Shape, floor, o.MagnitudeShapeScore);
         if (m > best) { best = m; bestHyp = h; }
         if (m >= o.EffectiveMinShapeScore(h)) pass = true;
       }
       return (best, bestHyp, pass);
+    }
+
+    /// <summary>Shape-hypothesis bank for one blind/learned burst: the canonical blind bank
+    /// (<see cref="CpmTemplate.SynthesizeBank"/> for the deviation-less params — rect h=1, rect h=0.5,
+    /// Gaussian) plus, when the estimator found (or a CRC lock confirmed) a deviation, the two-tone
+    /// template at that deviation. The deviation is rounded to 25 Hz so the per-deviation synthesis cache
+    /// stays bounded over a long session of per-burst estimates (the template grid is far coarser anyway).</summary>
+    private IReadOnlyList<ShapeHypothesis> BlindBank(double? devHz)
+    {
+      if (devHz is not double d || d <= 0) return templateBank;
+      double dev = Math.Round(d / 25.0) * 25.0;
+      var shape = CpmTemplate.Synthesize(p with { Deviation = dev });
+      var bank = new List<ShapeHypothesis>(templateBank.Count + 1)
+      {
+        new ShapeHypothesis($"blind h={2 * dev / p.Baud:0.##}", shape, Bell: shape.SampleAtBaud(0) >= 0.5),
+      };
+      bank.AddRange(templateBank);
+      return bank;
     }
 
     /// <summary>An emitted frame, kept for overlap dedup: its bytes/time and — when the deframer reported the

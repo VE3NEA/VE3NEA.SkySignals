@@ -15,22 +15,30 @@ namespace VE3NEA.SkyTlm.Dsp
   {
     public const int FftSize = 2048;
 
+    /// <summary>Largest fraction of the Nyquist band the occupied window may take; the remainder is the
+    /// out-of-band CFAR noise reference. Without this margin a wide blind hypothesis (e.g. 9k6 at 48 kHz)
+    /// drives occHalfHz to exactly fs/2, the OOB bin set becomes empty, the rolling noise floor collapses
+    /// to ~0 and the detector fires on every noise frame (KNACKSAT-2 burst storm, 2026-07-10).</summary>
+    public const double MaxOccupiedFrac = 0.8;
+
     /// <summary>Half-width (Hz) of the band that may hold the (possibly CFO-shifted) signal: the
     /// Carson-ish occupied width plus the worst-case residual carrier offset.
     /// For blind FSK/GFSK (deviation unknown) the band is sized to the maximum plausible deviation
-    /// (h ≤ 6, dev ≤ 3·baud) so the tones are always captured regardless of the actual deviation.</summary>
+    /// (h ≤ 6, dev ≤ 3·baud) so the tones are always captured regardless of the actual deviation.
+    /// Always capped at <see cref="MaxOccupiedFrac"/>·fs/2 so a noise reference band remains.</summary>
     public static double OccupiedHalfHz(SignalParams p, double cfoMaxHz)
     {
+      double occMaxHz = MaxOccupiedFrac * p.SampleRate / 2.0;
       double dev;
       if (p.IsBlind)
       {
-        // size to max plausible deviation and keep occHalfHz < fs/2
-        double devMax = Math.Min(3.0 * p.Baud, p.SampleRate / 2.0 - p.Baud / 2.0 - cfoMaxHz);
+        // size to max plausible deviation and keep occHalfHz within the capped band
+        double devMax = Math.Min(3.0 * p.Baud, occMaxHz - p.Baud / 2.0 - cfoMaxHz);
         dev = Math.Max(devMax, p.Baud / 4.0);
       }
       else
         dev = p.Deviation ?? p.Baud / 4.0;
-      return (p.Baud + 2 * dev) / 2.0 + cfoMaxHz;
+      return Math.Min((p.Baud + 2 * dev) / 2.0 + cfoMaxHz, occMaxHz);
     }
 
     /// <summary>

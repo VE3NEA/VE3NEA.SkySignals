@@ -142,6 +142,27 @@ namespace VE3NEA.SkyTlm.Dsp
       return bank;
     }
 
+    /// <summary>RF deviation of the <see cref="SynthesizeAfskBank"/> hypothesis the detection template
+    /// samples (<see cref="AfskDetectionShapeValue"/>): the real CUBEBUG-2 bursts consistently best-match
+    /// the 2.5 kHz entry of the bank, and reusing a bank deviation shares its cached shape.</summary>
+    private const double AfskDetectionRfDevHz = 2500.0;
+
+    /// <summary>Detection-template value at offset <paramref name="f"/> Hz from the carrier for
+    /// AFSK-over-FM (the <see cref="ModulationTemplate.ShapeValue"/> entry for <see cref="Modulation.AFSK"/>):
+    /// the synthesized subcarrier PSD — same two-stage audio-CPFSK-into-RF-FM model as
+    /// <see cref="SynthesizeAfskBank"/> — at <see cref="AfskDetectionRfDevHz"/>, sampled onto the caller's
+    /// grid. The real spectrum is ~93% unmodulated carrier line, so the generic broad bell dilutes the
+    /// matched z by several dB and the per-frame Pearson rejects strong real bursts as narrow-line
+    /// interlopers; concentrating the template mass on the carrier line + sidebands puts it exactly where
+    /// the signal power is.</summary>
+    public static double AfskDetectionShapeValue(double f, SignalParams p)
+    {
+      double audioDev = p.Deviation is double d && d > 0 ? d : AfskDemodulator.DefaultDeviationHz;
+      double afCarrier = p.AfCarrier ?? AfskDemodulator.DefaultAfCarrierHz;
+      var shape = CachedAfskSubcarrier(p.Baud, afCarrier - audioDev, afCarrier + audioDev, AfskDetectionRfDevHz);
+      return shape.SampleAtBaud(f / p.Baud);
+    }
+
     /// <summary>The (pulse, BT, deviation) triple a labeled CPM modulation maps to — the single-model rules
     /// the synthesis has always used for the labeled template.</summary>
     private static (PulseShape pulse, double bt, double dev) ResolveCpm(SignalParams p) => p.Modulation switch
@@ -183,7 +204,8 @@ namespace VE3NEA.SkyTlm.Dsp
     /// real data, a true burst (energy in the centre, floor in the skirt) scores high while flat/filtered noise
     /// (no centre excess) scores ~0. Returns r∈[−1,1].
     /// </summary>
-    public static double Match(LearnedShape measured, LearnedShape template, double logFloor = LogFloor)
+    public static double Match(LearnedShape measured, LearnedShape template, double logFloor = LogFloor,
+      bool magnitude = false)
     {
       TemplateWindow(template, out double w);
       // clip the window to where the MEASURED spectrum actually carries data: a measured burst spectrum is
@@ -196,10 +218,23 @@ namespace VE3NEA.SkyTlm.Dsp
       const int M = 161;
       var t = Slice(template, -wEff, wEff, M);
       var s = Slice(measured, -wEff, wEff, M);       // measured slice, lag 0 (carrier-aligned)
+      // magnitude (√power) variant (StreamingOptions.MagnitudeShapeScore): the dB Pearson under-scores
+      // line-dominated spectra — with a 3-line AFSK template only 9 of the 161 bins are support, so the dB
+      // score is dominated by valley noise and by the line-width mismatch right next to the razor-thin
+      // carrier (a visually perfect fit scores 0.6–0.8; in magnitude it scores 0.90+).
+      if (magnitude) return Ncc(ToMag(s), ToMag(t));
       // logFloor (default −40 dB) can be raised to the burst's measurable dynamic range (≈ −SNR): template
       // nulls deeper than the measured noise floor are unreachable in the data, and correlating against them
       // systematically punishes low-SNR bursts (Phase 2a triage, KuzGTU-1).
       return Ncc(ToLog(s, logFloor), ToLog(t, logFloor));   // correlate in dB (log power)
+    }
+
+    /// <summary>Convert a peak-normalized power vector to magnitude (√, negatives clamped to 0).</summary>
+    private static double[] ToMag(double[] x)
+    {
+      var y = new double[x.Length];
+      for (int i = 0; i < x.Length; i++) y[i] = System.Math.Sqrt(System.Math.Max(x[i], 0));
+      return y;
     }
 
     /// <summary>

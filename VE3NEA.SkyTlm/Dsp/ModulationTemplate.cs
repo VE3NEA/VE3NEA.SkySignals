@@ -33,6 +33,11 @@ namespace VE3NEA.SkyTlm.Dsp
         // ±(1−β)·Rs/2 with a cosine skirt to ±(1+β)·Rs/2. NOT a CPM/FSK bell (PSK is linear, not frequency
         // modulated), and much wider than the Gaussian bell.
         Modulation.BPSK or Modulation.QPSK => RaisedCosine(f, baud, PskRolloff),
+        // AFSK-over-FM: a carrier-dominated FM-subcarrier spectrum (~93% of the power in the carrier
+        // line + subcarrier sidebands), nothing like the broad bell — the mismatch dilutes the matched z
+        // by several dB and the per-frame Pearson scores the near-line spectrum as an analog interloper.
+        // Sample the synthesized two-stage PSD (the same model as CpmTemplate.SynthesizeAfskBank) instead.
+        Modulation.AFSK => CpmTemplate.AfskDetectionShapeValue(f, p),
         // unknown width: a broad bell.
         _ => Gauss(f, 0.40 * baud),
       };
