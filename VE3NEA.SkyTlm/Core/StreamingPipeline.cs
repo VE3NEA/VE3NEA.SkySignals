@@ -45,9 +45,10 @@ namespace VE3NEA.SkyTlm.Core
   /// strong lines) bound any single bin's influence. Phase 2a experiment axis.</summary>
   public enum TemplateDomain
   {
-    /// <summary>Noise-subtracted linear power — the classic matched statistic (default, pre-option behavior).</summary>
+    /// <summary>Noise-subtracted linear power — the classic matched statistic (pre-option behavior).</summary>
     Power,
-    /// <summary>Per-bin magnitude (√power), noise mean subtracted.</summary>
+    /// <summary>Per-bin magnitude (√power), noise mean subtracted (production default since the Phase 2a
+    /// triage: ties LogPower on validation F1 with no CRC-valid-frame regression across modulations).</summary>
     Magnitude,
     /// <summary>Per-bin log power, noise mean subtracted and <b>floored</b>: without the floor the log-domain
     /// noise swings far downward (log of near-zero power → large negative excursions) and those bins dominate
@@ -177,7 +178,7 @@ namespace VE3NEA.SkyTlm.Core
     /// (<c>MatchAtShift</c>) operate in — see <see cref="Core.TemplateDomain"/>. The CFAR normalization tracks
     /// the domain (each has its own analytic per-bin noise σ), so <see cref="OnSigma"/>/<see cref="OffSigma"/>
     /// keep their meaning; the reported burst SNR stays in linear power regardless of the domain.</summary>
-    public TemplateDomain TemplateDomain { get; init; } = TemplateDomain.Power;
+    public TemplateDomain TemplateDomain { get; init; } = TemplateDomain.Magnitude;
 
     /// <summary>Log-power floor for <see cref="Core.TemplateDomain.LogPower"/>, as a fraction of the per-bin
     /// noise floor (0.05 ≈ −13 dB below it): bins below it clamp, so the log-domain noise's wide downward
