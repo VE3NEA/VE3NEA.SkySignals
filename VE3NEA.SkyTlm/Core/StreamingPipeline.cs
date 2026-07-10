@@ -38,6 +38,23 @@ namespace VE3NEA.SkyTlm.Core
     int BestShiftBins,       // argmax shift → CFO ≈ BestShiftBins*binHz
     bool InBurst);           // Schmitt state after this frame
 
+  /// <summary>Domain the per-frame detection statistics correlate in (<see cref="StreamingOptions.TemplateDomain"/>).
+  /// Linear power is the likelihood-ratio-optimal choice under AWGN; the case for the alternatives is robustness:
+  /// per-bin power is exponentially distributed (heavy-tailed), so one strong interfering line dominates a linear
+  /// sum, while magnitude (≈Rayleigh, variance-stabilized) and log-power (constant-variance ~Gumbel, compresses
+  /// strong lines) bound any single bin's influence. Phase 2a experiment axis.</summary>
+  public enum TemplateDomain
+  {
+    /// <summary>Noise-subtracted linear power — the classic matched statistic (default, pre-option behavior).</summary>
+    Power,
+    /// <summary>Per-bin magnitude (√power), noise mean subtracted.</summary>
+    Magnitude,
+    /// <summary>Per-bin log power, noise mean subtracted and <b>floored</b>: without the floor the log-domain
+    /// noise swings far downward (log of near-zero power → large negative excursions) and those bins dominate
+    /// the correlation. See <see cref="StreamingPipeline"/>'s LogFloorFrac.</summary>
+    LogPower
+  }
+
   /// <summary>Tunables for <see cref="StreamingPipeline"/>.</summary>
   public sealed record StreamingOptions
   {
@@ -156,6 +173,12 @@ namespace VE3NEA.SkyTlm.Core
     /// Detection Inspector A/Bs this toggle; <c>--regress</c> decides whether to flip the default.</summary>
     public bool NotchDc { get; init; } = true;
 
+    /// <summary>Domain the per-frame matched statistic (<c>MatchedSlide</c>) and the per-frame shape Pearson
+    /// (<c>MatchAtShift</c>) operate in — see <see cref="Core.TemplateDomain"/>. The CFAR normalization tracks
+    /// the domain (each has its own analytic per-bin noise σ), so <see cref="OnSigma"/>/<see cref="OffSigma"/>
+    /// keep their meaning; the reported burst SNR stays in linear power regardless of the domain.</summary>
+    public TemplateDomain TemplateDomain { get; init; } = TemplateDomain.Power;
+
     /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
     /// (CFO, SNR, shape match) but is <b>never</b> demodulated or deframed — no <see cref="IDemodulator"/>,
     /// no blind-FSK estimation, no CRC. For the Detection Inspector, which only needs the detector's own
@@ -215,6 +238,34 @@ namespace VE3NEA.SkyTlm.Core
     /// bins are correlated, inflating the variance of any sum over bins by this factor (σ by its √).</summary>
     private const double WindowEnbw = 2.0;
 
+    /// <summary>Log-power floor, as a fraction of the per-bin noise floor (≈ −13 dB below it): bins below it
+    /// clamp, so the log-domain noise's wide downward swings (log of near-zero power → large negative
+    /// excursions) cannot dominate the correlation (Phase 2a plan note).</summary>
+    private const double LogFloorFrac = 0.05;
+
+    // analytic per-bin noise moments of the transformed excess under exponential (χ²₂) normalized bin power
+    // x = q/npb ~ Exp(1): magnitude √x is Rayleigh — mean Γ(3/2) = √π/2, σ = √(1 − π/4); the floored log
+    // ln(max(x, LogFloorFrac)) has no elementary closed form, so its moments are integrated numerically once.
+    private static readonly double MagNoiseMean = Math.Sqrt(Math.PI) / 2;
+    private static readonly double MagNoiseSigma = Math.Sqrt(1 - Math.PI / 4);
+    private static readonly (double Mean, double Sigma) LogNoise =
+      ExpNoiseMoments(x => Math.Log(Math.Max(x, LogFloorFrac)));
+
+    /// <summary>Mean and σ of g(X), X ~ Exp(1) — numeric midpoint integration over the density e^(−x). The
+    /// transforms used here are bounded near 0 (the log is floored), so the integrand has no singularity.</summary>
+    private static (double Mean, double Sigma) ExpNoiseMoments(Func<double, double> g)
+    {
+      const double dx = 1e-3, xMax = 40;
+      double m1 = 0, m2 = 0;
+      for (double x = dx / 2; x < xMax; x += dx)
+      {
+        double w = Math.Exp(-x) * dx;
+        double v = g(x);
+        m1 += v * w; m2 += v * v * w;
+      }
+      return (m1, Math.Sqrt(Math.Max(0, m2 - m1 * m1)));
+    }
+
     // --- detector (per-frame STFT power + matched statistic) ---
     private readonly Fft<Complex32> fft;
     private readonly float[] window;
@@ -229,8 +280,9 @@ namespace VE3NEA.SkyTlm.Core
     private readonly int minFrames, hangFrames, guard, keepFrames, maxBurstSamples;
 
     // matched template on the detector grid, support bins only (t ≥ 5% of peak). Per shift s the statistic is
-    // z(s) = Σ excess·(t − t̄) / (npb·√(Σ(t−t̄)²)·√ENBW) — DC-removed (so a flat colored-noise pedestal cancels)
-    // and normalized to unit noise variance at every shift and any template width.
+    // z(s) = Σ excess·(t − t̄) / (eSigma·√(Σ(t−t̄)²)·√ENBW) — DC-removed (so a flat colored-noise pedestal cancels)
+    // and normalized to unit noise variance at every shift and any template width; eSigma is the per-bin noise σ
+    // of excess in the configured TemplateDomain (= npb in the linear-power domain).
     private readonly int[] supIdx;            // support bin indices (template centred at occBins)
     private readonly float[] supT;            // template value at each support bin
     private readonly int cfoBins;             // CFO search span in bins (shifts −cfoBins..+cfoBins)
@@ -531,9 +583,29 @@ namespace VE3NEA.SkyTlm.Core
       noisePerBin = npb;
       NoiseRefPower = npb;
 
-      // noise-subtracted frame spectrum (NOT clamped at 0 — zero-mean under noise, which keeps the matched
-      // statistic unbiased), DC-notched so LO leakage can't masquerade as a matched carrier.
-      for (int j = 0; j < q.Length; j++) excess[j] = (float)(q[j] - npb);
+      // noise-subtracted frame spectrum in the configured correlation domain (NOT clamped at 0 in the power
+      // domain — zero-mean under noise, which keeps the matched statistic unbiased; the magnitude/log variants
+      // subtract their own analytic noise mean instead), DC-notched so LO leakage can't masquerade as a matched
+      // carrier. eSigma is the per-bin noise deviation of excess in the same units — the CFAR normalizer.
+      double eSigma;
+      switch (o.TemplateDomain)
+      {
+        case TemplateDomain.Magnitude:
+          double sqrtNpb = Math.Sqrt(npb);
+          for (int j = 0; j < q.Length; j++) excess[j] = (float)(Math.Sqrt(Math.Max(q[j], 0)) - MagNoiseMean * sqrtNpb);
+          eSigma = MagNoiseSigma * sqrtNpb;
+          break;
+        case TemplateDomain.LogPower:
+          // floored at LogFloorFrac·npb: without the clamp the log-domain noise swings far downward (log of
+          // near-zero power) and those bins dominate the correlation.
+          for (int j = 0; j < q.Length; j++) excess[j] = (float)(Math.Log(Math.Max(q[j] / npb, LogFloorFrac)) - LogNoise.Mean);
+          eSigma = LogNoise.Sigma;
+          break;
+        default:
+          for (int j = 0; j < q.Length; j++) excess[j] = (float)(q[j] - npb);
+          eSigma = npb;
+          break;
+      }
       if (o.NotchDc)
         for (int j = occBins - 1; j <= occBins + 1; j++)
           if ((uint)j < (uint)excess.Length) excess[j] = 0;
@@ -541,7 +613,7 @@ namespace VE3NEA.SkyTlm.Core
       // this frame's per-shift matched z into the averaging ring (replace the oldest row).
       var row = zRing[zHead];
       for (int i = 0; i < nShifts; i++) zSum[i] -= row[i];
-      (double bestZ, double bestW, int bestS) = MatchedSlide(row, npb);
+      (double bestZ, double bestW, int bestS) = MatchedSlide(row, npb, eSigma);
       for (int i = 0; i < nShifts; i++) zSum[i] += row[i];
       frameBestZ[zHead] = bestZ;
       zHead = (zHead + 1) % zRing.Length;
@@ -649,8 +721,10 @@ namespace VE3NEA.SkyTlm.Core
 
     /// <summary>
     /// Slide the template's support across the CFO span over the frame's noise-subtracted spectrum. Per
-    /// shift s: z(s) = Σ excess·(t − t̄) / (npb·√(Σ(t−t̄)²)·√ENBW) — the matched correlation normalized to unit
-    /// variance under noise (CFAR), with the bin-correlation of the analysis window folded in. The template is
+    /// shift s: z(s) = Σ excess·(t − t̄) / (eSigma·√(Σ(t−t̄)²)·√ENBW) — the matched correlation normalized to unit
+    /// variance under noise (CFAR), with the bin-correlation of the analysis window folded in; eSigma is the
+    /// per-bin noise σ of excess in the configured <see cref="StreamingOptions.TemplateDomain"/> (= npb in the
+    /// linear-power domain), so the false-alarm rate is domain-independent. The template is
     /// DC-removed (t̄ = Σt/n subtracted over the in-band support at this shift) so it is NOT all-positive: a flat
     /// pedestal — a colored-noise floor sitting above the wide out-of-band reference npb — integrates to
     /// Σ(t−t̄) = 0 instead of being summed as c·Σt amplified over √(support), which otherwise storms false bursts
@@ -658,7 +732,7 @@ namespace VE3NEA.SkyTlm.Core
     /// s+cfoBins; disabled shifts stay 0) and returns the best z, the corresponding template-weighted mean
     /// excess power W (for SNR reporting), and the best shift.
     /// </summary>
-    private (double bestZ, double bestW, int bestS) MatchedSlide(double[] row, double npb)
+    private (double bestZ, double bestW, int bestS) MatchedSlide(double[] row, double npb, double eSigma)
     {
       int L = excess.Length;
       double bestZ = double.MinValue, bestW = 0; int bestS = 0;
@@ -681,9 +755,23 @@ namespace VE3NEA.SkyTlm.Core
           se += e; set += e * supT[k];
         }
         double acc = set - tBar * se;                                         // Σ excess·(t − t̄)
-        double z = acc / (npb * Math.Sqrt(varT) * sqrtEnbw);
+        double z = acc / (eSigma * Math.Sqrt(varT) * sqrtEnbw);
         row[si] = z;
         if (z > bestZ) { bestZ = z; bestW = set / shiftTSum[si]; bestS = s; }
+      }
+      // the reported W feeds the burst SNR, which stays in linear power: in the transformed domains recompute
+      // it from the linear noise-subtracted power at the winning shift (same DC notch as excess).
+      if (o.TemplateDomain != TemplateDomain.Power && bestZ > double.MinValue)
+      {
+        double setLin = 0;
+        for (int k = 0; k < supIdx.Length; k++)
+        {
+          int j = supIdx[k] + bestS;
+          if ((uint)j >= (uint)L) continue;
+          if (o.NotchDc && j >= occBins - 1 && j <= occBins + 1) continue;
+          setLin += (q[j] - npb) * supT[k];
+        }
+        bestW = setLin / shiftTSum[bestS + cfoBins];
       }
       return (bestZ, bestW, bestS);
     }
