@@ -183,7 +183,7 @@ namespace VE3NEA.SkyTlm.Dsp
     /// real data, a true burst (energy in the centre, floor in the skirt) scores high while flat/filtered noise
     /// (no centre excess) scores ~0. Returns r∈[−1,1].
     /// </summary>
-    public static double Match(LearnedShape measured, LearnedShape template)
+    public static double Match(LearnedShape measured, LearnedShape template, double logFloor = LogFloor)
     {
       TemplateWindow(template, out double w);
       // clip the window to where the MEASURED spectrum actually carries data: a measured burst spectrum is
@@ -196,7 +196,10 @@ namespace VE3NEA.SkyTlm.Dsp
       const int M = 161;
       var t = Slice(template, -wEff, wEff, M);
       var s = Slice(measured, -wEff, wEff, M);       // measured slice, lag 0 (carrier-aligned)
-      return Ncc(ToLog(s), ToLog(t));                // correlate in dB (log power)
+      // logFloor (default −40 dB) can be raised to the burst's measurable dynamic range (≈ −SNR): template
+      // nulls deeper than the measured noise floor are unreachable in the data, and correlating against them
+      // systematically punishes low-SNR bursts (Phase 2a triage, KuzGTU-1).
+      return Ncc(ToLog(s, logFloor), ToLog(t, logFloor));   // correlate in dB (log power)
     }
 
     /// <summary>
@@ -288,11 +291,12 @@ namespace VE3NEA.SkyTlm.Dsp
     /// zero skirts map to a finite −40 dB instead of −∞.</summary>
     public const double LogFloor = 1e-4;
 
-    /// <summary>Convert a peak-normalized power vector to dB with a floor (10·log10, clamped to <see cref="LogFloor"/>).</summary>
-    public static double[] ToLog(double[] x)
+    /// <summary>Convert a peak-normalized power vector to dB with a floor (10·log10, clamped to
+    /// <paramref name="floor"/>, default <see cref="LogFloor"/>).</summary>
+    public static double[] ToLog(double[] x, double floor = LogFloor)
     {
       var y = new double[x.Length];
-      for (int i = 0; i < x.Length; i++) y[i] = 10.0 * System.Math.Log10(System.Math.Max(x[i], LogFloor));
+      for (int i = 0; i < x.Length; i++) y[i] = 10.0 * System.Math.Log10(System.Math.Max(x[i], floor));
       return y;
     }
 

@@ -51,7 +51,7 @@ namespace VE3NEA.SkyTlm.Core
     Magnitude,
     /// <summary>Per-bin log power, noise mean subtracted and <b>floored</b>: without the floor the log-domain
     /// noise swings far downward (log of near-zero power → large negative excursions) and those bins dominate
-    /// the correlation. See <see cref="StreamingPipeline"/>'s LogFloorFrac.</summary>
+    /// the correlation. See <see cref="StreamingOptions.LogFloorFrac"/>.</summary>
     LogPower
   }
 
@@ -179,6 +179,19 @@ namespace VE3NEA.SkyTlm.Core
     /// keep their meaning; the reported burst SNR stays in linear power regardless of the domain.</summary>
     public TemplateDomain TemplateDomain { get; init; } = TemplateDomain.Power;
 
+    /// <summary>Log-power floor for <see cref="Core.TemplateDomain.LogPower"/>, as a fraction of the per-bin
+    /// noise floor (0.05 ≈ −13 dB below it): bins below it clamp, so the log-domain noise's wide downward
+    /// swings (log of near-zero power → large negative excursions) cannot dominate the correlation. The
+    /// calibrated noise moments account for the censoring. Phase 2a experiment axis.</summary>
+    public double LogFloorFrac { get; init; } = 0.05;
+
+    /// <summary>When <c>true</c>, the burst-average shape match (<see cref="CpmTemplate.Match"/>) floors both
+    /// the template and the measured spectrum at the burst's measurable dynamic range (≈ −SNR − 6 dB) instead
+    /// of the fixed −40 dB: template nulls deeper than the noise floor are unreachable in the data, and
+    /// correlating against them systematically punishes low-SNR bursts (Phase 2a triage, KuzGTU-1 —
+    /// visually-good matches scoring ~0.6). Default <c>false</c>: pre-experiment behavior.</summary>
+    public bool SnrMatchedTemplateFloor { get; init; } = false;
+
     /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
     /// (CFO, SNR, shape match) but is <b>never</b> demodulated or deframed — no <see cref="IDemodulator"/>,
     /// no blind-FSK estimation, no CRC. For the Detection Inspector, which only needs the detector's own
@@ -238,18 +251,13 @@ namespace VE3NEA.SkyTlm.Core
     /// bins are correlated, inflating the variance of any sum over bins by this factor (σ by its √).</summary>
     private const double WindowEnbw = 2.0;
 
-    /// <summary>Log-power floor, as a fraction of the per-bin noise floor (≈ −13 dB below it): bins below it
-    /// clamp, so the log-domain noise's wide downward swings (log of near-zero power → large negative
-    /// excursions) cannot dominate the correlation (Phase 2a plan note).</summary>
-    private const double LogFloorFrac = 0.05;
-
     // analytic per-bin noise moments of the transformed excess under exponential (χ²₂) normalized bin power
     // x = q/npb ~ Exp(1): magnitude √x is Rayleigh — mean Γ(3/2) = √π/2, σ = √(1 − π/4); the floored log
-    // ln(max(x, LogFloorFrac)) has no elementary closed form, so its moments are integrated numerically once.
+    // ln(max(x, LogFloorFrac)) has no elementary closed form, so its moments are integrated numerically once
+    // per pipeline (the floor is an option now — see StreamingOptions.LogFloorFrac).
     private static readonly double MagNoiseMean = Math.Sqrt(Math.PI) / 2;
     private static readonly double MagNoiseSigma = Math.Sqrt(1 - Math.PI / 4);
-    private static readonly (double Mean, double Sigma) LogNoise =
-      ExpNoiseMoments(x => Math.Log(Math.Max(x, LogFloorFrac)));
+    private readonly (double Mean, double Sigma) logNoise;
 
     /// <summary>Mean and σ of g(X), X ~ Exp(1) — numeric midpoint integration over the density e^(−x). The
     /// transforms used here are bounded near 0 (the log is floored), so the integrand has no singularity.</summary>
@@ -407,6 +415,7 @@ namespace VE3NEA.SkyTlm.Core
       if (Demodulators.IsWideFsk(p)) p = p with { Modulation = Modulation.FSK };
       this.p = p;
       o = options ?? new StreamingOptions();
+      logNoise = ExpNoiseMoments(x => Math.Log(Math.Max(x, o.LogFloorFrac)));
       fs = p.SampleRate;
       if (fs <= 0) throw new ArgumentException("SignalParams.SampleRate must be positive for streaming.", nameof(p));
 
@@ -598,8 +607,9 @@ namespace VE3NEA.SkyTlm.Core
         case TemplateDomain.LogPower:
           // floored at LogFloorFrac·npb: without the clamp the log-domain noise swings far downward (log of
           // near-zero power) and those bins dominate the correlation.
-          for (int j = 0; j < q.Length; j++) excess[j] = (float)(Math.Log(Math.Max(q[j] / npb, LogFloorFrac)) - LogNoise.Mean);
-          eSigma = LogNoise.Sigma;
+          double floor = o.LogFloorFrac;
+          for (int j = 0; j < q.Length; j++) excess[j] = (float)(Math.Log(Math.Max(q[j] / npb, floor)) - logNoise.Mean);
+          eSigma = logNoise.Sigma;
           break;
         default:
           for (int j = 0; j < q.Length; j++) excess[j] = (float)(q[j] - npb);
@@ -994,7 +1004,7 @@ namespace VE3NEA.SkyTlm.Core
           // curated path: unchanged behavior
           info = cfo.AnalyzeSpectrum(avgQ);
           measured = cfo.EstimateShapeFromSpectrum(avgQ, info.CfoHz);
-          (match, matchedHyp, shapePass) = MatchBank(measured);
+          (match, matchedHyp, shapePass) = MatchBank(measured, snr);
           activeDemod = bpskCoherent != null
             ? (p.Differential == true && p.Framing != Framing.CCSDS ? bpskDifferential! : bpskCoherent)
             : this.demod!;
@@ -1195,7 +1205,7 @@ namespace VE3NEA.SkyTlm.Core
     {
       var info = cfo.AnalyzeSpectrum(avgQ);
       var measured = cfo.EstimateShapeFromSpectrum(avgQ, info.CfoHz);
-      var (match, matchedHyp, shapePass) = MatchBank(measured);
+      var (match, matchedHyp, shapePass) = MatchBank(measured, snr);
 
       bool validated = (matchedFrac >= o.MinMatchedFraction && shapedFrames >= o.MinShapedFrames) || shapePass;
       if (o.GateByShape && !validated) return;
@@ -1225,14 +1235,20 @@ namespace VE3NEA.SkyTlm.Core
     /// raw score and its hypothesis (for display and the CRC-rescue bar), plus whether ANY hypothesis cleared
     /// its own per-shape threshold — a bell fit must clear the higher bell bar even when it outscores a
     /// failing two-tone fit, so best-fit and pass are separate decisions.</summary>
-    private (double match, ShapeHypothesis best, bool pass) MatchBank(LearnedShape measured)
+    private (double match, ShapeHypothesis best, bool pass) MatchBank(LearnedShape measured, double snrDb)
     {
+      // SNR-matched floor: clamp the dB comparison at the burst's measurable dynamic range (≈ −SNR − 6 dB
+      // below the peak-normalized spectrum) so template nulls the noise floor hides can't drag the Pearson
+      // down on low-SNR bursts. Off by default (fixed −40 dB floor).
+      double floor = o.SnrMatchedTemplateFloor
+        ? Math.Max(CpmTemplate.LogFloor, Math.Pow(10, -(snrDb + 6.0) / 10.0))
+        : CpmTemplate.LogFloor;
       double best = double.NegativeInfinity;
       ShapeHypothesis bestHyp = templateBank[0];
       bool pass = false;
       foreach (var h in templateBank)
       {
-        double m = CpmTemplate.Match(measured, h.Shape);
+        double m = CpmTemplate.Match(measured, h.Shape, floor);
         if (m > best) { best = m; bestHyp = h; }
         if (m >= o.EffectiveMinShapeScore(h)) pass = true;
       }
