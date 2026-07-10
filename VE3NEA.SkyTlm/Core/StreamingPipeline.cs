@@ -193,6 +193,19 @@ namespace VE3NEA.SkyTlm.Core
     /// visually-good matches scoring ~0.6). Default <c>false</c>: pre-experiment behavior.</summary>
     public bool SnrMatchedTemplateFloor { get; init; } = false;
 
+    /// <summary>Widens the per-frame matched statistic's (<see cref="StreamingPipeline.MatchedSlide"/>/
+    /// <see cref="StreamingPipeline.MatchAtShift"/>) support window to this factor times the template's ≥5%
+    /// support half-width, with the template forced to 0 in the added skirt. The un-widened statistic only
+    /// ever reads bins under the template's support, so a signal <i>wider</i> than the template (SSTV's
+    /// ~3 kHz FM spread, a broadband interferer) fills that support just as well as the right-width signal —
+    /// mean removal cannot penalize energy in bins it never reads. With the skirt included, those bins carry
+    /// uniform negative weight after mean removal (template − mean &lt; 0 where template = 0), so a wider
+    /// signal now anti-correlates. Default <c>1.0</c> (no widening — pre-Phase-2b behavior); values &gt;1
+    /// reproduce the original support bins exactly and only add zero-template bins outside their outer edge,
+    /// never touching any internal gap between separated support lobes (e.g. two-tone FSK). Phase 2b
+    /// experiment axis.</summary>
+    public double SkirtWidthFactor { get; init; } = 1.0;
+
     /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
     /// (CFO, SNR, shape match) but is <b>never</b> demodulated or deframed — no <see cref="IDemodulator"/>,
     /// no blind-FSK estimation, no CRC. For the Detection Inspector, which only needs the detector's own
@@ -288,12 +301,16 @@ namespace VE3NEA.SkyTlm.Core
     private readonly int warmupFrames;
     private readonly int minFrames, hangFrames, guard, keepFrames, maxBurstSamples;
 
-    // matched template on the detector grid, support bins only (t ≥ 5% of peak). Per shift s the statistic is
+    // matched template on the detector grid: the ≥5% support (t ≥ 5% of peak) plus, when
+    // StreamingOptions.SkirtWidthFactor > 1, a zero-template skirt widening the window beyond it (Phase 2b).
+    // Per shift s the statistic is
     // z(s) = Σ excess·(t − t̄) / (eSigma·√(Σ(t−t̄)²)·√ENBW) — DC-removed (so a flat colored-noise pedestal cancels)
     // and normalized to unit noise variance at every shift and any template width; eSigma is the per-bin noise σ
-    // of excess in the configured TemplateDomain (= npb in the linear-power domain).
-    private readonly int[] supIdx;            // support bin indices (template centred at occBins)
-    private readonly float[] supT;            // template value at each support bin
+    // of excess in the configured TemplateDomain (= npb in the linear-power domain). The skirt bins (t = 0)
+    // carry uniform negative weight after mean removal, so energy there (a signal wider than the template)
+    // pulls z down instead of being invisible to it.
+    private readonly int[] supIdx;            // support + skirt bin indices (template centred at occBins)
+    private readonly float[] supT;            // template value at each bin (0 in the skirt)
     private readonly int cfoBins;             // CFO search span in bins (shifts −cfoBins..+cfoBins)
     private readonly int nShifts;
     private readonly double[] shiftTSum;      // σt over the in-band part of the support, per shift (0 = skip)
@@ -466,12 +483,27 @@ namespace VE3NEA.SkyTlm.Core
         t[j] = (float)ModulationTemplate.ShapeValue((j - occBins) * binHz, p);
         if (t[j] > tmax) tmax = t[j];
       }
+      // ≥5% support half-width (bins from centre), for the skirt widening below.
+      int halfWidth = 0;
+      for (int j = 0; j < L; j++) if (t[j] >= 0.05f * tmax) halfWidth = Math.Max(halfWidth, Math.Abs(j - occBins));
+      int loSup = occBins - halfWidth, hiSup = occBins + halfWidth;
+
+      // Phase 2b: widen the window to SkirtWidthFactor× the support half-width, template forced to 0 in the
+      // added skirt (see StreamingOptions.SkirtWidthFactor). Never shrinks below the true support, and only
+      // ever adds bins strictly outside [loSup, hiSup] — so factor==1 reproduces the original bin set exactly,
+      // including any internal gap between separated support lobes (e.g. two-tone FSK), which stays excluded.
+      int extHalfWidth = Math.Max(halfWidth, Math.Min(occBins, (int)Math.Ceiling(o.SkirtWidthFactor * halfWidth)));
+      int loExt = Math.Max(0, occBins - extHalfWidth), hiExt = Math.Min(L - 1, occBins + extHalfWidth);
+
       int nSup = 0;
-      for (int j = 0; j < L; j++) if (t[j] >= 0.05f * tmax) nSup++;
+      for (int j = loExt; j <= hiExt; j++) if (t[j] >= 0.05f * tmax || j < loSup || j > hiSup) nSup++;
       supIdx = new int[nSup];
       supT = new float[nSup];
-      for (int j = 0, k = 0; j < L; j++)
+      for (int j = loExt, k = 0; j <= hiExt; j++)
+      {
         if (t[j] >= 0.05f * tmax) { supIdx[k] = j; supT[k] = t[j]; k++; }
+        else if (j < loSup || j > hiSup) { supIdx[k] = j; supT[k] = 0f; k++; }
+      }
       double supTSum = 0;
       foreach (var v in supT) supTSum += v;
 
