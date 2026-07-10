@@ -221,11 +221,13 @@ namespace VE3NEA.SkyTlm.Core
     public double SkirtWidthFactor { get; init; } = 1.0;
 
     /// <summary>When <c>true</c> (default), a validated FSK/GFSK/GMSK burst that decodes ZERO frames on the
-    /// curated label triggers a blind-hypothesis trial at the labeled baud and at 2× it (Phase U: the
+    /// curated label triggers a blind-hypothesis trial at the labeled baud, at 2× and at ½ it (Phase U: the
     /// SNIPE-D / ERMIS / KSM1 / BRO-8 / MIMAN cluster — 617 CRC frames recovered by distrusting the curated
-    /// GFSK labels; MIMAN's label is wrong in baud as well as shape). The first CRC-valid trial frame locks
-    /// the discovered params for the session; a CRC frame on the curated path instead proves the label and
-    /// stops the trials.</summary>
+    /// GFSK labels; MIMAN's label is wrong in baud as well as shape; CubeSX-HSE-3's GMSK 4k8 label is
+    /// really ~2k4). The first CRC-valid trial frame at the labeled baud or 2× locks
+    /// the discovered params for the session; a ½-baud CRC only decodes its own burst (it can come from a
+    /// co-channel second transmitter — BRO8_BRO22); a CRC frame on the curated path instead proves the label
+    /// and stops the trials.</summary>
     public bool BlindFallback { get; init; } = true;
 
     /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
@@ -395,6 +397,11 @@ namespace VE3NEA.SkyTlm.Core
     // --- blind-fallback session state (Phase U: a curated FSK-family label whose validated bursts decode
     //     nothing is distrusted; locked from the first CRC-valid trial frame — see the trial block in
     //     DecodeBurst). fallbackCfo points into trialCfoCache, which owns/disposes the estimators. ---
+    // set once a CRC-valid frame proves the active BPSK submode (either the resolved one or a trial win);
+    // stops the per-burst coherent-vs-differential trial. The discovered submode itself is written into the
+    // caller's mutable SignalParams.Differential, which the per-burst demod pick reads.
+    private bool bpskSubmodeProven;
+
     private SignalParams? fallbackParams;
     private IDemodulator? fallbackDemod;
     private CfoEstimator? fallbackCfo;
@@ -1225,6 +1232,11 @@ namespace VE3NEA.SkyTlm.Core
         if (!p.IsBlind && fallbackParams == null && burstFrames.Any(f => f.CrcValid == true))
           curatedCrcSeen = true;
 
+        // a CRC-valid frame from the active BPSK submode proves it — the coherent-vs-differential trial
+        // below stops considering this session's bursts.
+        if (bpskCoherent != null && burstFrames.Any(f => f.CrcValid == true))
+          bpskSubmodeProven = true;
+
         // promotion on the first CRC-valid blind frame: gate strictly on CRC-valid, not blind
         // confidence — a frame that passes CRC proves the deviation it used actually works. Guarded on
         // p.IsBlind because the blind-fallback path also sets burstBlindDevHz — its lock is fallbackParams,
@@ -1258,15 +1270,20 @@ namespace VE3NEA.SkyTlm.Core
 
         // Phase U blind fallback: a validated FSK-family burst that decodes zero frames on the curated label
         // is the signature of a wrong DB label (the SNIPE-D/ERMIS/KSM1/BRO-8/MIMAN cluster — 617 CRC frames
-        // recovered blind). Trial the blind hypothesis at the labeled baud and at 2× it (MIMAN's label is
-        // wrong in baud too), over the WIDE blind-window PSD (the curated occupied window can clip the real
-        // signal). The first CRC-valid trial frame locks the discovered params for the session and replaces
-        // this burst's decode; a premature lock on a coincidental CRC is accepted — CRC is strong proof.
+        // recovered blind). Trial the blind hypothesis at the labeled baud, at 2× it (MIMAN's label is
+        // wrong in baud too) and at ½ it (CubeSX-HSE-3: labeled GMSK 4k8 USP, actually ~2k4), over the
+        // WIDE blind-window PSD (the curated occupied window can clip the real
+        // signal). The first CRC-valid trial frame at the labeled baud or 2× locks the discovered params
+        // for the session and replaces this burst's decode; a premature lock on a coincidental CRC is
+        // accepted — CRC is strong proof. The ½ trial ADOPTS the burst's frames but never locks: a
+        // half-rate CRC can come from a co-channel second transmitter (the BRO8_BRO22 recording — a ½
+        // lock on one BRO-22-class burst cost the session BRO-8's 29 frames at the labeled baud), so
+        // each burst must re-earn it while the full-rate trials keep competing for the lock.
         if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind && validated
             && burstFrames.Count == 0
             && p.Modulation is Modulation.FSK or Modulation.GFSK or Modulation.GMSK)
         {
-          foreach (double b in new[] { p.Baud, 2 * p.Baud })
+          foreach (double b in new[] { p.Baud, 2 * p.Baud, p.Baud / 2 })
           {
             var pBlind = p with { Modulation = Modulation.FSK, Baud = b, Deviation = null };
             var trialCfo = TrialCfo(pBlind);
@@ -1277,21 +1294,77 @@ namespace VE3NEA.SkyTlm.Core
             if (trialDemod == null) continue;
             var (tSoft, tTrace, tFrames) = decodeWith(trialDemod, pTrial, est.CfoHz);
             if (!tFrames.Any(f => f.CrcValid == true)) continue;
-            // CRC-proven: lock the fallback session state and adopt the trial decode for this burst.
-            fallbackParams = pTrial;
-            fallbackDemod = trialDemod;
-            fallbackCfo = trialCfo;
-            fallbackDevHz = est.IsFsk ? est.DeviationHz : null;
-            resolvedTarget.ResolvedDeviation = fallbackDevHz;   // surface the discovered deviation to the caller's UI
+            double? trialDevHz = est.IsFsk ? est.DeviationHz : null;
+            if (b >= p.Baud)
+            {
+              // CRC-proven at the labeled baud or 2×: lock the fallback session state.
+              fallbackParams = pTrial;
+              fallbackDemod = trialDemod;
+              fallbackCfo = trialCfo;
+              fallbackDevHz = trialDevHz;
+              resolvedTarget.ResolvedDeviation = fallbackDevHz;   // surface the discovered deviation to the caller's UI
+              Log.Information("Blind fallback: curated {Mod} {LabelBaud:F0} Bd label distrusted — locked blind FSK at {Baud:F0} Bd, deviation {Dev:F0} Hz from first CRC-valid frame",
+                p.Modulation, p.Baud, b, fallbackDevHz ?? 0);
+            }
+            else
+              Log.Information("Blind fallback: ½-baud trial decoded this burst at {Baud:F0} Bd (deviation {Dev:F0} Hz) — adopted without locking the session",
+                b, trialDevHz ?? 0);
+            // adopt the trial decode for this burst.
             soft = tSoft;
             trace = tTrace;
             burstFrames = tFrames;
             info = new BurstSpectralInfo(est.CfoHz, 0, 0);
             measured = trialCfo.EstimateShapeFromSpectrum(wideQ, est.CfoHz);
-            (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(fallbackDevHz, pTrial));
-            Log.Information("Blind fallback: curated {Mod} {LabelBaud:F0} Bd label distrusted — locked blind FSK at {Baud:F0} Bd, deviation {Dev:F0} Hz from first CRC-valid frame",
-              p.Modulation, p.Baud, b, fallbackDevHz ?? 0);
+            (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(trialDevHz, pTrial));
             break;
+          }
+        }
+
+        // BPSK coherent-vs-differential trial (the dual-submode trial decodeWith documents): the resolved
+        // Differential is a guess whenever satyaml states no precoding (the resolver defaults to coherent —
+        // Waratah Seed-1 is differential on air with no precoding in the DB, 0 frames coherent). On a
+        // validated burst with no CRC-valid frame, decode once more with the OTHER submode; a CRC-valid
+        // frame locks the winner into the caller's mutable SignalParams.Differential (the per-burst demod
+        // pick reads it, so subsequent bursts start on the proven submode). CCSDS framing keeps the
+        // existing coherent-only rule.
+        if (bpskCoherent != null && !bpskSubmodeProven && p.Framing != Framing.CCSDS && validated
+            && !burstFrames.Any(f => f.CrcValid == true))
+        {
+          var trialDemod = ReferenceEquals(activeDemod, bpskDifferential) ? bpskCoherent : bpskDifferential!;
+          var (tSoft, tTrace, tFrames) = decodeWith(trialDemod, pEffective, info.CfoHz);
+          if (tFrames.Any(f => f.CrcValid == true))
+          {
+            bool diff = ReferenceEquals(trialDemod, bpskDifferential);
+            resolvedTarget.Differential = diff;   // lock the proven submode for the session (and the caller's UI)
+            bpskSubmodeProven = true;
+            soft = tSoft;
+            trace = tTrace;
+            burstFrames = tFrames;
+            Log.Information("BPSK submode trial: locked {Mode} from first CRC-valid frame",
+              diff ? "differential" : "coherent");
+          }
+        }
+
+        // locked-session curated re-trial: the fallback lock sets the DEFAULT demod, not a monopoly.
+        // On a locked burst that decodes zero frames, the curated label gets one CRC-gated attempt
+        // (QMR-KWT 2: the GMSK 9k6 USP label is RIGHT, but one marginal burst's blind trial CRC'd
+        // before any curated frame and the lock then cost two curated-decodable bursts — 5 crc
+        // without the fallback vs 4 with it). Adopt-only, like the ½-baud trial: the session stays
+        // locked, the curated hypothesis just keeps competing burst by burst.
+        if (fallbackParams != null && ReferenceEquals(activeDemod, fallbackDemod) && validated
+            && !burstFrames.Any(f => f.CrcValid == true) && this.demod != null)
+        {
+          var curInfo = cfo.AnalyzeSpectrum(avgQ);
+          var (cSoft, cTrace, cFrames) = decodeWith(this.demod, p, curInfo.CfoHz);
+          if (cFrames.Any(f => f.CrcValid == true))
+          {
+            soft = cSoft;
+            trace = cTrace;
+            burstFrames = cFrames;
+            info = curInfo;
+            measured = cfo.EstimateShapeFromSpectrum(avgQ, curInfo.CfoHz);
+            (match, matchedHyp, shapePass) = MatchBank(measured, snr);
+            Log.Information("Blind fallback: curated re-trial decoded this burst on the labeled params — adopted without unlocking the session");
           }
         }
 
