@@ -40,8 +40,10 @@ namespace VE3NEA.SkyTlm.Dsp
       fft = new Fft<Complex32>(size, NativeFftw.FftwFlags.Estimate);
       window = global::VE3NEA.Dsp.BlackmanHarrisWindow(size);
 
-      double dev = p.Deviation ?? p.Baud / 4.0;
-      occHalfHz = (p.Baud + 2 * dev) / 2.0 + cfoMaxHz;
+      // same formula StreamingPipeline/BurstDetector use to size q[]/avgQ[] (StftPsd.OccupiedHalfHz's blind-FSK
+      // branch widens the band when deviation is unknown) — template[] below must match that length exactly, or
+      // TemplateCfo's q.Length-bounded loop indexes template[] out of range for a blind (deviation-unknown) burst.
+      occHalfHz = StftPsd.OccupiedHalfHz(p, cfoMaxHz);
       occHalfBins = (int)Math.Ceiling(occHalfHz / binHz);
       cfoMaxBins = (int)Math.Ceiling(cfoMaxHz / binHz);
 
