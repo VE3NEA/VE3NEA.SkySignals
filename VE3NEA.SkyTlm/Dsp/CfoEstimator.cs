@@ -88,6 +88,21 @@ namespace VE3NEA.SkyTlm.Dsp
     /// <summary>Number of in-band bins this estimator's spectra carry (so a caller can size a matching buffer).</summary>
     public int SpectrumLength => 2 * occHalfBins + 1;
 
+    /// <summary>Index of the 0 Hz bin in this estimator's spectra.</summary>
+    public int CenterBin => occHalfBins;
+
+    /// <summary>Hz per bin of this estimator's spectra.</summary>
+    public double BinHz => binHz;
+
+    /// <summary>
+    /// Welch-averaged in-band PSD of [start,end) on this estimator's grid (noise-subtracted, NOT DC-notched —
+    /// near-DC energy is real signal, never notch it away) — the public form of <see cref="BuildPsdAveraged"/>,
+    /// for a caller whose own spectrum covers a different band than this estimator's params define (the
+    /// streaming blind fallback: the curated occupied window can clip the real signal, so it rebuilds the
+    /// burst PSD over the WIDE blind window here).
+    /// </summary>
+    public float[] AveragedSpectrum(Complex32[] iq, int start, int end) => BuildPsdAveraged(iq, start, end, notch: false);
+
     /// <summary>
     /// Measure the burst's empirical spectral shape: the noise-subtracted PSD, resampled about the carrier
     /// onto the baud-normalized <see cref="LearnedShape"/> grid and peak-normalized, plus the tone deviation
@@ -173,8 +188,9 @@ namespace VE3NEA.SkyTlm.Dsp
       return prof;
     }
 
-    /// <summary>Noise-subtracted in-band PSD in natural frequency order; index C = 0 Hz, DC notched.</summary>
-    private float[] BuildPsd(Complex32[] iq, int start, int end)
+    /// <summary>Noise-subtracted in-band PSD in natural frequency order; index C = 0 Hz, DC notched unless
+    /// <paramref name="notch"/> is false (the no-DC-notch paths — the notch removes real near-DC signal energy).</summary>
+    private float[] BuildPsd(Complex32[] iq, int start, int end, bool notch = true)
     {
       int len = end - start;
       int copy = Math.Min(len, size);
@@ -205,8 +221,9 @@ namespace VE3NEA.SkyTlm.Dsp
       double noise = NoiseFloor.TrimmedMean(oob) * NoiseFloor.ExponentialMedianScale;
       for (int j = 0; j < L; j++) q[j] = (float)Math.Max(0, q[j] - noise);
       // notch DC (LO leakage) so it doesn't bias the symmetry toward 0 Hz
-      for (int j = occHalfBins - 1; j <= occHalfBins + 1; j++)
-        if ((uint)j < (uint)L) q[j] = 0;
+      if (notch)
+        for (int j = occHalfBins - 1; j <= occHalfBins + 1; j++)
+          if ((uint)j < (uint)L) q[j] = 0;
       return q;
     }
 
@@ -216,10 +233,10 @@ namespace VE3NEA.SkyTlm.Dsp
     /// shape reflects the burst as a whole rather than one centre snapshot. Falls back to a single window
     /// for bursts shorter than the FFT.
     /// </summary>
-    private float[] BuildPsdAveraged(Complex32[] iq, int start, int end)
+    private float[] BuildPsdAveraged(Complex32[] iq, int start, int end, bool notch = true)
     {
       int len = end - start;
-      if (len <= size) return BuildPsd(iq, start, end);
+      if (len <= size) return BuildPsd(iq, start, end, notch);
 
       int L = 2 * occHalfBins + 1;
       var acc = new double[L];
@@ -249,8 +266,9 @@ namespace VE3NEA.SkyTlm.Dsp
       for (int j = 0; j < L; j++) q[j] = (float)(acc[j] / nWin);
       double noise = NoiseFloor.TrimmedMean(oob) * NoiseFloor.ExponentialMedianScale;  // single-window scale == averaged mean
       for (int j = 0; j < L; j++) q[j] = (float)Math.Max(0, q[j] - noise);
-      for (int j = occHalfBins - 1; j <= occHalfBins + 1; j++)
-        if ((uint)j < (uint)L) q[j] = 0;                      // notch DC/LO leakage
+      if (notch)
+        for (int j = occHalfBins - 1; j <= occHalfBins + 1; j++)
+          if ((uint)j < (uint)L) q[j] = 0;                      // notch DC/LO leakage
       return q;
     }
 

@@ -220,6 +220,14 @@ namespace VE3NEA.SkyTlm.Core
     /// experiment axis.</summary>
     public double SkirtWidthFactor { get; init; } = 1.0;
 
+    /// <summary>When <c>true</c> (default), a validated FSK/GFSK/GMSK burst that decodes ZERO frames on the
+    /// curated label triggers a blind-hypothesis trial at the labeled baud and at 2× it (Phase U: the
+    /// SNIPE-D / ERMIS / KSM1 / BRO-8 / MIMAN cluster — 617 CRC frames recovered by distrusting the curated
+    /// GFSK labels; MIMAN's label is wrong in baud as well as shape). The first CRC-valid trial frame locks
+    /// the discovered params for the session; a CRC frame on the curated path instead proves the label and
+    /// stops the trials.</summary>
+    public bool BlindFallback { get; init; } = true;
+
     /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
     /// (CFO, SNR, shape match) but is <b>never</b> demodulated or deframed — no <see cref="IDemodulator"/>,
     /// no blind-FSK estimation, no CRC. For the Detection Inspector, which only needs the detector's own
@@ -383,6 +391,16 @@ namespace VE3NEA.SkyTlm.Core
     // --- blind-FSK session cache (non-null from the first CRC-valid blind decode onward) ---
     private double? learnedDeviationHz;
     private IDemodulator? learnedDemod;
+
+    // --- blind-fallback session state (Phase U: a curated FSK-family label whose validated bursts decode
+    //     nothing is distrusted; locked from the first CRC-valid trial frame — see the trial block in
+    //     DecodeBurst). fallbackCfo points into trialCfoCache, which owns/disposes the estimators. ---
+    private SignalParams? fallbackParams;
+    private IDemodulator? fallbackDemod;
+    private CfoEstimator? fallbackCfo;
+    private double? fallbackDevHz;
+    private bool curatedCrcSeen;
+    private readonly Dictionary<double, CfoEstimator> trialCfoCache = new();  // per-trial-baud wide-window estimators
 
     // placeholder LearnedShape for blind bursts: ValidHalfBaud = 0 causes CpmTemplate.Match/Correlation to
     // short-circuit to 0 / empty without crashing; the blind path never runs the shape gate.
@@ -1046,7 +1064,26 @@ namespace VE3NEA.SkyTlm.Core
         SignalParams pEffective;     // p with the resolved Deviation, used for all demod calls
         double? burstBlindDevHz;     // non-null on the blind/learned path
 
-        if (!p.IsBlind)
+        if (fallbackParams != null)
+        {
+          // session-locked blind fallback (Phase U): the curated label was proven wrong — validated bursts
+          // decoded nothing until a blind trial produced a CRC-valid frame — so decode with the discovered
+          // params. The burst PSD is rebuilt over the WIDE blind window (un-notched) because the curated
+          // occupied window can clip the real signal (MIMAN: real bandwidth ≈ 2× the labeled GMSK bell).
+          // Validation still rides the curated detector's matchedFrac/shapedFrames, which stayed healthy
+          // across the whole wrong-label cluster.
+          var wideQ = fallbackCfo!.AveragedSpectrum(seg, 0, seg.Length);
+          double fbCfoHz = fallbackDevHz.HasValue
+            ? BlindFskEstimator.EstimateCarrierFromKnownDev(wideQ, fallbackCfo.CenterBin, fallbackCfo.BinHz, o.CfoMaxHz, fallbackDevHz.Value)
+            : BlindFskEstimator.Estimate(wideQ, fallbackCfo.CenterBin, fallbackCfo.BinHz, fallbackParams.Baud, o.CfoMaxHz).CfoHz;
+          info = new BurstSpectralInfo(fbCfoHz, 0, 0);
+          measured = fallbackCfo.EstimateShapeFromSpectrum(wideQ, fbCfoHz);
+          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(fallbackDevHz, fallbackParams));
+          activeDemod = fallbackDemod!;
+          pEffective = fallbackParams;
+          burstBlindDevHz = fallbackDevHz;
+        }
+        else if (!p.IsBlind)
         {
           // curated path: unchanged behavior
           info = cfo.AnalyzeSpectrum(avgQ);
@@ -1067,7 +1104,7 @@ namespace VE3NEA.SkyTlm.Core
           double cfoHz = BlindFskEstimator.EstimateCarrierFromKnownDev(avgQ, occBins, binHz, o.CfoMaxHz, learnedDeviationHz.Value);
           info = new BurstSpectralInfo(cfoHz, 0, 0);
           measured = cfo.EstimateShapeFromSpectrum(avgQ, cfoHz);
-          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(learnedDeviationHz.Value));
+          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(learnedDeviationHz.Value, p));
           activeDemod = learnedDemod!;
           pEffective = p with { Deviation = learnedDeviationHz.Value };
           burstBlindDevHz = learnedDeviationHz.Value;
@@ -1085,7 +1122,7 @@ namespace VE3NEA.SkyTlm.Core
           var est = BlindFskEstimator.Estimate(avgQ, occBins, binHz, p.Baud, o.CfoMaxHz);
           info = new BurstSpectralInfo(est.CfoHz, 0, 0);
           measured = cfo.EstimateShapeFromSpectrum(avgQ, est.CfoHz);
-          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(est.IsFsk ? est.DeviationHz : null));
+          (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(est.IsFsk ? est.DeviationHz : null, p));
           if (est.IsFsk)
           {
             // two-tone structure confirmed: demod with the estimated deviation
@@ -1112,36 +1149,37 @@ namespace VE3NEA.SkyTlm.Core
             && shapedFrames < o.MinShapedFrames && match < CrcRescueMinMatch)
           return;
 
-        // segment-local burst (indices into seg) for derotation; absolute time is stamped separately.
-        var local = new Burst(0, seg.Length, fs, info.CfoHz, snr)
-        {
-          ShapeScore = match,
-          BandwidthHz = info.BandwidthHz
-        };
-
         double timeSeconds = detStartAbs / fs;
         int idx = burstCounter;
         double detEndSec = (detStartAbs + detLen) / fs;
 
         // demodulate + deframe this burst with one demodulator (main pass + tail pass) → soft symbols, optional
         // eye trace, and the in-burst frames. Called once normally, or twice for a PSK burst whose sub-mode is
-        // still unknown (the coherent-vs-differential trial below).
-        (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeWith(IDemodulator demod)
+        // still unknown (the coherent-vs-differential trial below), or once per blind-fallback trial (Phase U):
+        // the caller passes the demod, params and carrier of its hypothesis, so the derotation bursts, the
+        // samples-per-symbol and the frame stamps all follow that hypothesis rather than the curated label.
+        (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeWith(IDemodulator demod, SignalParams pe, double cfoHz)
         {
+          // segment-local burst (indices into seg) for derotation; absolute time is stamped separately.
+          var local = new Burst(0, seg.Length, fs, cfoHz, snr)
+          {
+            ShapeScore = match,
+            BandwidthHz = info.BandwidthHz
+          };
           GmskTrace? tr = null;
           SoftSymbols sf;
           if (demod is CpmFskDemodulator cpm)
           {
-            tr = cpm.Trace(Acquisition.Derotate(seg, local), pEffective);   // keep the trace for the eye/inspection view
+            tr = cpm.Trace(Acquisition.Derotate(seg, local), pe);   // keep the trace for the eye/inspection view
             sf = tr.Symbols;
           }
-          else sf = demod.Demodulate(seg, local, pEffective);
+          else sf = demod.Demodulate(seg, local, pe);
 
           var frs = new List<Frame>();
           if (deframer != null)
           {
-            double sps = sf.SamplesPerSymbol > 0 ? sf.SamplesPerSymbol : p.SampleRate / p.Baud;
-            foreach (var f in deframer.Deframe(sf, p))
+            double sps = sf.SamplesPerSymbol > 0 ? sf.SamplesPerSymbol : pe.SampleRate / pe.Baud;
+            foreach (var f in deframer.Deframe(sf, pe))
             {
               // frame position → absolute stream time (SoftBitOffset is a symbol index into seg; −1 = unknown).
               double ft = f.SoftBitOffset >= 0 ? (segStartAbs + f.SoftBitOffset * sps) / fs : timeSeconds;
@@ -1152,7 +1190,7 @@ namespace VE3NEA.SkyTlm.Core
               long startAbs = f.SoftBitOffset >= 0 ? segStartAbs + (long)(f.SoftBitOffset * sps) : -1;
               long endAbs = f.SoftBitEnd >= 0 ? segStartAbs + (long)(f.SoftBitEnd * sps) : -1;
               if (IsDuplicateFrame(f.Bytes, ft, startAbs, endAbs)) continue;   // same frame re-decoded via the overlap
-              frs.Add(f with { BurstIndex = idx, TimeSeconds = ft, CfoHz = info.CfoHz, SnrDb = snr });
+              frs.Add(f with { BurstIndex = idx, TimeSeconds = ft, CfoHz = cfoHz, SnrDb = snr });
             }
 
             // tail pass: same CFO, separate window ending one max frame past the burst end — finishes a frame
@@ -1160,12 +1198,12 @@ namespace VE3NEA.SkyTlm.Core
             // detected span count; everything else in the tail is post-burst noise.
             if (tailSeg != null)
             {
-              var tailLocal = new Burst(0, tailSeg.Length, fs, info.CfoHz, snr);
+              var tailLocal = new Burst(0, tailSeg.Length, fs, cfoHz, snr);
               SoftSymbols tailSoft = demod is CpmFskDemodulator c2
-                ? c2.Trace(Acquisition.Derotate(tailSeg, tailLocal), pEffective).Symbols
-                : demod.Demodulate(tailSeg, tailLocal, pEffective);
-              double tsps = tailSoft.SamplesPerSymbol > 0 ? tailSoft.SamplesPerSymbol : p.SampleRate / p.Baud;
-              foreach (var f in deframer.Deframe(tailSoft, p))
+                ? c2.Trace(Acquisition.Derotate(tailSeg, tailLocal), pe).Symbols
+                : demod.Demodulate(tailSeg, tailLocal, pe);
+              double tsps = tailSoft.SamplesPerSymbol > 0 ? tailSoft.SamplesPerSymbol : pe.SampleRate / pe.Baud;
+              foreach (var f in deframer.Deframe(tailSoft, pe))
               {
                 double ft = f.SoftBitOffset >= 0 ? (tailStartAbs + f.SoftBitOffset * tsps) / fs
                                                  : detEndSec + 1;   // unknown position → not provably in-burst
@@ -1173,18 +1211,25 @@ namespace VE3NEA.SkyTlm.Core
                 long startAbs = f.SoftBitOffset >= 0 ? tailStartAbs + (long)(f.SoftBitOffset * tsps) : -1;
                 long endAbs = f.SoftBitEnd >= 0 ? tailStartAbs + (long)(f.SoftBitEnd * tsps) : -1;
                 if (IsDuplicateFrame(f.Bytes, ft, startAbs, endAbs)) continue;
-                frs.Add(f with { BurstIndex = idx, TimeSeconds = ft, CfoHz = info.CfoHz, SnrDb = snr });
+                frs.Add(f with { BurstIndex = idx, TimeSeconds = ft, CfoHz = cfoHz, SnrDb = snr });
               }
             }
           }
           return (sf, tr, frs);
         }
 
-        var (soft, trace, burstFrames) = decodeWith(activeDemod);
+        var (soft, trace, burstFrames) = decodeWith(activeDemod, pEffective, info.CfoHz);
+
+        // the curated label produced a CRC-valid frame before any fallback lock — the label is proven, so
+        // the blind-fallback trials below stop considering this session's bursts.
+        if (!p.IsBlind && fallbackParams == null && burstFrames.Any(f => f.CrcValid == true))
+          curatedCrcSeen = true;
 
         // promotion on the first CRC-valid blind frame: gate strictly on CRC-valid, not blind
-        // confidence — a frame that passes CRC proves the deviation it used actually works.
-        if (burstBlindDevHz.HasValue && !learnedDeviationHz.HasValue && burstFrames.Any(f => f.CrcValid == true))
+        // confidence — a frame that passes CRC proves the deviation it used actually works. Guarded on
+        // p.IsBlind because the blind-fallback path also sets burstBlindDevHz — its lock is fallbackParams,
+        // not the blind-path learnedDeviationHz.
+        if (p.IsBlind && burstBlindDevHz.HasValue && !learnedDeviationHz.HasValue && burstFrames.Any(f => f.CrcValid == true))
         {
           learnedDeviationHz = burstBlindDevHz.Value;
           learnedDemod = Demodulators.Create(p with { Deviation = burstBlindDevHz.Value }, o.GmskOptions) ?? this.demod!;
@@ -1210,6 +1255,46 @@ namespace VE3NEA.SkyTlm.Core
                          || shapePass
                          || eyePass
                          || burstFrames.Any(f => f.CrcValid == true);
+
+        // Phase U blind fallback: a validated FSK-family burst that decodes zero frames on the curated label
+        // is the signature of a wrong DB label (the SNIPE-D/ERMIS/KSM1/BRO-8/MIMAN cluster — 617 CRC frames
+        // recovered blind). Trial the blind hypothesis at the labeled baud and at 2× it (MIMAN's label is
+        // wrong in baud too), over the WIDE blind-window PSD (the curated occupied window can clip the real
+        // signal). The first CRC-valid trial frame locks the discovered params for the session and replaces
+        // this burst's decode; a premature lock on a coincidental CRC is accepted — CRC is strong proof.
+        if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind && validated
+            && burstFrames.Count == 0
+            && p.Modulation is Modulation.FSK or Modulation.GFSK or Modulation.GMSK)
+        {
+          foreach (double b in new[] { p.Baud, 2 * p.Baud })
+          {
+            var pBlind = p with { Modulation = Modulation.FSK, Baud = b, Deviation = null };
+            var trialCfo = TrialCfo(pBlind);
+            var wideQ = trialCfo.AveragedSpectrum(seg, 0, seg.Length);
+            var est = BlindFskEstimator.Estimate(wideQ, trialCfo.CenterBin, trialCfo.BinHz, b, o.CfoMaxHz);
+            var pTrial = est.IsFsk ? pBlind with { Deviation = est.DeviationHz } : pBlind;
+            var trialDemod = Demodulators.Create(pTrial, o.GmskOptions);
+            if (trialDemod == null) continue;
+            var (tSoft, tTrace, tFrames) = decodeWith(trialDemod, pTrial, est.CfoHz);
+            if (!tFrames.Any(f => f.CrcValid == true)) continue;
+            // CRC-proven: lock the fallback session state and adopt the trial decode for this burst.
+            fallbackParams = pTrial;
+            fallbackDemod = trialDemod;
+            fallbackCfo = trialCfo;
+            fallbackDevHz = est.IsFsk ? est.DeviationHz : null;
+            resolvedTarget.ResolvedDeviation = fallbackDevHz;   // surface the discovered deviation to the caller's UI
+            soft = tSoft;
+            trace = tTrace;
+            burstFrames = tFrames;
+            info = new BurstSpectralInfo(est.CfoHz, 0, 0);
+            measured = trialCfo.EstimateShapeFromSpectrum(wideQ, est.CfoHz);
+            (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(fallbackDevHz, pTrial));
+            Log.Information("Blind fallback: curated {Mod} {LabelBaud:F0} Bd label distrusted — locked blind FSK at {Baud:F0} Bd, deviation {Dev:F0} Hz from first CRC-valid frame",
+              p.Modulation, p.Baud, b, fallbackDevHz ?? 0);
+            break;
+          }
+        }
+
         if (o.GateByShape && !validated) return;
 
         if (burstFrames.Count > 0) { frames ??= new List<Frame>(); frames.AddRange(burstFrames); }
@@ -1310,22 +1395,36 @@ namespace VE3NEA.SkyTlm.Core
       return (best, bestHyp, pass);
     }
 
-    /// <summary>Shape-hypothesis bank for one blind/learned burst: the canonical blind bank
-    /// (<see cref="CpmTemplate.SynthesizeBank"/> for the deviation-less params — rect h=1, rect h=0.5,
-    /// Gaussian) plus, when the estimator found (or a CRC lock confirmed) a deviation, the two-tone
-    /// template at that deviation. The deviation is rounded to 25 Hz so the per-deviation synthesis cache
-    /// stays bounded over a long session of per-burst estimates (the template grid is far coarser anyway).</summary>
-    private IReadOnlyList<ShapeHypothesis> BlindBank(double? devHz)
+    /// <summary>Shape-hypothesis bank for one blind/learned/fallback burst: the canonical bank
+    /// (<see cref="CpmTemplate.SynthesizeBank"/> — rect h=1, rect h=0.5, Gaussian) plus, when the estimator
+    /// found (or a CRC lock confirmed) a deviation, the two-tone template at that deviation. The deviation
+    /// is rounded to 25 Hz so the per-deviation synthesis cache stays bounded over a long session of
+    /// per-burst estimates (the template grid is far coarser anyway). <paramref name="pb"/> carries the
+    /// hypothesis params: when its baud differs from the pipeline's, the canonical part is synthesized for
+    /// THAT baud instead of reusing <see cref="templateBank"/> — <see cref="LearnedShape"/> grids are
+    /// baud-normalized, so mixing bauds mis-scales the bank.</summary>
+    private IReadOnlyList<ShapeHypothesis> BlindBank(double? devHz, SignalParams pb)
     {
-      if (devHz is not double d || d <= 0) return templateBank;
+      var canonical = pb.Baud != p.Baud ? CpmTemplate.SynthesizeBank(pb) : templateBank;
+      if (devHz is not double d || d <= 0) return canonical;
       double dev = Math.Round(d / 25.0) * 25.0;
-      var shape = CpmTemplate.Synthesize(p with { Deviation = dev });
-      var bank = new List<ShapeHypothesis>(templateBank.Count + 1)
+      var shape = CpmTemplate.Synthesize(pb with { Deviation = dev });
+      var bank = new List<ShapeHypothesis>(canonical.Count + 1)
       {
-        new ShapeHypothesis($"blind h={2 * dev / p.Baud:0.##}", shape, Bell: shape.SampleAtBaud(0) >= 0.5),
+        new ShapeHypothesis($"blind h={2 * dev / pb.Baud:0.##}", shape, Bell: shape.SampleAtBaud(0) >= 0.5),
       };
-      bank.AddRange(templateBank);
+      bank.AddRange(canonical);
       return bank;
+    }
+
+    /// <summary>Wide-window <see cref="CfoEstimator"/> for one blind-fallback trial baud, on the detector's
+    /// FFT grid. Cached per baud (the trial set is tiny — labeled baud and 2×) and disposed with the
+    /// pipeline; <see cref="fallbackCfo"/> aliases a cache entry, so the cache is the single owner.</summary>
+    private CfoEstimator TrialCfo(SignalParams pBlind)
+    {
+      if (!trialCfoCache.TryGetValue(pBlind.Baud, out var est))
+        trialCfoCache[pBlind.Baud] = est = new CfoEstimator(fs, o.CfoMaxHz, pBlind, fftSize: Fft);
+      return est;
     }
 
     /// <summary>An emitted frame, kept for overlap dedup: its bytes/time and — when the deframer reported the
@@ -1414,6 +1513,11 @@ namespace VE3NEA.SkyTlm.Core
       nextFrameOffset -= drop;
     }
 
-    public void Dispose() { fft.Dispose(); cfo.Dispose(); }
+    public void Dispose()
+    {
+      fft.Dispose();
+      cfo.Dispose();
+      foreach (var est in trialCfoCache.Values) est.Dispose();
+    }
   }
 }
