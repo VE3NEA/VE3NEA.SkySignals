@@ -139,7 +139,7 @@ namespace VE3NEA.SkyTlm.Dsp
       if (up > 1) { chan = Upsample(chan, up); p = p with { SampleRate = p.SampleRate * up }; }
 
       double sps = p.SampleRate / p.Baud;
-      float[] disc = Discriminate(chan, p);          // instantaneous frequency, normalized to ±1 nominal
+      float[] disc = Discriminate(chan, p, out float discCenter);   // instantaneous frequency, normalized to ±1 nominal
       float[] mf = Smooth(disc, sps);                // short noise LP (NOT a full freq-pulse matched filter — that double-filters)
       var (gardnerSoft, strobes, settledSps) = GardnerSync(mf, sps); // timing recovery → one soft symbol per period
 
@@ -161,7 +161,9 @@ namespace VE3NEA.SkyTlm.Dsp
         SymbolRate = p.Baud,
         SamplesPerSymbol = settledSps / up,   // back to original-rate sps so it stays comparable across factors
         EyeSnrDb = eyeDb,
-        AmbiguousFraction = ambig
+        AmbiguousFraction = ambig,
+        // the removed cluster midpoint in Hz — the carrier error the caller's derotation left behind
+        ResidualCfoHz = discCenter * (p.Deviation ?? p.Baud / 4.0)
       };
       return new GmskTrace(mf, strobes, sps, symbols);
     }
@@ -239,10 +241,16 @@ namespace VE3NEA.SkyTlm.Dsp
     /// nominal GMSK deviation (Rs/4, h=0.5) maps to ±1, then DC-centered: the burst is mean-removed
     /// so the slicer threshold is 0 even with a small residual offset the NCO left behind.
     /// </summary>
-    internal static float[] Discriminate(Complex32[] x, SignalParams p)
+    internal static float[] Discriminate(Complex32[] x, SignalParams p) => Discriminate(x, p, out _);
+
+    /// <summary>As <see cref="Discriminate(Complex32[],SignalParams)"/>, also reporting the cluster midpoint
+    /// the centring removed (in soft units, 1.0 = nominal deviation): that midpoint IS the residual carrier
+    /// error the derotation left behind, measured from the NRZ itself — amplitude-independent, so it stays
+    /// valid even when the mis-centred channel filter attenuates one tone.</summary>
+    internal static float[] Discriminate(Complex32[] x, SignalParams p, out float centerSoft)
     {
       var f = DiscriminateRaw(x, p);
-      CenterGlobal(f);
+      centerSoft = CenterGlobal(f);
       return f;
     }
 
@@ -278,10 +286,10 @@ namespace VE3NEA.SkyTlm.Dsp
     /// midpoint of the two frequency clusters instead — the mean of samples above a provisional mean and the
     /// mean of those below — which sits at the eye centre even for an imbalanced/edge-noisy run.
     /// </summary>
-    internal static void CenterGlobal(float[] f)
+    internal static float CenterGlobal(float[] f)
     {
       int n = f.Length;
-      if (n == 0) return;
+      if (n == 0) return 0;
       double sum = 0;
       for (int i = 0; i < n; i++) sum += f[i];
       float m0 = (float)(sum / n);
@@ -290,6 +298,7 @@ namespace VE3NEA.SkyTlm.Dsp
         if (f[i] >= m0) { sumP += f[i]; nP++; } else { sumN += f[i]; nN++; }
       float center = nP > 0 && nN > 0 ? (float)((sumP / nP + sumN / nN) / 2.0) : m0;
       for (int i = 0; i < n; i++) f[i] -= center;
+      return center;
     }
 
     /// <summary>

@@ -38,6 +38,11 @@ namespace VE3NEA.SkyTlm.Core
     /// <summary>Fraction of symbols falling near the slicer threshold (|soft| &lt; 0.25·eye) — ambiguous bits.</summary>
     public double AmbiguousFraction { get; init; }
 
+    /// <summary>Residual carrier error the derotation left behind, in Hz, as measured from the demodulated
+    /// NRZ itself (the cluster midpoint the discriminator's per-burst centring removed). 0 when the
+    /// demodulator has no discriminator path to measure it on.</summary>
+    public double ResidualCfoHz { get; init; }
+
     public int Count => Soft.Length;
   }
 

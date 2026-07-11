@@ -310,6 +310,10 @@ namespace VE3NEA.SkyTlm.Core
     /// demodulating for the CRC-rescue path (see the hopeless-segment skip in <see cref="DecodeBurst"/>).</summary>
     private const double CrcRescueMinMatch = 0.3;
 
+    /// <summary>NRZ-measured residual carrier error (fraction of the deviation) above which a frameless
+    /// decode is retried once at the corrected carrier (the decodeWith refinement in <see cref="DecodeBurst"/>).</summary>
+    private const double NrzRefineMinDevFrac = 0.05;
+
     /// <summary>Equivalent noise bandwidth of the Blackman-Harris window in bins: neighbouring periodogram
     /// bins are correlated, inflating the variance of any sum over bins by this factor (σ by its √).</summary>
     private const double WindowEnbw = 2.0;
@@ -1190,7 +1194,8 @@ namespace VE3NEA.SkyTlm.Core
         // still unknown (the coherent-vs-differential trial below), or once per blind-fallback trial (Phase U):
         // the caller passes the demod, params and carrier of its hypothesis, so the derotation bursts, the
         // samples-per-symbol and the frame stamps all follow that hypothesis rather than the curated label.
-        (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeWith(IDemodulator demod, SignalParams pe, double cfoHz)
+        // Every call goes through the decodeWith wrapper below, which adds the NRZ carrier refinement.
+        (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeOnce(IDemodulator demod, SignalParams pe, double cfoHz)
         {
           // segment-local burst (indices into seg) for derotation; absolute time is stamped separately.
           var local = new Burst(0, seg.Length, fs, cfoHz, snr)
@@ -1250,6 +1255,38 @@ namespace VE3NEA.SkyTlm.Core
           return (sf, tr, frs);
         }
 
+        // NRZ carrier refinement: the discriminator's cluster-midpoint centring measures the residual
+        // carrier error the spectral CFO estimate left behind (SoftSymbols.ResidualCfoHz). The slicer is
+        // immune to that error, but the channel filter is centred on the estimate — a few-hundred-Hz
+        // error attenuates one tone and kills marginal decodes (SNIPE B @146.65 s/@177.09 s decode at
+        // the true carrier but not 350 Hz off it). When a decode yields no CRC frame and the NRZ says
+        // the carrier is off by more than NrzRefineMinDevFrac of the deviation, decode once more at the
+        // corrected carrier — CRC-gated adopt-only, with the same dedup-registry rollback the competing
+        // trials use (the first pass's registered frames would otherwise suppress the retry's).
+        (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeWith(IDemodulator demod, SignalParams pe, double cfoHz)
+        {
+          var preDecode = new List<RecentFrame>(recentFrames);
+          var first = decodeOnce(demod, pe, cfoHz);
+          double dev = pe.Deviation ?? pe.Baud / 4.0;
+          // any decoded frame means the carrier was close enough — and on a CRC-less framing the retry
+          // below could never prove itself anyway, so it only fires on a frameless decode.
+          double residual = first.frames.Count > 0 ? 0 : first.soft.ResidualCfoHz;
+          if (Math.Abs(residual) > NrzRefineMinDevFrac * dev && Math.Abs(residual) <= o.CfoMaxHz)
+          {
+            var afterFirst = new List<RecentFrame>(recentFrames);
+            restoreFrames(preDecode);
+            var second = decodeOnce(demod, pe, cfoHz + residual);
+            if (second.frames.Any(f => f.CrcValid == true))
+            {
+              Log.Information("NRZ carrier refinement: {Residual:F0} Hz correction decoded {N} CRC-valid frame(s) at {Time:F2} s",
+                residual, second.frames.Count(f => f.CrcValid == true), timeSeconds);
+              return second;
+            }
+            restoreFrames(afterFirst);
+          }
+          return first;
+        }
+
         var (soft, trace, burstFrames) = decodeWith(activeDemod, pEffective, info.CfoHz);
 
         // the curated label produced a CRC-valid frame before any fallback lock — the label is proven, so
@@ -1301,7 +1338,12 @@ namespace VE3NEA.SkyTlm.Core
         // WIDE blind-window PSD (the curated occupied window can clip the real
         // signal). The first CRC-valid trial frame at the labeled baud or above locks the discovered params
         // for the session and replaces this burst's decode; a premature lock on a coincidental CRC is
-        // accepted — CRC is strong proof. The ½ trial ADOPTS the burst's frames but never locks: a
+        // accepted — CRC is strong proof. When the discriminator retry above already CRC'd this burst,
+        // the trials compete instead: a trial adopts only on STRICTLY more CRC frames and never locks —
+        // a curated CRC proves the label decodes, so the session stays uncommitted and each burst picks
+        // its better hypothesis (the wrong-label recordings split both ways: ERMIS decodes far more via
+        // curated label + discriminator, KSM1-A/BRO-8 via the blind estimate).
+        // The ½ trial ADOPTS the burst's frames but never locks: a
         // half-rate CRC can come from a co-channel second transmitter (the BRO8_BRO22 recording — a ½
         // lock on one BRO-22-class burst cost the session BRO-8's 29 frames at the labeled baud), so
         // each burst must re-earn it while the full-rate trials keep competing for the lock.
@@ -1316,11 +1358,17 @@ namespace VE3NEA.SkyTlm.Core
         // plain FM discriminator are complementary — the sync/PLS regions decode cleanly under both, but
         // the RS-critical body bit errors cluster differently, so each detector recovers bursts the other
         // loses (QMR-KWT 2 @331 s and Luca-9k6 @110 s decode only via the discriminator; Luca-9k6 @20 s
-        // only via MLSE). Before the far costlier blind-baud trials below, decode once more with the
-        // discriminator; a CRC-valid frame adopts the retry for this burst only (no session lock) and,
-        // like any curated CRC, proves the label. Only GMSK/GFSK profiles resolve their detector from the
-        // options (FSK pins the orthogonal MF), and the retry is skipped when the primary detector already
-        // IS the discriminator.
+        // only via MLSE). A CRC-valid frame adopts the retry for this burst only and flips validated; it
+        // sets neither a session lock nor curatedCrcSeen — the blind trials below still run on the SAME
+        // burst and compete (adopt on strictly more CRC frames), because neither hypothesis dominates:
+        // on the wrong-label ERMIS recordings the curated-label discriminator beats the blind lock by
+        // tens of frames, on the equally wrong-label KSM1-A/BRO8_BRO22 the blind decode wins — the
+        // session commits to blind only when the curated label decodes nothing (the lock rule below).
+        // Only GMSK/GFSK profiles resolve their detector from the options (FSK pins the orthogonal MF),
+        // and the retry is skipped when the primary detector already IS the discriminator.
+        int retryCrc = 0;
+        List<RecentFrame>? preRetryFrames = null;
+        void restoreFrames(List<RecentFrame> snap) { recentFrames.Clear(); recentFrames.AddRange(snap); }
         if (o.DiscriminatorRetry && (validated || rejectedStrong)
             && !burstFrames.Any(f => f.CrcValid == true)
             && pEffective.Modulation is Modulation.GMSK or Modulation.GFSK
@@ -1329,6 +1377,10 @@ namespace VE3NEA.SkyTlm.Core
           var retryDemod = Demodulators.Create(pEffective, o.GmskOptions with { UseMlse = false, DifferentialOrder = 0 });
           if (retryDemod != null)
           {
+            // snapshot the dedup registry: the retry's frames register in it, and the competing blind
+            // trials below re-decode the SAME burst — without a reset their overlapping frames would be
+            // suppressed as duplicates and the competition could never out-score the retry.
+            preRetryFrames = new List<RecentFrame>(recentFrames);
             var (tSoft, tTrace, tFrames) = decodeWith(retryDemod, pEffective, info.CfoHz);
             if (tFrames.Any(f => f.CrcValid == true))
             {
@@ -1338,14 +1390,19 @@ namespace VE3NEA.SkyTlm.Core
               trace = tTrace;
               burstFrames = tFrames;
               validated = true;
-              if (!p.IsBlind && fallbackParams == null) curatedCrcSeen = true;
+              retryCrc = tFrames.Count(f => f.CrcValid == true);
+            }
+            else
+            {
+              restoreFrames(preRetryFrames);   // a failed retry must not ghost-suppress the trials' frames
+              preRetryFrames = null;
             }
           }
         }
 
         if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind
             && (validated || rejectedStrong)
-            && burstFrames.Count == 0
+            && (burstFrames.Count == 0 || retryCrc > 0)
             && p.Modulation is Modulation.FSK or Modulation.GFSK or Modulation.GMSK)
         {
           // 4× reaches the Luca-2k4 class (label 2k4, ~9k6 on air — forced blind FSK 9600 CRCs where
@@ -1361,10 +1418,22 @@ namespace VE3NEA.SkyTlm.Core
             var pTrial = est.IsFsk ? pBlind with { Deviation = est.DeviationHz } : pBlind;
             var trialDemod = Demodulators.Create(pTrial, o.GmskOptions);
             if (trialDemod == null) continue;
+            // fair competition against an adopted retry: decode over the pre-retry dedup registry, and
+            // put the retry's registrations back if this arm does not win.
+            List<RecentFrame>? retryRegistry = null;
+            if (retryCrc > 0 && preRetryFrames != null)
+            {
+              retryRegistry = new List<RecentFrame>(recentFrames);
+              restoreFrames(preRetryFrames);
+            }
             var (tSoft, tTrace, tFrames) = decodeWith(trialDemod, pTrial, est.CfoHz);
-            if (!tFrames.Any(f => f.CrcValid == true)) continue;
+            if (tFrames.Count(f => f.CrcValid == true) <= retryCrc)
+            {
+              if (retryRegistry != null) restoreFrames(retryRegistry);
+              continue;
+            }
             double? trialDevHz = est.IsFsk ? est.DeviationHz : null;
-            if (b >= p.Baud)
+            if (b >= p.Baud && retryCrc == 0)
             {
               // CRC-proven at the labeled baud or above: lock the fallback session state.
               fallbackParams = pTrial;
@@ -1376,7 +1445,7 @@ namespace VE3NEA.SkyTlm.Core
                 p.Modulation, p.Baud, b, fallbackDevHz ?? 0);
             }
             else
-              Log.Information("Blind fallback: ½-baud trial decoded this burst at {Baud:F0} Bd (deviation {Dev:F0} Hz) — adopted without locking the session",
+              Log.Information("Blind fallback: trial decoded this burst at {Baud:F0} Bd (deviation {Dev:F0} Hz) — adopted without locking the session",
                 b, trialDevHz ?? 0);
             // adopt the trial decode for this burst. The CRC-valid trial frame is absolute proof of a real
             // digital burst, so a rejected-trigger burst flips to validated and passes the gate below.

@@ -32,7 +32,7 @@ namespace VE3NEA.SkyTlm.Dsp
     private readonly record struct Key(PulseShape Pulse, int BaudHz, int DevHz);
     private static readonly ConcurrentDictionary<Key, LearnedShape> cache = new();
 
-    private readonly record struct AfskKey(int BaudHz, int MarkHz, int SpaceHz, int RfDevHz);
+    private readonly record struct AfskKey(int BaudHz, int MarkHz, int SpaceHz, int RfDevHz, bool Widen);
     private static readonly ConcurrentDictionary<AfskKey, LearnedShape> afskCache = new();
 
     /// <summary>Synthesized PSD template for the params, resampled onto the <see cref="LearnedShape"/> grid (cached).</summary>
@@ -134,7 +134,10 @@ namespace VE3NEA.SkyTlm.Dsp
       var bank = new List<ShapeHypothesis>(rfDevsHz.Length);
       foreach (double rfDev in rfDevsHz)
       {
-        var shape = CachedAfskSubcarrier(baud, markHz, spaceHz, rfDev);
+        // widened variant (§2d): the measured sideband peaks sit a grid bin or two off the synthesized
+        // ones (tone/CFO/line-broadening error), and against razor-thin lines that near-miss scores as a
+        // full peak miss; the widened bank makes it cost a little Pearson instead.
+        var shape = CachedAfskSubcarrier(baud, markHz, spaceHz, rfDev, widen: true);
         // carrier-dominated FM: peaks at the carrier for any deviation in this range, so it is scored as a
         // "bell" shape (the stricter analog-interloper threshold), same class as GMSK/GFSK.
         bank.Add(new ShapeHypothesis($"AFSK subcarrier {rfDev / 1000:0.#}k", shape, Bell: true));
@@ -368,16 +371,28 @@ namespace VE3NEA.SkyTlm.Dsp
     }
 
     /// <summary>The synthesized AFSK-over-FM PSD template for one RF deviation, resampled onto the
-    /// <see cref="LearnedShape"/> grid (cached).</summary>
-    private static LearnedShape CachedAfskSubcarrier(double baud, double markHz, double spaceHz, double rfDevHz)
+    /// <see cref="LearnedShape"/> grid (cached). <paramref name="widen"/> selects the peak-widened
+    /// variant (§2d) used by the shape-match bank; the detection template stays razor-thin — its
+    /// matched statistic depends on the mass staying concentrated on the carrier line (widening it
+    /// collapsed the detector's SNR estimates and re-segmented every burst).</summary>
+    private static LearnedShape CachedAfskSubcarrier(double baud, double markHz, double spaceHz, double rfDevHz, bool widen = false)
     {
-      var key = new AfskKey((int)System.Math.Round(baud), (int)System.Math.Round(markHz), (int)System.Math.Round(spaceHz), (int)System.Math.Round(rfDevHz));
-      return afskCache.GetOrAdd(key, _ => BuildAfskSubcarrier(baud, markHz, spaceHz, rfDevHz));
+      var key = new AfskKey((int)System.Math.Round(baud), (int)System.Math.Round(markHz), (int)System.Math.Round(spaceHz), (int)System.Math.Round(rfDevHz), widen);
+      return afskCache.GetOrAdd(key, _ => BuildAfskSubcarrier(baud, markHz, spaceHz, rfDevHz, widen));
     }
 
-    private static LearnedShape BuildAfskSubcarrier(double baud, double markHz, double spaceHz, double rfDevHz)
+    /// <summary>σ of the synthesis-time Gaussian peak widening, in baud units — 1.5 detector grid bins
+    /// (the <see cref="LearnedShape"/> grid spacing is 0.05·Rs, so ~90 Hz at 1200 Bd). The synthesized
+    /// carrier/sideband lines are razor-thin, so a tone/CFO/line-broadening error of a grid bin or two
+    /// turns a peak hit into a full miss and caps the shape correlation near 0.6 on real bursts (§2d);
+    /// widening trades that cliff for a small smooth Pearson cost. AFSK-only — the CPM/GMSK templates
+    /// are untouched.</summary>
+    private const double AfskPeakWidenSigmaBaud = 0.025;
+
+    private static LearnedShape BuildAfskSubcarrier(double baud, double markHz, double spaceHz, double rfDevHz, bool widen)
     {
       var (freqHz, psd) = SynthesizeAfskSubcarrierPsd(baud, markHz, spaceHz, rfDevHz);
+      if (widen) WidenPeaks(freqHz, psd, AfskPeakWidenSigmaBaud * baud);
 
       int n = LearnedShape.GridPoints;
       var profile = new float[n];
@@ -392,6 +407,32 @@ namespace VE3NEA.SkyTlm.Dsp
       for (int i = 0; i < n; i++) profile[i] = (float)(profile[i] / peak);
 
       return new LearnedShape { DeviationHz = rfDevHz, BandwidthHz = 0, Profile = profile, Count = 1 };
+    }
+
+    /// <summary>In-place Gaussian smoothing (σ in Hz) of a uniformly gridded PSD, applied to the fine
+    /// synthesis PSD before it is resampled onto the coarse <see cref="LearnedShape"/> grid, so every
+    /// widened line survives the resample regardless of its alignment with the grid points.</summary>
+    private static void WidenPeaks(double[] freqHz, double[] psd, double sigmaHz)
+    {
+      double binHz = freqHz[1] - freqHz[0];
+      int r = (int)System.Math.Ceiling(3 * sigmaHz / binHz);
+      if (r < 1) return;
+      var kernel = new double[2 * r + 1];
+      double sum = 0;
+      for (int i = -r; i <= r; i++)
+      {
+        double x = i * binHz / sigmaHz;
+        sum += kernel[i + r] = System.Math.Exp(-0.5 * x * x);
+      }
+      for (int i = 0; i < kernel.Length; i++) kernel[i] /= sum;
+      var src = (double[])psd.Clone();
+      for (int k = 0; k < psd.Length; k++)
+      {
+        double acc = 0;
+        int lo = System.Math.Max(0, k - r), hi = System.Math.Min(psd.Length - 1, k + r);
+        for (int j = lo; j <= hi; j++) acc += src[j] * kernel[j - k + r];
+        psd[k] = acc;
+      }
     }
 
     /// <summary>

@@ -46,17 +46,22 @@ namespace VE3NEA.SkyTlm.Dsp
       if (tauMax < tauMin)
         return new BlindFskResult(0, 0, 0, false);
 
-      // step 1 — PSD autocorrelation: R[τ] = Σ q[j]·q[j+τ], peak at τ = 2·dev
+      // step 1 — PSD autocorrelation: R[τ] = Σ q[j]·q[j+τ] / (L−τ), peak at τ = 2·dev
       // carrier-independent: the cross-correlation of the two symmetric tones appears at τ = 2·dev
-      // regardless of where the carrier sits.
+      // regardless of where the carrier sits. The overlap shrinks with τ, so the raw sum is biased
+      // toward small τ (small deviation); dividing by the overlap count makes the ACF unbiased.
       double R0 = 0;
       for (int j = 0; j < L; j++) R0 += (double)avgQ[j] * avgQ[j];
       if (R0 <= 0) return new BlindFskResult(0, 0, 0, false);
+      R0 /= L;   // per-bin, same scale as the overlap-normalized R[τ] below
 
       var R = new double[tauMax + 1];
       for (int tau = tauMin; tau <= tauMax; tau++)
+      {
         for (int j = 0; j + tau < L; j++)
           R[tau] += (double)avgQ[j] * avgQ[j + tau];
+        R[tau] /= L - tau;
+      }
 
       int bestTau = tauMin;
       double bestR = double.NegativeInfinity;
@@ -134,11 +139,16 @@ namespace VE3NEA.SkyTlm.Dsp
       var corr = new double[hi - lo + 1];
       for (int c = lo; c <= hi; c++)
       {
-        // score = energy at the two expected tone positions
+        // score = energy in a ±1-bin neighborhood of the two expected tone positions — the exact bins
+        // alone are fragile when a tone straddles a bin boundary (its power splits across neighbors)
         int p1 = c + devBins, p2 = c - devBins;
         double v = 0;
-        if ((uint)p1 < (uint)L) v += avgQ[p1];
-        if ((uint)p2 < (uint)L) v += avgQ[p2];
+        for (int d = -1; d <= 1; d++)
+        {
+          int j1 = p1 + d, j2 = p2 + d;
+          if ((uint)j1 < (uint)L) v += avgQ[j1];
+          if ((uint)j2 < (uint)L) v += avgQ[j2];
+        }
         corr[c - lo] = v;
         if (v > best) { best = v; bestS = c; }
       }
