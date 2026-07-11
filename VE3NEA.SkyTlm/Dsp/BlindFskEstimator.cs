@@ -21,8 +21,12 @@ namespace VE3NEA.SkyTlm.Dsp
   /// </summary>
   internal static class BlindFskEstimator
   {
-    // plausible h range [0.2, 6] ⇒ dev/baud ∈ [0.1, 3]; the lower bound was 0.15 while the raw
-    // (small-τ-biased) ACF needed a guard, relaxed after the overlap normalization made it unbiased
+    // plausible h range [0.3, 6] ⇒ dev/baud ∈ [0.15, 3]. The lower bound is a deviation PRIOR, not
+    // just a plausibility guard: below ~0.2·baud the tone spectra merge and the ACF bump at 2·dev
+    // sinks into the τ=0 self-lobe tail, so bestTau pins to tauMin and the clamp value becomes the
+    // estimate — and it also sets the ±dev window geometry of RefineCarrierFromPeaks, which the
+    // gate-failed (IsFsk=false) consumers rely on for CfoHz. Relaxing to 0.10 was tested 2026-07-11
+    // and rejected: it reshuffles that geometry (corpus +1 crc, clusters −4), pure lottery.
     private const double DMinFrac = 0.15, DMaxFrac = 3.0;
 
     // ---- public API -------------------------------------------------------------------------
