@@ -1479,10 +1479,32 @@ namespace VE3NEA.SkyTlm.Core
             && (burstFrames.Count == 0 || retryCrc > 0)
             && p.Modulation is Modulation.FSK or Modulation.GFSK or Modulation.GMSK)
         {
+          // Phase 4 baud verification: before the CRC-gated trials, measure the on-air baud from this
+          // burst's own symbol-rate line (BaudVerifier: squared-discriminator cyclostationary statistic,
+          // zoom-DTFT over {label, 2×, ½, 1200, 2400, 4800, 9600}). A line that contradicts the label is
+          // flagged and its baud leads the trial order — and is ADDED when the established {b, 2b, 4b, ½b}
+          // set lacks it (the label-9600/on-air-2400 class is unreachable by those factors). Adoption and
+          // locking stay CRC-gated below, so a spurious line costs one extra trial, never a wrong decode.
+          var trialBauds = new List<double> { p.Baud, 2 * p.Baud, 4 * p.Baud, p.Baud / 2 };
+          var baudCandidates = BaudVerifier.CandidateBauds(p.Baud, fs);
+          double maxCandidate = 0;
+          foreach (double b in baudCandidates) maxCandidate = Math.Max(maxCandidate, b);
+          // the pre-filter must pass the outer tone plus the transition band of the highest candidate, or a
+          // faster-than-label signal loses its line before the discriminator ever sees it
+          double discCutoffHz = Math.Max(info.BandwidthHz, (pEffective.Deviation ?? p.Baud) + 0.75 * maxCandidate);
+          var baudLine = BaudVerifier.StrongestLine(seg, fs, info.CfoHz, discCutoffHz, baudCandidates);
+          if (baudLine != null && Math.Abs(baudLine.CandidateBaud - p.Baud) > 0.05 * p.Baud)
+          {
+            Log.Information("Baud verification: measured {Measured:F0} Bd (line score {Score:F1}) contradicts the labeled {Label:F0} Bd at {Time:F2} s",
+              baudLine.MeasuredBaud, baudLine.Score, p.Baud, timeSeconds);
+            trialBauds.RemoveAll(b => Math.Abs(b - baudLine.CandidateBaud) < 0.05 * b);
+            trialBauds.Insert(0, baudLine.CandidateBaud);
+          }
+
           // 4× reaches the Luca-2k4 class (label 2k4, ~9k6 on air — forced blind FSK 9600 CRCs where
           // {b, 2b, ½b} cannot; a lock-on-CRC session can never chain two doublings). Trial bauds the
           // sample rate cannot carry (< 2 samples/symbol) are skipped.
-          foreach (double b in new[] { p.Baud, 2 * p.Baud, 4 * p.Baud, p.Baud / 2 })
+          foreach (double b in trialBauds)
           {
             if (fs / b < 2) continue;
             var pBlind = p with { Modulation = Modulation.FSK, Baud = b, Deviation = null };
