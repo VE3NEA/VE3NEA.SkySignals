@@ -55,6 +55,29 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     }
 
     [Fact]
+    public void Usp_ErasureRetry_RecoversFadeCorruptedFrame()
+    {
+      // fade a contiguous run of the rate-1/2 coded body to near-zero soft (the QMR-KWT s-class
+      // "RS overload in every variant" failure mode): the Viterbi wanders there, corrupting ~20 RS
+      // bytes — beyond the plain decoder's 16-error budget. The re-encode error profile ranks the
+      // faded span's bytes weakest (its margins collapse) and the erasure ladder must recover the
+      // frame. (A confidently-WRONG burst — sign flips — is different: the Viterbi agrees with the
+      // corruption inside the span and only the error-event boundary bytes rank weak; interval-based
+      // erasures would be needed there. Noted in the plan as a possible follow-up.)
+      var syms = Soft(UspVectors.FrameLong);
+      int body = 64 + 64;                        // syncword + PLS, then the coded body
+      var rng = new Random(3);
+      for (int k = body + 1000; k < body + 1000 + 320; k++)
+        syms.Soft[k] = 0.05f * (float)(rng.NextDouble() - 0.5);
+
+      var frames = new UspDeframer().Deframe(syms, P).ToList();
+
+      frames.Should().ContainSingle("the erasure-assisted RS retry must recover the fade-corrupted frame");
+      frames[0].Bytes.Should().Equal(Hex(UspVectors.FrameLongOut));
+      output.WriteLine($"rsCorr={frames[0].CorrectedBits}");
+    }
+
+    [Fact]
     public void Usp_NoSync_YieldsNoFrames()
     {
       var soft = new float[8000];

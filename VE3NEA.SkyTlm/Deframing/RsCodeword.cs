@@ -48,7 +48,21 @@ namespace VE3NEA.SkyTlm.Deframing
       for (int k = 0; k < codedLen; k++)
         for (int b = 0; b < 8; b++)
           conf[k] += Math.Abs(soft[bodyBit + 8 * k + b]);
-      int[] weakest = Enumerable.Range(0, codedLen).OrderBy(k => conf[k]).ToArray();
+      return TryWithErasures(cw, conf, pad, dualBasis, out decoded, out erased);
+    }
+
+    /// <summary>
+    /// Erasure-assisted RS retry with caller-supplied <b>per-byte</b> confidence (lowest = weakest).
+    /// The bit-soft overload above computes Σ|soft| per byte; concatenated-coding callers rank bytes
+    /// differently (USP: the RS codeword sits behind the Viterbi, so bit-level soft confidence no
+    /// longer maps 1:1 onto RS symbols — bytes are scored by the Viterbi re-encode error profile
+    /// instead). Ladder, erasure coordinates and the syndrome-margin acceptance gate are as documented
+    /// on the overload above.
+    /// </summary>
+    public static int TryWithErasures(byte[] cw, float[] byteConf, int pad, bool dualBasis,
+                                      out byte[] decoded, out int erased)
+    {
+      int[] weakest = Enumerable.Range(0, cw.Length).OrderBy(k => byteConf[k]).ToArray();
 
       foreach (int f in ErasureCounts)
       {

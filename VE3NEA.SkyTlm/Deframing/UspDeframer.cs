@@ -134,7 +134,22 @@ namespace VE3NEA.SkyTlm.Deframing
       // --- Reed–Solomon (255,223) dual-basis, shortened by pad --------------------------------
       int pad = 255 - rsBytes;
       int rsResult = NativeFec.decode_rs_ccsds(rs, null, 0, pad);
-      if (rsResult < 0) return null;              // RS is the USP integrity gate (no inner CRC)
+      if (rsResult < 0)
+      {
+        // erasure-assisted retry (uneven-coverage fix: AX100/CCSDS have it, USP gave up after one
+        // call). Post-Viterbi, bit-level soft confidence no longer maps onto RS bytes — a Viterbi
+        // error event is a short BURST of wrong bits — so rank the bytes by the re-encode error
+        // profile instead: re-encode the winner and score each byte by the soft margin of its 16
+        // rate-1/2 symbols against what was received. bits[] was descrambled in place above; the
+        // additive scrambler is self-inverse, so descrambling a copy again restores the on-air
+        // domain the encoder saw.
+        var onAir = (int[])bits.Clone();
+        CcsdsScrambler.DescrambleInPlace(onAir);
+        var conf = ReencodeByteConfidence(onAir, soft, symStart, polarity, rsBytes);
+        rsResult = RsCodeword.TryWithErasures(rs, conf, pad, dualBasis: true, out var corrected, out _);
+        if (rsResult < 0) return null;            // RS is the USP integrity gate (no inner CRC)
+        rs = corrected;
+      }
 
       // --- AX.25 crop: bytes[2:4] little-endian length, frame at offset 4 ---------------------
       if (dataLen < 4) return null;
@@ -159,6 +174,36 @@ namespace VE3NEA.SkyTlm.Deframing
     {
       int s = (int)Math.Round(127.5 + 127.5 * v);
       return (byte)Math.Clamp(s, 0, 255);
+    }
+
+    /// <summary>
+    /// Per-RS-byte confidence from the Viterbi re-encode error profile: re-encode the winner
+    /// (CCSDS r=1/2 k=7, libfec convention — encstate shifts left, symbol = parity(encstate &amp; poly),
+    /// second symbol inverted) and accumulate, per byte, the received soft margin sign-matched against
+    /// the 16 re-encoded symbols its 8 bits produce. A Viterbi error event shows up as a run of
+    /// disagreeing/weak symbols over the bytes it straddles, so the lowest totals localize the
+    /// corrupted RS symbols for the erasure ladder. <paramref name="onAirBits"/> must be in the
+    /// pre-descramble (on-air) domain.</summary>
+    private static float[] ReencodeByteConfidence(int[] onAirBits, float[] soft, int symStart,
+                                                  int polarity, int rsBytes)
+    {
+      var conf = new float[rsBytes];
+      int encstate = 0;
+      for (int b = 0; b < onAirBits.Length; b++)
+      {
+        encstate = ((encstate << 1) | onAirBits[b]) & 0x7f;
+        float expA = 2f * Parity(encstate & 0x4f) - 1f;
+        float expB = 2f * (Parity(encstate & 0x6d) ^ 1) - 1f;
+        conf[b >> 3] += expA * polarity * soft[symStart + 2 * b]
+                      + expB * polarity * soft[symStart + 2 * b + 1];
+      }
+      return conf;
+    }
+
+    private static int Parity(int v)
+    {
+      v ^= v >> 4; v ^= v >> 2; v ^= v >> 1;
+      return v & 1;
     }
 
     /// <summary>Hamming distance of the hard-sliced soft bits to the syncword; picks the better polarity.</summary>
