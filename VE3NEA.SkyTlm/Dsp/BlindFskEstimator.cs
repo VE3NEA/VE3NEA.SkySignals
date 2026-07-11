@@ -21,7 +21,8 @@ namespace VE3NEA.SkyTlm.Dsp
   /// </summary>
   internal static class BlindFskEstimator
   {
-    // plausible h range [0.3, 6] ⇒ dev/baud ∈ [0.15, 3]
+    // plausible h range [0.2, 6] ⇒ dev/baud ∈ [0.1, 3]; the lower bound was 0.15 while the raw
+    // (small-τ-biased) ACF needed a guard, relaxed after the overlap normalization made it unbiased
     private const double DMinFrac = 0.15, DMaxFrac = 3.0;
 
     // ---- public API -------------------------------------------------------------------------
