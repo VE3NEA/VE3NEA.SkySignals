@@ -175,12 +175,12 @@ namespace VE3NEA.SkyTlm.Core
     public GmskDemodOptions GmskOptions { get; init; } = Demodulators.DefaultGmskOptions;
 
     /// <summary>DC/LO-leakage notch: zero the centre 3 bins of every frame's noise-subtracted spectrum and of
-    /// the burst-averaged spectrum. Default <c>true</c> to hold the decode baseline. The notch's original
-    /// purpose (LO feedthrough / ADC DC offset) is moot on the SkyRoof slicer's spur- and imbalance-free
-    /// output, where instead it removes real near-DC signal energy — worst for bell-shaped h≈0.5 GMSK/MSK
-    /// whose carrier energy concentrates in exactly the 3 zeroed bins, lowering the matched z-statistic. The
-    /// Detection Inspector A/Bs this toggle; <c>--regress</c> decides whether to flip the default.</summary>
-    public bool NotchDc { get; init; } = true;
+    /// the burst-averaged spectrum. Default <c>false</c>: the notch's original purpose (LO feedthrough / ADC
+    /// DC offset) is moot on the SkyRoof slicer's spur- and imbalance-free output, where instead it removes
+    /// real near-DC signal energy — worst for bell-shaped h≈0.5 GMSK/MSK whose carrier energy concentrates
+    /// in exactly the 3 zeroed bins, lowering the matched z-statistic. The corpus A/B confirmed the flip.
+    /// The Detection Inspector still A/Bs this toggle.</summary>
+    public bool NotchDc { get; init; } = false;
 
     /// <summary>Domain the per-frame matched statistic (<c>MatchedSlide</c>) and the per-frame shape Pearson
     /// (<c>MatchAtShift</c>) operate in — see <see cref="Core.TemplateDomain"/>. The CFAR normalization tracks

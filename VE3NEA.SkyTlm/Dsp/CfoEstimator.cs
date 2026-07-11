@@ -72,7 +72,7 @@ namespace VE3NEA.SkyTlm.Dsp
     public BurstSpectralInfo Analyze(Complex32[] iq, int start, int end) => AnalyzeSpectrum(BuildPsd(iq, start, end));
 
     /// <summary>
-    /// Spectral info from an <b>already-built</b> in-band power spectrum (noise-subtracted, DC-notched, on this
+    /// Spectral info from an <b>already-built</b> in-band power spectrum (noise-subtracted, on this
     /// estimator's grid — length <c>2·occHalfBins+1</c>, index <c>occHalfBins</c> = 0 Hz). Lets a caller that
     /// already has the STFT power (e.g. the streaming detector, which averages the same frames it detects on)
     /// reuse it instead of recomputing an FFT here.
@@ -114,7 +114,7 @@ namespace VE3NEA.SkyTlm.Dsp
 
     /// <summary>
     /// As <see cref="EstimateShape(Complex32[],int,int,double)"/>, but from an already-built in-band power
-    /// spectrum on this estimator's grid (noise-subtracted, DC-notched). For callers that already have the
+    /// spectrum on this estimator's grid (noise-subtracted). For callers that already have the
     /// averaged STFT power and shouldn't recompute it.
     /// </summary>
     public LearnedShape EstimateShapeFromSpectrum(float[] q, double cfoHz)
@@ -188,9 +188,10 @@ namespace VE3NEA.SkyTlm.Dsp
       return prof;
     }
 
-    /// <summary>Noise-subtracted in-band PSD in natural frequency order; index C = 0 Hz, DC notched unless
-    /// <paramref name="notch"/> is false (the no-DC-notch paths — the notch removes real near-DC signal energy).</summary>
-    private float[] BuildPsd(Complex32[] iq, int start, int end, bool notch = true)
+    /// <summary>Noise-subtracted in-band PSD in natural frequency order; index C = 0 Hz, DC notched only when
+    /// <paramref name="notch"/> is true (default false — the notch removes real near-DC signal energy, and the
+    /// SkyRoof slicer's output has no LO/DC spur to remove; matches <see cref="Core.StreamingOptions.NotchDc"/>).</summary>
+    private float[] BuildPsd(Complex32[] iq, int start, int end, bool notch = false)
     {
       int len = end - start;
       int copy = Math.Min(len, size);
@@ -229,11 +230,11 @@ namespace VE3NEA.SkyTlm.Dsp
 
     /// <summary>
     /// Welch-averaged in-band PSD over the whole burst (≤ 32 windows spanning [start,end)): same in-band /
-    /// noise-subtracted / DC-notched form as <see cref="BuildPsd"/>, but averaged so the learned/displayed
-    /// shape reflects the burst as a whole rather than one centre snapshot. Falls back to a single window
-    /// for bursts shorter than the FFT.
+    /// noise-subtracted (un-notched by default) form as <see cref="BuildPsd"/>, but averaged so the
+    /// learned/displayed shape reflects the burst as a whole rather than one centre snapshot. Falls back to a
+    /// single window for bursts shorter than the FFT.
     /// </summary>
-    private float[] BuildPsdAveraged(Complex32[] iq, int start, int end, bool notch = true)
+    private float[] BuildPsdAveraged(Complex32[] iq, int start, int end, bool notch = false)
     {
       int len = end - start;
       if (len <= size) return BuildPsd(iq, start, end, notch);
