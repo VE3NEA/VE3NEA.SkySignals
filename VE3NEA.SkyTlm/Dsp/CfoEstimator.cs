@@ -286,6 +286,9 @@ namespace VE3NEA.SkyTlm.Dsp
       int hi = occHalfBins + cfoMaxBins;
       double best = -1; int bestC = occHalfBins;
       var s = new double[L];
+      // prefix sums of q² → O(1) per-shift overlap energy for the cosine normalization below
+      var qSqSum = new double[L + 1];
+      for (int j = 0; j < L; j++) qSqSum[j + 1] = qSqSum[j] + (double)q[j] * q[j];
 
       for (int c = lo; c <= hi; c++)
       {
@@ -294,6 +297,10 @@ namespace VE3NEA.SkyTlm.Dsp
         int jEnd = Math.Min(L - 1, 2 * c);
         for (int j = jStart; j <= jEnd; j++)
           acc += (double)q[j] * q[2 * c - j];
+        // cosine normalization: the reflection maps the overlap onto itself, so ‖fwd‖·‖refl‖ = Σ_overlap q²
+        // exactly (Cauchy–Schwarz) — scale-invariant without the count-based edge inflation of a /n mean
+        double denom = qSqSum[jEnd + 1] - qSqSum[jStart];
+        acc = denom > 0 ? acc / denom : 0;
         s[c] = acc;
         if (acc > best) { best = acc; bestC = c; }
       }
@@ -310,7 +317,12 @@ namespace VE3NEA.SkyTlm.Dsp
     }
 
     /// <summary>
-    /// Carrier = the template shift that maximizes cross-correlation with the PSD: argmax_s Σ_j q[j]·T[j−s].
+    /// Carrier = the template shift that maximizes cross-correlation with the PSD:
+    /// argmax_s Σ_j q[j]·(T[j−s] − T̄_s) / ‖T − T̄_s‖_s, with T̄_s and the norm taken over the bins that
+    /// stay in range at shift s. The per-shift mean removal + normalization matter at the edges: with the
+    /// raw dot, a shift that slides part of the template out of the array silently shrinks the sum
+    /// (bias toward the centre), and a flat noise pedestal contributes c·ΣT(in-range) (bias toward the
+    /// max-overlap shift); zero-mean/unit-norm makes a flat pedestal score 0 at every shift.
     /// With a learned two-lobe template this requires energy at <i>both</i> tones at the right spacing, so a
     /// single stray tone or a data-imbalanced burst can't pull the estimate the way mirror-symmetry does.
     /// </summary>
@@ -319,14 +331,27 @@ namespace VE3NEA.SkyTlm.Dsp
       int L = q.Length;
       double best = double.NegativeInfinity; int bestS = 0;
       var corr = new double[2 * cfoMaxBins + 1];
+      // prefix sums of the template and its square → O(1) per-shift in-range mean and norm
+      var tSum = new double[L + 1];
+      var tSqSum = new double[L + 1];
+      for (int j = 0; j < L; j++)
+      {
+        tSum[j + 1] = tSum[j] + template[j];
+        tSqSum[j + 1] = tSqSum[j] + (double)template[j] * template[j];
+      }
       for (int s = -cfoMaxBins; s <= cfoMaxBins; s++)
       {
+        int jStart = Math.Max(0, s), jEnd = Math.Min(L - 1, L - 1 + s);   // q bins whose template bin stays in range
+        int n = jEnd - jStart + 1;
+        if (n <= 1) continue;
+        int t0 = jStart - s, t1 = jEnd - s;
+        double tMean = (tSum[t1 + 1] - tSum[t0]) / n;
+        double tVar = (tSqSum[t1 + 1] - tSqSum[t0]) - n * tMean * tMean;
+        if (tVar <= 0) continue;
         double dot = 0;
-        for (int j = 0; j < L; j++)
-        {
-          int tj = j - s;                               // slide the template by s bins
-          if ((uint)tj < (uint)L) dot += (double)q[j] * template[tj];
-        }
+        for (int j = jStart; j <= jEnd; j++)
+          dot += (double)q[j] * (template[j - s] - tMean);   // slide the template by s bins
+        dot /= Math.Sqrt(tVar);
         corr[s + cfoMaxBins] = dot;
         if (dot > best) { best = dot; bestS = s; }
       }

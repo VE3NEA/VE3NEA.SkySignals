@@ -65,11 +65,15 @@ namespace VE3NEA.SkyTlm.Core
     /// <summary>Schmitt onset, in noise-sigma units of the averaged matched statistic (CFAR: each CFO shift
     /// is normalized by its own analytic noise deviation, so the false-alarm rate is independent of the
     /// template width, the baud rate and the noise level). The max-over-shifts of pure noise sits near
-    /// 2.5–3σ; 5.5σ leaves a comfortable margin at ~50 STFT frames/s.</summary>
+    /// 2.5–3σ; 5.5σ leaves a comfortable margin at ~50 STFT frames/s. The analytic model only holds on
+    /// white noise: birdies/colored in-band noise inflate the statistic's floor, so the pipeline measures
+    /// the no-burst floor and raises the effective threshold to floor + OnSigma·scale when that is higher
+    /// (empirical CFAR; this value is the lower bound and the sigma multiplier).</summary>
     public double OnSigma { get; init; } = 5.5;
 
     /// <summary>Schmitt release, in the same units. Must sit above the noise max-over-shifts level (~3σ),
-    /// or hangover keeps re-arming on noise and bursts never close.</summary>
+    /// or hangover keeps re-arming on noise and bursts never close. Gets the same empirical floor raise
+    /// as <see cref="OnSigma"/>.</summary>
     public double OffSigma { get; init; } = 4.0;
 
     /// <summary>Level-relative segmentation: a burst closes when the averaged statistic falls below this
@@ -351,6 +355,10 @@ namespace VE3NEA.SkyTlm.Core
     private readonly float[] oobRing;         // recent out-of-band frame powers (rolling noise floor)
     private readonly float[] oobScratch;
     private int oobCount, oobHead;
+    private readonly float[] zFloorRing;      // recent no-burst zStat values (empirical floor of the max statistic)
+    private readonly float[] zFloorScratch;
+    private int zFloorCount, zFloorHead;
+    private double zOnThresh, zOffThresh;     // effective Schmitt thresholds: OnSigma/OffSigma raised by the measured floor
     private readonly int warmupFrames;
     private readonly int minFrames, hangFrames, guard, keepFrames, maxBurstSamples;
 
@@ -482,10 +490,11 @@ namespace VE3NEA.SkyTlm.Core
     public int HopSize => Hop;
     /// <summary>Stream sample rate (Hz).</summary>
     public double SampleRate => fs;
-    /// <summary>Schmitt onset threshold in noise-sigma units.</summary>
-    public double OnSigma => o.OnSigma;
-    /// <summary>Schmitt release threshold in noise-sigma units.</summary>
-    public double OffSigma => o.OffSigma;
+    /// <summary>Effective Schmitt onset threshold: <see cref="StreamingOptions.OnSigma"/> raised by the
+    /// measured no-burst floor of the statistic (see <see cref="UpdateZThresholds"/>).</summary>
+    public double OnSigma => zOnThresh;
+    /// <summary>Effective Schmitt release threshold (same empirical raise as <see cref="OnSigma"/>).</summary>
+    public double OffSigma => zOffThresh;
 
     // full un-notched fftshifted power spectrum of the current frame, captured only while a
     // DetectionFrameProcessed subscriber is attached; null (and never allocated) in production.
@@ -523,6 +532,10 @@ namespace VE3NEA.SkyTlm.Core
       oobRing = new float[noiseFrames];
       oobScratch = new float[noiseFrames];
       warmupFrames = Math.Min(noiseFrames, 16);   // collect a little noise history before triggering
+      zFloorRing = new float[noiseFrames];
+      zFloorScratch = new float[noiseFrames];
+      zOnThresh = o.OnSigma;
+      zOffThresh = o.OffSigma;
 
       demod = Demodulators.Create(p, o.GmskOptions);
       if (p.Modulation == Modulation.BPSK)
@@ -737,6 +750,19 @@ namespace VE3NEA.SkyTlm.Core
       double norm = Math.Sqrt(zCount);
       for (int i = 0; i < nShifts; i++) { double v = zSum[i] / norm; if (v > zStat) zStat = v; }
 
+      // empirical CFAR on the statistic itself: the analytic normalization holds on white noise, but birdies
+      // and colored in-band noise inflate the no-burst floor of the max statistic (CUBEBUG-2: floor ≈ 4σ with
+      // excursions to 8σ against OnSigma 5.5 → dozens of false bursts while the true bursts sit at 75σ).
+      // Track the median/MAD of the no-burst zStat and raise the Schmitt thresholds to
+      // floor + OnSigma/OffSigma·scale — never below the analytic values, so clean recordings are unchanged.
+      if (!inBurst)
+      {
+        zFloorRing[zFloorHead] = (float)zStat;
+        zFloorHead = (zFloorHead + 1) % zFloorRing.Length;
+        if (zFloorCount < zFloorRing.Length) zFloorCount++;
+        UpdateZThresholds();
+      }
+
       framesSeen++;
       // the state machine may return early (warm-up, no-burst, step-up split); the finally emits the
       // per-frame diagnostic trace for EVERY frame regardless, so the inspector's spectrogram is complete.
@@ -746,7 +772,7 @@ namespace VE3NEA.SkyTlm.Core
 
         if (!inBurst)
         {
-          if (zStat > o.OnSigma)
+          if (zStat > zOnThresh)
           {
             inBurst = true;
             startFrameAbs = OnsetFrame(absFrame);
@@ -758,7 +784,7 @@ namespace VE3NEA.SkyTlm.Core
           return;
         }
 
-        if (zStat > Math.Max(o.OnSigma, burstLevelZ / o.ReleaseFraction))
+        if (zStat > Math.Max(zOnThresh, burstLevelZ / o.ReleaseFraction))
         {
           // step-up split: a much stronger signal turned on inside the current (weaker) burst. Close the weak
           // segment and re-trigger, so the strong burst gets a tight segment of its own — its CFO and symbol
@@ -774,7 +800,7 @@ namespace VE3NEA.SkyTlm.Core
 
         burstLevelZ += 0.1 * (zStat - burstLevelZ);   // ~10-frame (≈0.2 s) time constant
         if (zStat > burstPeakZ) burstPeakZ = zStat;
-        if (zStat > Math.Max(o.OffSigma, burstPeakZ * o.ReleaseFraction)) lastAboveAbs = absFrame;
+        if (zStat > Math.Max(zOffThresh, burstPeakZ * o.ReleaseFraction)) lastAboveAbs = absFrame;
         NoteSignalFrame(bestZ, bestW, bestS);
 
         if ((absFrame - startFrameAbs) * (long)Hop >= maxBurstSamples)
@@ -824,7 +850,7 @@ namespace VE3NEA.SkyTlm.Core
       for (int back = 0; back < n; back++)
       {
         int slot = ((zHead - 1 - back) % n + n) % n;       // newest → oldest
-        if (back > 0 && frameBestZ[slot] <= o.OffSigma)
+        if (back > 0 && frameBestZ[slot] <= zOffThresh)
           return Math.Max(0, absFrame - back + 1);
       }
       return Math.Max(0, absFrame - (n - 1));
@@ -944,6 +970,23 @@ namespace VE3NEA.SkyTlm.Core
       // interquartile trimmed mean of the per-frame OOB means: same level the median estimated
       // (the per-frame means are near-symmetric), ~half the variance — a steadier threshold reference.
       return NoiseFloor.TrimmedMeanInPlace(oobScratch, oobCount);
+    }
+
+    /// <summary>Refresh the effective Schmitt thresholds from the no-burst zStat ring: median + MAD-derived
+    /// scale of the measured statistic floor, thresholds = floor + OnSigma/OffSigma·scale, floored at the
+    /// analytic OnSigma/OffSigma (so on white noise, where the floor matches the analytic model, nothing
+    /// changes). Median/MAD tolerate the ring being partly contaminated by sub-threshold signal.</summary>
+    private void UpdateZThresholds()
+    {
+      if (zFloorCount < 16) return;   // keep the analytic thresholds until there is enough floor history
+      Array.Copy(zFloorRing, zFloorScratch, zFloorCount);
+      Array.Sort(zFloorScratch, 0, zFloorCount);
+      double med = zFloorScratch[zFloorCount / 2];
+      for (int i = 0; i < zFloorCount; i++) zFloorScratch[i] = Math.Abs(zFloorScratch[i] - med);
+      Array.Sort(zFloorScratch, 0, zFloorCount);
+      double scale = 1.4826 * zFloorScratch[zFloorCount / 2];   // MAD → σ of a Gaussian floor
+      zOnThresh = Math.Max(o.OnSigma, med + o.OnSigma * scale);
+      zOffThresh = Math.Max(o.OffSigma, med + o.OffSigma * scale);
     }
 
     private void ResetBurstPsd() { Array.Clear(burstPsdSum); burstPsdCount = 0; }
@@ -1259,24 +1302,27 @@ namespace VE3NEA.SkyTlm.Core
         // carrier error the spectral CFO estimate left behind (SoftSymbols.ResidualCfoHz). The slicer is
         // immune to that error, but the channel filter is centred on the estimate — a few-hundred-Hz
         // error attenuates one tone and kills marginal decodes (SNIPE B @146.65 s/@177.09 s decode at
-        // the true carrier but not 350 Hz off it). When a decode yields no CRC frame and the NRZ says
-        // the carrier is off by more than NrzRefineMinDevFrac of the deviation, decode once more at the
-        // corrected carrier — CRC-gated adopt-only, with the same dedup-registry rollback the competing
-        // trials use (the first pass's registered frames would otherwise suppress the retry's).
+        // the true carrier but not 350 Hz off it). A partial decode is not proof the carrier was right:
+        // a burst several hundred Hz off can still decode its strongest frames and lose the marginal
+        // ones (LASARsat/NIGHTJAR/AISTECHSAT-2 under the normalized SymmetryCfo), so the retry fires on
+        // ANY decode whose NRZ says the carrier is off by more than NrzRefineMinDevFrac of the deviation,
+        // and the two decodes COMPETE: the retry is adopted only on strictly more CRC-valid frames (so a
+        // good first pass — and any decode on a CRC-less framing, where the retry can't prove itself —
+        // is kept), with the same dedup-registry rollback the competing trials use (the first pass's
+        // registered frames would otherwise suppress the retry's).
         (SoftSymbols soft, GmskTrace? trace, List<Frame> frames) decodeWith(IDemodulator demod, SignalParams pe, double cfoHz)
         {
           var preDecode = new List<RecentFrame>(recentFrames);
           var first = decodeOnce(demod, pe, cfoHz);
           double dev = pe.Deviation ?? pe.Baud / 4.0;
-          // any decoded frame means the carrier was close enough — and on a CRC-less framing the retry
-          // below could never prove itself anyway, so it only fires on a frameless decode.
-          double residual = first.frames.Count > 0 ? 0 : first.soft.ResidualCfoHz;
+          double residual = first.soft.ResidualCfoHz;
+          int firstCrc = first.frames.Count(f => f.CrcValid == true);
           if (Math.Abs(residual) > NrzRefineMinDevFrac * dev && Math.Abs(residual) <= o.CfoMaxHz)
           {
             var afterFirst = new List<RecentFrame>(recentFrames);
             restoreFrames(preDecode);
             var second = decodeOnce(demod, pe, cfoHz + residual);
-            if (second.frames.Any(f => f.CrcValid == true))
+            if (second.frames.Count(f => f.CrcValid == true) > firstCrc)
             {
               Log.Information("NRZ carrier refinement: {Residual:F0} Hz correction decoded {N} CRC-valid frame(s) at {Time:F2} s",
                 residual, second.frames.Count(f => f.CrcValid == true), timeSeconds);
