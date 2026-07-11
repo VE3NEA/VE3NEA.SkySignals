@@ -51,12 +51,21 @@ namespace VE3NEA.SkyTlm.Dsp
     // AFSK path has no GMSK-style tunables (its filter/timing constants live here).
     public AfskDemodulator(GmskDemodOptions? options = null) { }
 
+    /// <summary>Use the coherent MLSE decision stage (<see cref="DemodulateSegmentMlse"/>) instead of the
+    /// non-coherent correlator envelope difference. Off by default — the pipeline's CRC-gated AFSK
+    /// detector retry opts in per burst, so a real frame can never be lost to the new path.</summary>
+    public bool UseMlseDetector { get; init; }
+
     public SoftSymbols Demodulate(Complex32[] iq, Burst burst, SignalParams p)
       => DemodulateSegment(Acquisition.Derotate(iq, burst), p);
 
+    /// <summary>Demodulate an already CFO-corrected RF segment with the selected decision stage.</summary>
+    public SoftSymbols DemodulateSegment(Complex32[] seg, SignalParams p)
+      => UseMlseDetector ? DemodulateSegmentMlse(seg, p) : DemodulateSegmentCorrelator(seg, p);
+
     /// <summary>Demodulate an already CFO-corrected RF segment: discriminate to audio, run the mark/space tone
     /// correlator to a real decision signal, then recover timing + soft symbols with the shared engine.</summary>
-    public SoftSymbols DemodulateSegment(Complex32[] seg, SignalParams p)
+    private SoftSymbols DemodulateSegmentCorrelator(Complex32[] seg, SignalParams p)
     {
       float[] demod = CorrelatorDemod(seg, p);
       CpmFskDemodulator.CenterGlobal(demod);   // whole-burst two-cluster threshold → decision signal centred on 0
@@ -218,34 +227,9 @@ namespace VE3NEA.SkyTlm.Dsp
     /// </summary>
     private static float[] CorrelatorDemod(Complex32[] seg, SignalParams p)
     {
-      int n = seg.Length;
-
-      // band-limit the RF to ~Carson bandwidth BEFORE the nonlinear discriminator: out-of-band noise otherwise
-      // dominates the per-sample phase difference and produces impulsive click noise that flips symbols despite a
-      // good average eye. Zero-phase, so symbol timing is unaffected.
-      double rfBwHz = double.TryParse(Environment.GetEnvironmentVariable("AFSK_RFBW"), out var rb) ? rb : DefaultRfBandwidthHz;
-      if (rfBwHz > 0)
-      {
-        double fcRf = rfBwHz / p.SampleRate;
-        if (fcRf < 0.5)
-        {
-          int rfTaps = (int)Math.Round(6 * (p.SampleRate / p.Baud)) | 1;
-          rfTaps = Math.Max(41, Math.Min(rfTaps, 511));
-          seg = LiquidFir.ConvolveSame(seg, KernelCache.BlackmanSinc(fcRf, rfTaps));
-        }
-      }
-
-      // FM-discriminate the RF to real audio (rad/sample). Carried in the real part of a complex buffer so the
-      // shared complex mixer can rotate it; a constant CFO only adds a DC term (the tones stay at ±dev about af_carrier).
-      var mark = new Complex32[n];
-      for (int i = 1; i < n; i++)
-      {
-        float re = seg[i].Real * seg[i - 1].Real + seg[i].Imaginary * seg[i - 1].Imaginary;
-        float im = seg[i].Imaginary * seg[i - 1].Real - seg[i].Real * seg[i - 1].Imaginary;
-        mark[i] = new Complex32((float)Math.Atan2(im, re), 0f);
-      }
-      mark[0] = n > 1 ? mark[1] : default;
+      var mark = DiscriminateAudio(seg, p);
       var space = (Complex32[])mark.Clone();
+      int n = mark.Length;
 
       // mark = af_carrier − dev (1200 Hz), space = af_carrier + dev (2200 Hz)
       double afCarrier = p.AfCarrier ?? DefaultAfCarrierHz;
@@ -269,6 +253,102 @@ namespace VE3NEA.SkyTlm.Dsp
       for (int i = 0; i < n; i++)
         demod[i] = mark[i].Magnitude - space[i].Magnitude;
       return demod;
+    }
+
+    /// <summary>
+    /// FM-discriminate the (band-limited) RF burst to the real audio waveform (rad/sample). Carried in the real
+    /// part of a complex buffer so the shared complex mixer can rotate it; a constant CFO only adds a DC term
+    /// (the tones stay at ±dev about af_carrier).
+    /// </summary>
+    private static Complex32[] DiscriminateAudio(Complex32[] seg, SignalParams p)
+    {
+      int n = seg.Length;
+
+      // band-limit the RF to ~Carson bandwidth BEFORE the nonlinear discriminator: out-of-band noise otherwise
+      // dominates the per-sample phase difference and produces impulsive click noise that flips symbols despite a
+      // good average eye. Zero-phase, so symbol timing is unaffected.
+      double rfBwHz = double.TryParse(Environment.GetEnvironmentVariable("AFSK_RFBW"), out var rb) ? rb : DefaultRfBandwidthHz;
+      if (rfBwHz > 0)
+      {
+        double fcRf = rfBwHz / p.SampleRate;
+        if (fcRf < 0.5)
+        {
+          int rfTaps = (int)Math.Round(6 * (p.SampleRate / p.Baud)) | 1;
+          rfTaps = Math.Max(41, Math.Min(rfTaps, 511));
+          seg = LiquidFir.ConvolveSame(seg, KernelCache.BlackmanSinc(fcRf, rfTaps));
+        }
+      }
+
+      var audio = new Complex32[n];
+      for (int i = 1; i < n; i++)
+      {
+        float re = seg[i].Real * seg[i - 1].Real + seg[i].Imaginary * seg[i - 1].Imaginary;
+        float im = seg[i].Imaginary * seg[i - 1].Real - seg[i].Real * seg[i - 1].Imaginary;
+        audio[i] = new Complex32((float)Math.Atan2(im, re), 0f);
+      }
+      audio[0] = n > 1 ? audio[1] : default;
+      return audio;
+    }
+
+
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                       MLSE decision stage
+    // ----------------------------------------------------------------------------------------------------
+    /// <summary>
+    /// Coherent MLSE decision stage over the analytic audio subcarrier (Phase-3 MLSE for h = 5/6):
+    /// FM-discriminate to audio as usual, but instead of the non-coherent |mark|−|space| envelope
+    /// difference, mix the audio once at −af_carrier to a complex ±dev FSK baseband and run the
+    /// generalized rational-h <see cref="MlsePspDetector"/> (Bell-202: h = 2·500/1200 = 5/6 → 12 phase
+    /// states, true non-orthogonal tone correlations) at the correlator DPLL's strobes. Timing still
+    /// comes from the proven correlator + DPLL chain — only the per-symbol decision rule changes.
+    /// The soft output is flipped to the correlator's mark-positive sign convention. A runt burst
+    /// (too few strobes) falls back to the default path.
+    /// </summary>
+    public SoftSymbols DemodulateSegmentMlse(Complex32[] seg, SignalParams p)
+    {
+      // correlator decision signal, centred exactly as the default path — it drives the DPLL timing
+      float[] demod = CorrelatorDemod(seg, p);
+      CpmFskDemodulator.CenterGlobal(demod);
+      double sps = p.SampleRate / p.Baud;
+      double[] strobes = DpllStrobes(demod, sps, reversed: false);
+      if (strobes.Length < MinStrobesForFit) return DemodulateSegmentCorrelator(seg, p);
+
+      // analytic subcarrier baseband: audio mixed down from af_carrier, low-passed to kill the
+      // −2·af_carrier image of the real audio signal (cutoff dev + 0.75·baud passes the tones plus
+      // the transition band — the CPM channel-filter sizing rule)
+      var bb = DiscriminateAudio(seg, p);
+      double afCarrier = p.AfCarrier ?? DefaultAfCarrierHz;
+      double dev = p.Deviation ?? DefaultDeviationHz;
+      global::VE3NEA.Dsp.Mix(bb, -afCarrier / p.SampleRate);
+      double fc = (dev + 0.75 * p.Baud) / p.SampleRate;
+      int taps = Math.Max(41, Math.Min((int)Math.Round(6 * sps) | 1, 511));
+      bb = LiquidFir.ConvolveSame(bb, KernelCache.BlackmanSinc(fc, taps));
+
+      double h = 2 * dev / p.Baud;
+      var profile = new ModProfile { Pulse = PulseShape.Rectangular, Bt = null, ModIndex = h };
+      var det = new MlsePspDetector(profile, new GmskDemodOptions());
+      var soft = det.Detect(new DetectorContext
+      {
+        Baseband = bb,
+        GardnerSoft = new float[strobes.Length],
+        Strobes = strobes,
+        Sps = sps,
+        Params = p with { Deviation = dev }
+      });
+      // the detector's a = +1 is the +dev (space, 2200 Hz) tone; downstream expects mark positive
+      for (int k = 0; k < soft.Length; k++) soft[k] = -soft[k];
+
+      var (eyeDb, ambig) = CpmFskDemodulator.EyeQuality(soft);
+      return new SoftSymbols
+      {
+        Soft = soft,
+        SymbolRate = p.Baud,
+        SamplesPerSymbol = sps,
+        EyeSnrDb = eyeDb,
+        AmbiguousFraction = ambig
+      };
     }
   }
 }

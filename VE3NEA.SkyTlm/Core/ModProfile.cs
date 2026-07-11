@@ -15,7 +15,8 @@ namespace VE3NEA.SkyTlm.Core
   /// path, ~2.5–3 dB over the slicer). <b>OrthogonalMatchedFilter</b> = dual-tone correlator for wide-<i>h</i>
   /// 2-FSK. <b>CoherentLinear</b> = exact OQPSK-style coherent receiver for MSK. <b>MlsePsp</b> = coherent
   /// MLSE (Viterbi) over the CPM trellis with per-survivor
-  /// phase/CFO tracking, for h = 1/2 GMSK/MSK. A <c>null</c> detector on a profile
+  /// phase/CFO tracking, for h = 1/2 GMSK/MSK and (full-response, rectangular-pulse) rational
+  /// h = m/p like Bell-202 AFSK's h = 5/6. A <c>null</c> detector on a profile
   /// means "resolve from <see cref="Dsp.GmskDemodOptions"/>" (the GMSK/GFSK rule: DF-DD when
   /// <c>DifferentialOrder ≥ 2</c>, else the discriminator).
   /// </summary>

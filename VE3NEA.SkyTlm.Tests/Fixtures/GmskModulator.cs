@@ -52,8 +52,13 @@ namespace VE3NEA.SkyTlm.Tests
       }
 
       // gaussian frequency pulse (same BT formulation as the receiver's matched filter).
-      double[] g = GaussianPulse(sps, bt, 4);
-      double[] fsm = Convolve(nrz, g);   // smoothed instantaneous frequency, still ≈±1
+      // bt = 0 skips the pulse filter: rectangular full-response CPFSK (the Bell-202 AFSK shape).
+      double[] fsm = nrz;                // instantaneous frequency, ≈±1
+      if (bt > 0)
+      {
+        double[] g = GaussianPulse(sps, bt, 4);
+        fsm = Convolve(nrz, g);          // smoothed instantaneous frequency, still ≈±1
+      }
 
       // phase integration: per-sample increment for a sustained ±1 symbol is π·h·a/sps (h=0.5 ⇒ π·a/(2·sps)).
       var iq = new Complex32[n];

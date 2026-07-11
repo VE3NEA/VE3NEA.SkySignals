@@ -28,8 +28,14 @@ namespace VE3NEA.SkyTlm.Dsp
   ///
   /// <para>Timing comes from the shared front end's Gardner strobes (the discriminator path); the
   /// matched filter is zero-phase, so the C₀ grid sits half a symbol past the strobe centres — the same
-  /// boundary instant DF-DD samples. Falls back to DF-DD for h ≠ 1/2 (the trellis needs rational h and
-  /// the payoff shrinks once the tones decorrelate).</para>
+  /// boundary instant DF-DD samples.</para>
+  ///
+  /// <para><b>General rational h.</b> For h = m/p ≠ 1/2 with a rectangular (or no) pulse the detector
+  /// runs a generalized full-response trellis instead: 2p phase states on the π/p grid (h = 5/6 →
+  /// 12 states, the Bell-202 AFSK case), branch metrics from the true <i>non-orthogonal</i> per-symbol
+  /// tone correlations, the same PSP trackers and LLR pass. Gaussian partial-response pulses at
+  /// h ≠ 1/2 still fall back to DF-DD (their pulse ISI is not in this trellis's signal model, and the
+  /// corpus GFSK classes are tuned on DF-DD), as does irrational/out-of-range h.</para>
   /// </summary>
   public sealed class MlsePspDetector : IDetector
   {
@@ -66,10 +72,21 @@ namespace VE3NEA.SkyTlm.Dsp
     public float[] Detect(DetectorContext ctx)
     {
       double h = ctx.Params.Deviation is double dev ? 2.0 * dev / ctx.Params.Baud : profile.ModIndex;
-      // trellis below is hard-wired to the 4 phase states of h = 1/2; huge K = the continuous stream path
-      if (Math.Abs(h - 0.5) > 0.1 || ctx.Strobes.Length > MaxSymbols)
+      // huge K = the continuous stream path (see MaxSymbols); both trellis paths are per-burst
+      if (ctx.Strobes.Length > MaxSymbols)
         return new DifferentialDetector(opt, profile).Detect(ctx);
+      // the Laurent trellis below is hard-wired to the 4 phase states of h = 1/2
+      if (Math.Abs(h - 0.5) <= 0.1) return DetectLaurent(ctx);
+      // rational h = m/p → generalized 2p-phase-state trellis with per-symbol tone-correlation
+      // metrics (Bell-202 AFSK h = 5/6 → 12 states). Full-response only: Gaussian partial-response
+      // pulses at h ≠ 1/2 keep the DF-DD fallback (see class docs).
+      if (profile.Pulse != PulseShape.Gaussian && TryRationalH(h, out int hNum, out int hDen))
+        return DetectGeneralH(ctx, hNum, hDen);
+      return new DifferentialDetector(opt, profile).Detect(ctx);
+    }
 
+    private float[] DetectLaurent(DetectorContext ctx)
+    {
       int K = ctx.Strobes.Length;
       if (K < 8) return new float[K];
 
@@ -351,6 +368,291 @@ namespace VE3NEA.SkyTlm.Dsp
       return soft;
     }
 
+
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                    general rational-h trellis
+    // ----------------------------------------------------------------------------------------------------
+    /// <summary>Largest denominator p accepted by <see cref="TryRationalH"/> (2p phase states ≤ 16).</summary>
+    private const int MaxPhaseDen = 8;
+
+    /// <summary>Absolute tolerance when snapping h to m/p. A residual h mismatch inside it turns into a
+    /// slow per-symbol phase drift the per-survivor trackers absorb like a CFO.</summary>
+    private const double RationalHTolerance = 0.02;
+
+    /// <summary>Coherence gate on the 2p-power feed-forward CFO estimate: below this the burst is too
+    /// noisy for the high-order nonlinearity, and the trellis starts from Δω = 0 (PSP absorbs the residue).</summary>
+    private const double CfoCoherenceMin = 0.2;
+
+    /// <summary>Snap h to the smallest-denominator rational m/p within <see cref="RationalHTolerance"/>.</summary>
+    internal static bool TryRationalH(double h, out int num, out int den)
+    {
+      for (int p = 1; p <= MaxPhaseDen; p++)
+      {
+        int m = (int)Math.Round(h * p);
+        if (m < 1) continue;
+        if (Math.Abs(h - (double)m / p) <= RationalHTolerance) { num = m; den = p; return true; }
+      }
+      num = 0; den = 0;
+      return false;
+    }
+
+    /// <summary>
+    /// Coherent MLSE/PSP over the 2p phase states of h = m/p binary <b>full-response</b> CPM, branch
+    /// metrics from the true non-orthogonal per-symbol tone correlations (the plan's Bell-202 AFSK
+    /// h = 5/6 target). Correlating each symbol window against both tone phasors referenced to the
+    /// window <i>centre</i> makes the noise-free output A·e^{j(φ + a·πh/2)} with φ the accumulated
+    /// phase state, so the expected branch phasors are exact; |s| is constant over a branch, which
+    /// makes the correlation metric Re(z·ê̄) equivalent to the Euclidean one. The per-survivor
+    /// second-order trackers and the max-log forward–backward LLR pass mirror the Laurent path.
+    /// </summary>
+    private float[] DetectGeneralH(DetectorContext ctx, int m, int p)
+    {
+      int K = ctx.Strobes.Length;
+      if (K < 8) return new float[K];
+      double sps = ctx.Sps;
+      double h = (double)m / p;
+
+      // --- per-symbol tone correlations: z[k,a] = Σ_win r·e^{∓jπh(i−centre)/T} ----------------------
+      var zR = new double[K, 2]; var zI = new double[K, 2];   // a: 0 → −1 tone, 1 → +1 tone
+      double wTone = Math.PI * h / sps;                       // tone offset, rad/sample
+      int n = ctx.Baseband.Length;
+      for (int k = 0; k < K; k++)
+      {
+        double centre = ctx.Strobes[k];
+        int lo = (int)Math.Ceiling(centre - 0.5 * sps);
+        int hi = (int)Math.Ceiling(centre + 0.5 * sps);       // exclusive
+        if (lo < 0) lo = 0;
+        if (hi > n) hi = n;
+        double r0 = 0, i0 = 0, r1 = 0, i1 = 0;
+        for (int i = lo; i < hi; i++)
+        {
+          double ph = wTone * (i - centre);
+          double c = Math.Cos(ph), s = Math.Sin(ph);
+          double rr = ctx.Baseband[i].Real, ri = ctx.Baseband[i].Imaginary;
+          r1 += rr * c + ri * s; i1 += ri * c - rr * s;       // +1 tone: r·e^{−jφ}
+          r0 += rr * c - ri * s; i0 += ri * c + rr * s;       // −1 tone: r·e^{+jφ}
+        }
+        zR[k, 0] = r0; zI[k, 0] = i0; zR[k, 1] = r1; zI[k, 1] = i1;
+      }
+
+      // --- coarse feed-forward CFO: the 2p-th power of the symbol-to-symbol phasor ------------------
+      // the data rotation between adjacent symbol centres is e^{jπh(a_{k−1}+a_k)/2} ∈ {1, e^{±jπh}};
+      // the 2p-th power maps every value to e^{j2πm·(…)} = 1 — the h = m/p analog of the h = 1/2
+      // squared-lag trick — leaving 2p·Δω. The stronger tone's correlation carries the true phase even
+      // when the tone pick is wrong (the cross-talk factor sin(πh)/(πh) is real), so hard picks are
+      // safe here. Unit-normalized products keep noise outliers from dominating the high-order power.
+      double sumR = 0, sumI = 0;
+      int prevA = -1; double prevR = 0, prevI = 0;
+      for (int k = 0; k < K; k++)
+      {
+        double m0 = zR[k, 0] * zR[k, 0] + zI[k, 0] * zI[k, 0];
+        double m1 = zR[k, 1] * zR[k, 1] + zI[k, 1] * zI[k, 1];
+        int a = m1 >= m0 ? 1 : 0;
+        if (prevA >= 0)
+        {
+          double dr = zR[k, a] * prevR + zI[k, a] * prevI;    // z_k · conj(z_{k−1})
+          double di = zI[k, a] * prevR - zR[k, a] * prevI;
+          if (dr * dr + di * di > 1e-24)
+          {
+            double ang = Math.Atan2(di, dr) * 2 * p;          // (y/|y|)^{2p}
+            sumR += Math.Cos(ang); sumI += Math.Sin(ang);
+          }
+        }
+        prevA = a; prevR = zR[k, a]; prevI = zI[k, a];
+      }
+      double dOmega = 0;
+      double coherence = Math.Sqrt(sumR * sumR + sumI * sumI) / Math.Max(K - 1, 1);
+      if (coherence >= CfoCoherenceMin) dOmega = Math.Atan2(sumI, sumR) / (2.0 * p);
+      LastDOmega = dOmega;
+      double cw = Math.Cos(dOmega), sw = Math.Sin(dOmega);
+      double pr = 1, pi = 0;                                  // e^{−jΔω·k}, advanced by complex multiply
+      for (int k = 0; k < K; k++)
+      {
+        for (int a = 0; a < 2; a++)
+        {
+          double xr = zR[k, a] * pr + zI[k, a] * pi;
+          double xi = zI[k, a] * pr - zR[k, a] * pi;
+          zR[k, a] = xr; zI[k, a] = xi;
+        }
+        double npr = pr * cw + pi * sw; pi = pi * cw - pr * sw; pr = npr;
+      }
+
+      // amplitude normalization (median of the stronger tone — robust to the burst's noise-only edges);
+      // the correlation metric is scale-free for path comparison, this only keeps magnitudes sane for
+      // the trackers and the final LLR scaling.
+      var mags = new float[K];
+      for (int k = 0; k < K; k++)
+      {
+        double m0 = zR[k, 0] * zR[k, 0] + zI[k, 0] * zI[k, 0];
+        double m1 = zR[k, 1] * zR[k, 1] + zI[k, 1] * zI[k, 1];
+        mags[k] = (float)Math.Sqrt(Math.Max(m0, m1));
+      }
+      Array.Sort(mags);
+      double amp = Math.Max(mags[K / 2], 1e-9);
+      for (int k = 0; k < K; k++)
+        for (int a = 0; a < 2; a++) { zR[k, a] /= amp; zI[k, a] /= amp; }
+
+      // --- trellis tables ---------------------------------------------------------------------------
+      int S = 2 * p;                                          // phase states φ_q = π·q/p
+      var expRe = new float[S, 2]; var expIm = new float[S, 2];
+      for (int q = 0; q < S; q++)
+        for (int a = 0; a < 2; a++)
+        {
+          double ang = Math.PI * q / p + (a == 1 ? 1 : -1) * Math.PI * m / (2.0 * p);
+          expRe[q, a] = (float)Math.Cos(ang); expIm[q, a] = (float)Math.Sin(ang);
+        }
+
+      // --- pass 1: PSP-Viterbi (per-survivor phase/frequency tracking) ------------------------------
+      // full-response: no ISI history, T = K, and the predecessor state is implied by the input bit
+      // (q = q' ∓ m), so the traceback stores only a.
+      var metric = new double[S]; var metricNext = new double[S];
+      var phi = new double[S]; var phiNext = new double[S];
+      var dom = new double[S]; var domNext = new double[S];
+      var tb = new byte[K, S];
+      for (int s = 0; s < S; s++) metric[s] = 0;   // free initial state (unknown phase)
+
+      for (int k = 0; k < K; k++)
+      {
+        for (int s2 = 0; s2 < S; s2++) metricNext[s2] = double.NegativeInfinity;
+        for (int q = 0; q < S; q++)
+        {
+          double mq = metric[q];
+          if (double.IsNegativeInfinity(mq)) continue;
+          double c = Math.Cos(phi[q]), sn = Math.Sin(phi[q]);
+          for (int a = 0; a < 2; a++)
+          {
+            double yr = zR[k, a] * c + zI[k, a] * sn;         // z·e^{−jφ_survivor}
+            double yi = zI[k, a] * c - zR[k, a] * sn;
+            double cand = mq + yr * expRe[q, a] + yi * expIm[q, a];   // Re(y·ê̄)
+            int q2 = (q + (a == 1 ? m : S - m)) % S;
+            if (cand > metricNext[q2])
+            {
+              metricNext[q2] = cand;
+              tb[k, q2] = (byte)a;
+              // per-survivor tracker update from this branch's innovation
+              double xr = yr * expRe[q, a] + yi * expIm[q, a];
+              double xi = yi * expRe[q, a] - yr * expIm[q, a];
+              double err = Math.Atan2(xi, Math.Max(xr, 1e-12));
+              phiNext[q2] = phi[q] + PllK1 * err + dom[q];
+              domNext[q2] = dom[q] + PllK2 * err;
+            }
+          }
+        }
+        (metric, metricNext) = (metricNext, metric);
+        (phi, phiNext) = (phiNext, phi);
+        (dom, domNext) = (domNext, dom);
+      }
+
+      // traceback the winner: bits a_k and the phase-state sequence
+      int best = 0;
+      for (int s = 1; s < S; s++) if (metric[s] > metric[best]) best = s;
+      var bits = new int[K];
+      var states = new int[K + 1];           // state AFTER step k (states[k+1]); states[0] = initial
+      states[K] = best;
+      for (int k = K - 1; k >= 0; k--)
+      {
+        int q2 = states[k + 1];
+        int a = tb[k, q2];
+        bits[k] = a;
+        states[k] = (q2 + (a == 1 ? S - m : m)) % S;
+      }
+      LastViterbiBits = (int[])bits.Clone();
+
+      // replay the winner's phase trajectory (deterministic given its states/bits)
+      var phiTraj = new double[K];
+      {
+        double f = 0, w = 0;
+        for (int k = 0; k < K; k++)
+        {
+          phiTraj[k] = f;
+          int q = states[k], a = bits[k];
+          double c = Math.Cos(f), sn = Math.Sin(f);
+          double yr = zR[k, a] * c + zI[k, a] * sn;
+          double yi = zI[k, a] * c - zR[k, a] * sn;
+          double xr = yr * expRe[q, a] + yi * expIm[q, a];
+          double xi = yi * expRe[q, a] - yr * expIm[q, a];
+          double err = Math.Atan2(xi, Math.Max(xr, 1e-12));
+          double fNew = f + PllK1 * err + w;
+          w += PllK2 * err;
+          f = fNew;
+        }
+      }
+
+      // --- pass 2: max-log forward–backward over the phase-corrected correlations → per-bit LLRs ----
+      var yR = new double[K, 2]; var yI = new double[K, 2];
+      for (int k = 0; k < K; k++)
+      {
+        double c = Math.Cos(phiTraj[k]), sn = Math.Sin(phiTraj[k]);
+        for (int a = 0; a < 2; a++)
+        {
+          yR[k, a] = zR[k, a] * c + zI[k, a] * sn;
+          yI[k, a] = zI[k, a] * c - zR[k, a] * sn;
+        }
+      }
+
+      var alpha = new double[K + 1, S];
+      for (int s = 0; s < S; s++) alpha[0, s] = 0;
+      for (int k = 0; k < K; k++)
+      {
+        for (int s2 = 0; s2 < S; s2++) alpha[k + 1, s2] = double.NegativeInfinity;
+        for (int q = 0; q < S; q++)
+        {
+          double a0 = alpha[k, q];
+          if (double.IsNegativeInfinity(a0)) continue;
+          for (int a = 0; a < 2; a++)
+          {
+            int q2 = (q + (a == 1 ? m : S - m)) % S;
+            double cand = a0 + Gamma(k, q, a);
+            if (cand > alpha[k + 1, q2]) alpha[k + 1, q2] = cand;
+          }
+        }
+      }
+
+      var beta = new double[S]; var betaPrev = new double[S];
+      var llr = new double[K];
+      for (int s = 0; s < S; s++) beta[s] = 0;
+      for (int k = K - 1; k >= 0; k--)
+      {
+        double best1 = double.NegativeInfinity, best0 = double.NegativeInfinity;
+        for (int s = 0; s < S; s++) betaPrev[s] = double.NegativeInfinity;
+        for (int q = 0; q < S; q++)
+        {
+          if (double.IsNegativeInfinity(alpha[k, q])) continue;
+          for (int a = 0; a < 2; a++)
+          {
+            int q2 = (q + (a == 1 ? m : S - m)) % S;
+            double g = Gamma(k, q, a);
+            double tot = alpha[k, q] + g + beta[q2];
+            if (a == 1) { if (tot > best1) best1 = tot; }
+            else { if (tot > best0) best0 = tot; }
+            double bp = g + beta[q2];
+            if (bp > betaPrev[q]) betaPrev[q] = bp;
+          }
+        }
+        llr[k] = best1 - best0;
+        (beta, betaPrev) = (betaPrev, beta);
+      }
+
+      double Gamma(int k, int q, int a) => yR[k, a] * expRe[q, a] + yI[k, a] * expIm[q, a];
+
+      // normalize LLRs into the soft-bit convention (sign = bit, |value| ≤ 1 = confidence)
+      double meanAbs = 0;
+      for (int k = 0; k < K; k++) meanAbs += Math.Abs(llr[k]);
+      meanAbs = Math.Max(meanAbs / K, 1e-9);
+      var soft = new float[K];
+      for (int k = 0; k < K; k++)
+        soft[k] = (float)Math.Clamp(llr[k] / (1.5 * meanAbs), -1.0, 1.0);
+      return soft;
+    }
+
+
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                        h = 1/2 Laurent helpers
+    // ----------------------------------------------------------------------------------------------------
     private static double Re(int phaseIdx) => phaseIdx switch { 0 => 1, 1 => 0, 2 => -1, _ => 0 };
     private static double Im(int phaseIdx) => phaseIdx switch { 0 => 0, 1 => 1, 2 => 0, _ => -1 };
 

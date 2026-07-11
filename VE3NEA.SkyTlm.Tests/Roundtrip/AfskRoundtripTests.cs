@@ -1,5 +1,6 @@
 using System.Linq;
 using FluentAssertions;
+using MathNet.Numerics;
 using VE3NEA.SkyTlm.Core;
 using VE3NEA.SkyTlm.Deframing;
 using VE3NEA.SkyTlm.Dsp;
@@ -58,6 +59,72 @@ namespace VE3NEA.SkyTlm.Tests.Roundtrip
       output.WriteLine($"eye={soft.EyeSnrDb:0.0}dB frames={frames.Count}" +
                        (frames.Count > 0 ? $" corrected={frames[0].CorrectedBits}" : ""));
       frames.Should().ContainSingle().Which.Bytes.Should().Equal(frame);
+    }
+
+    [Fact]
+    public void AfskMlse_To_Ax25Frame_RoundTrips()
+    {
+      // the coherent MLSE decision stage (generalized h = 5/6 trellis over the analytic subcarrier)
+      // must recover the exact bytes on a clean burst, same as the correlator path.
+      var frame = Ax25Tx.MakeUiFrame("CQ", "CUBEB2-6", "Manolito ad astra! 73");
+      int[] onair = Ax25Tx.OnAirBitsPlain(frame, flagsBefore: 32, flagsAfter: 16);
+      var iq = AfskModulator.Modulate(onair, 1200, Fs);
+
+      var soft = new AfskDemodulator { UseMlseDetector = true }.DemodulateSegment(iq, Params());
+      var frames = new Ax25G3ruhDeframer().Deframe(soft, Params()).ToList();
+
+      output.WriteLine($"eye={soft.EyeSnrDb:0.0}dB syms={soft.Count} frames={frames.Count}");
+      frames.Should().ContainSingle("a clean AFSK burst must yield exactly one frame via MLSE");
+      frames[0].CrcValid.Should().BeTrue();
+      frames[0].Bytes.Should().Equal(frame);
+    }
+
+    [Fact]
+    public void AfskMlse_DecodesWhereTheCorrelatorCannot()
+    {
+      // the point of Phase-3 MLSE: the Es/N0 sweep (2026-07-11) put the CRC-decode threshold at
+      // ≈18–19 dB for the correlator and ≈15–16 dB for the coherent trellis — a ~3 dB lever. Pin the
+      // gap at 16 dB: the correlator decodes nothing, MLSE recovers the exact frame, every seed.
+      var frame = Ax25Tx.MakeUiFrame("CQ", "CUBEB2-6", "coherent gain");
+      int[] onair = Ax25Tx.OnAirBitsPlain(frame, flagsBefore: 32, flagsAfter: 16);
+      for (int seed = 1; seed <= 3; seed++)
+      {
+        var iq = AfskModulator.Modulate(onair, 1200, Fs, esN0Db: 16, seed: seed);
+        var corr = new AfskDemodulator().DemodulateSegment(iq, Params());
+        var mlse = new AfskDemodulator { UseMlseDetector = true }.DemodulateSegment(iq, Params());
+        var corrFrames = new Ax25G3ruhDeframer().Deframe(corr, Params()).ToList();
+        var mlseFrames = new Ax25G3ruhDeframer().Deframe(mlse, Params()).ToList();
+        output.WriteLine($"seed={seed}  correlator frames={corrFrames.Count}  mlse frames={mlseFrames.Count}");
+        corrFrames.Should().BeEmpty("at 16 dB the non-coherent correlator is below its decode threshold");
+        mlseFrames.Should().ContainSingle().Which.Bytes.Should().Equal(frame);
+      }
+    }
+
+    [Fact]
+    public void AfskMlseRetry_RecoversFrameInThePipeline()
+    {
+      // end-to-end proof of the pipeline wiring: at 16 dB the default correlator chain decodes zero
+      // frames (see AfskMlse_DecodesWhereTheCorrelatorCannot), so the burst must be recovered by the
+      // CRC-gated AFSK MLSE detector retry inside StreamingPipeline.DecodeBurst.
+      var frame = Ax25Tx.MakeUiFrame("CQ", "CUBEB2-6", "pipeline retry");
+      int[] onair = Ax25Tx.OnAirBitsPlain(frame, flagsBefore: 32, flagsAfter: 16);
+      var lead = new Complex32[(int)(0.6 * Fs)];   // ≥ 0.34 s detector warm-up
+      var burst = AfskModulator.Modulate(onair, 1200, Fs, esN0Db: 16, seed: 1);
+      var signal = new Complex32[lead.Length * 2 + burst.Length];
+      System.Array.Copy(lead, 0, signal, 0, lead.Length);
+      System.Array.Copy(burst, 0, signal, lead.Length, burst.Length);
+
+      using var sp = new StreamingPipeline(Params());
+      var frames = new System.Collections.Generic.List<Frame>();
+      const int block = 4096;
+      for (int i = 0; i < signal.Length; i += block)
+        frames.AddRange(sp.Push(signal.AsSpan(i, System.Math.Min(block, signal.Length - i))));
+      frames.AddRange(sp.Flush());
+
+      output.WriteLine($"pipeline frames={frames.Count} crc={string.Join(",", frames.Select(f => f.CrcValid))}");
+      frames.Should().ContainSingle("the MLSE retry must recover the burst the correlator loses");
+      frames[0].CrcValid.Should().BeTrue();
+      frames[0].Bytes.Should().Equal(frame);
     }
   }
 }

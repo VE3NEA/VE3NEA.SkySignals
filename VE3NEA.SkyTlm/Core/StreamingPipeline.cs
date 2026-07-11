@@ -1474,6 +1474,36 @@ namespace VE3NEA.SkyTlm.Core
           }
         }
 
+        // Phase-3 AFSK MLSE retry: the mirror image of the detector retry above — AFSK's default chain
+        // is the non-coherent tone correlator, so on a zero-CRC burst the coherent generalized MLSE
+        // (h = 5/6 trellis over the analytic subcarrier, AfskDemodulator.DemodulateSegmentMlse) gets one
+        // CRC-gated attempt. Adoption is per burst only; no session state changes hands, and AFSK never
+        // enters the blind trials below, so the shared retry state stays inert.
+        if (o.DiscriminatorRetry && (validated || rejectedStrong)
+            && !burstFrames.Any(f => f.CrcValid == true)
+            && pEffective.Modulation == Modulation.AFSK
+            && o.GmskOptions.UseMlse)
+        {
+          var retryDemod = new AfskDemodulator(o.GmskOptions) { UseMlseDetector = true };
+          preRetryFrames = new List<RecentFrame>(recentFrames);
+          var (tSoft, tTrace, tFrames) = decodeWith(retryDemod, pEffective, info.CfoHz);
+          if (tFrames.Any(f => f.CrcValid == true))
+          {
+            Log.Information("Detector retry: AFSK MLSE recovered {N} CRC-valid frame(s) at {Time:F2} s that the correlator lost",
+              tFrames.Count(f => f.CrcValid == true), timeSeconds);
+            soft = tSoft;
+            trace = tTrace;
+            burstFrames = tFrames;
+            validated = true;
+            retryCrc = tFrames.Count(f => f.CrcValid == true);
+          }
+          else
+          {
+            restoreFrames(preRetryFrames);   // a failed retry must not ghost-suppress later decodes
+            preRetryFrames = null;
+          }
+        }
+
         if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind
             && (validated || rejectedStrong)
             && (burstFrames.Count == 0 || retryCrc > 0)
