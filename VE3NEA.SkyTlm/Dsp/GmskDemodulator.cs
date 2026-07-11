@@ -3,7 +3,7 @@ using VE3NEA.SkyTlm.Core;
 namespace VE3NEA.SkyTlm.Dsp
 {
   /// <summary>Tunables for <see cref="CpmFskDemodulator"/> / <see cref="GmskDemodulator"/>; defaults match the SkyRoof GMSK/GFSK corpus.</summary>
-  public sealed class GmskDemodOptions
+  public sealed record GmskDemodOptions
   {
     /// <summary>
     /// Channel low-pass cutoff before the discriminator, in <b>baud units</b> (cutoff = this·Rs Hz).

@@ -221,14 +221,39 @@ namespace VE3NEA.SkyTlm.Core
     public double SkirtWidthFactor { get; init; } = 1.0;
 
     /// <summary>When <c>true</c> (default), a validated FSK/GFSK/GMSK burst that decodes ZERO frames on the
-    /// curated label triggers a blind-hypothesis trial at the labeled baud, at 2× and at ½ it (Phase U: the
-    /// SNIPE-D / ERMIS / KSM1 / BRO-8 / MIMAN cluster — 617 CRC frames recovered by distrusting the curated
-    /// GFSK labels; MIMAN's label is wrong in baud as well as shape; CubeSX-HSE-3's GMSK 4k8 label is
-    /// really ~2k4). The first CRC-valid trial frame at the labeled baud or 2× locks
+    /// curated label triggers a blind-hypothesis trial at the labeled baud, at 2×, at 4× and at ½ it
+    /// (Phase U: the SNIPE-D / ERMIS / KSM1 / BRO-8 / MIMAN cluster — 617 CRC frames recovered by
+    /// distrusting the curated GFSK labels; MIMAN's label is wrong in baud as well as shape; CubeSX-HSE-3's
+    /// GMSK 4k8 label is really ~2k4; Luca's 2k4 label hides a ~9k6 signal — the 4× arm). The first
+    /// CRC-valid trial frame at the labeled baud or above locks
     /// the discovered params for the session; a ½-baud CRC only decodes its own burst (it can come from a
     /// co-channel second transmitter — BRO8_BRO22); a CRC frame on the curated path instead proves the label
     /// and stops the trials.</summary>
     public bool BlindFallback { get; init; } = true;
+
+    /// <summary>When <c>true</c> (default), a validated (or rejected-but-strong) GMSK/GFSK burst with no
+    /// CRC-valid frame is decoded once more with the plain FM-discriminator detector (Phase U class (d):
+    /// at marginal SNR the coherent MLSE/DF-DD detectors and the discriminator are complementary — each
+    /// recovers bursts the other loses, e.g. QMR-KWT 2 @331 s and Luca-9k6 @110 s decode only from the
+    /// discriminator's soft bits while Luca-9k6 @20 s decodes only from MLSE's). CRC-gated adopt-only,
+    /// per burst — no session lock, the next burst may favor the coherent detector again.</summary>
+    public bool DiscriminatorRetry { get; init; } = true;
+
+    /// <summary>Second blind-fallback trial trigger (regime 2 — cold-start wrong mode/baud): a burst that
+    /// FAILED validation but whose matched SNR is at least this many dB still reaches the blind trials.
+    /// Detection tolerates a wrong curated template (broad analytic shape, CFAR statistic) but validation is
+    /// much tighter, so a strongly mismatched real signal is detected, rejected and never trialed — Luca-2k4
+    /// 07-06: 9k6 on air vs the 2k4 label, 5 bursts at 22–26 dB SNR all rejected, 0 frames. A CRC-valid
+    /// trial frame also flips the burst to validated (CRC is absolute proof; operator priority = minimize
+    /// FNs). Gated by <see cref="RejectedTrialMaxSeconds"/> so noise storms (KNACKSAT-2: 1,580 rejected
+    /// bursts) and SSTV scans don't pay for 3-baud trial decodes.</summary>
+    public double RejectedTrialMinSnrDb { get; init; } = 15.0;
+
+    /// <summary>Only rejected bursts at most this long qualify for the <see cref="RejectedTrialMinSnrDb"/>
+    /// trigger: telemetry bursts run ~0.1–3 s, while a long strong reject is almost certainly SSTV/CW —
+    /// exactly what validation rejected it for, and the worst-case CPU spend to trial-decode at 3 bauds.
+    /// A continuous scan's capped-flush windows (<see cref="MaxBurstSeconds"/>, 8 s) stay above this bar.</summary>
+    public double RejectedTrialMaxSeconds { get; init; } = 4.0;
 
     /// <summary>When <c>true</c>, a closed burst is reported with its detection-derived spectral stats
     /// (CFO, SNR, shape match) but is <b>never</b> demodulated or deframed — no <see cref="IDemodulator"/>,
@@ -1271,20 +1296,64 @@ namespace VE3NEA.SkyTlm.Core
         // Phase U blind fallback: a validated FSK-family burst that decodes zero frames on the curated label
         // is the signature of a wrong DB label (the SNIPE-D/ERMIS/KSM1/BRO-8/MIMAN cluster — 617 CRC frames
         // recovered blind). Trial the blind hypothesis at the labeled baud, at 2× it (MIMAN's label is
-        // wrong in baud too) and at ½ it (CubeSX-HSE-3: labeled GMSK 4k8 USP, actually ~2k4), over the
+        // wrong in baud too), at 4× it (Luca-2k4: labeled GMSK 2k4 USP, actually ~9k6) and at ½ it
+        // (CubeSX-HSE-3: labeled GMSK 4k8 USP, actually ~2k4), over the
         // WIDE blind-window PSD (the curated occupied window can clip the real
-        // signal). The first CRC-valid trial frame at the labeled baud or 2× locks the discovered params
+        // signal). The first CRC-valid trial frame at the labeled baud or above locks the discovered params
         // for the session and replaces this burst's decode; a premature lock on a coincidental CRC is
         // accepted — CRC is strong proof. The ½ trial ADOPTS the burst's frames but never locks: a
         // half-rate CRC can come from a co-channel second transmitter (the BRO8_BRO22 recording — a ½
         // lock on one BRO-22-class burst cost the session BRO-8's 29 frames at the labeled baud), so
         // each burst must re-earn it while the full-rate trials keep competing for the lock.
-        if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind && validated
+        // Second trigger (regime 2): a REJECTED burst that is strong (snr ≥ RejectedTrialMinSnrDb) and
+        // short (≤ RejectedTrialMaxSeconds — long strong rejects are SSTV/CW, exactly what validation
+        // rejected) also runs the trials: validation is much tighter than detection, so a strongly
+        // mismatched real signal (Luca-2k4: 9k6 on air vs the 2k4 label) never reached them at all.
+        bool rejectedStrong = !validated && snr >= o.RejectedTrialMinSnrDb
+                              && detLen / fs <= o.RejectedTrialMaxSeconds;
+
+        // Phase U detector retry (class (d)): at marginal SNR the coherent MLSE/DF-DD detectors and the
+        // plain FM discriminator are complementary — the sync/PLS regions decode cleanly under both, but
+        // the RS-critical body bit errors cluster differently, so each detector recovers bursts the other
+        // loses (QMR-KWT 2 @331 s and Luca-9k6 @110 s decode only via the discriminator; Luca-9k6 @20 s
+        // only via MLSE). Before the far costlier blind-baud trials below, decode once more with the
+        // discriminator; a CRC-valid frame adopts the retry for this burst only (no session lock) and,
+        // like any curated CRC, proves the label. Only GMSK/GFSK profiles resolve their detector from the
+        // options (FSK pins the orthogonal MF), and the retry is skipped when the primary detector already
+        // IS the discriminator.
+        if (o.DiscriminatorRetry && (validated || rejectedStrong)
+            && !burstFrames.Any(f => f.CrcValid == true)
+            && pEffective.Modulation is Modulation.GMSK or Modulation.GFSK
+            && (o.GmskOptions.UseMlse || o.GmskOptions.DifferentialOrder >= 2))
+        {
+          var retryDemod = Demodulators.Create(pEffective, o.GmskOptions with { UseMlse = false, DifferentialOrder = 0 });
+          if (retryDemod != null)
+          {
+            var (tSoft, tTrace, tFrames) = decodeWith(retryDemod, pEffective, info.CfoHz);
+            if (tFrames.Any(f => f.CrcValid == true))
+            {
+              Log.Information("Detector retry: discriminator recovered {N} CRC-valid frame(s) at {Time:F2} s that the coherent detector lost",
+                tFrames.Count(f => f.CrcValid == true), timeSeconds);
+              soft = tSoft;
+              trace = tTrace;
+              burstFrames = tFrames;
+              validated = true;
+              if (!p.IsBlind && fallbackParams == null) curatedCrcSeen = true;
+            }
+          }
+        }
+
+        if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind
+            && (validated || rejectedStrong)
             && burstFrames.Count == 0
             && p.Modulation is Modulation.FSK or Modulation.GFSK or Modulation.GMSK)
         {
-          foreach (double b in new[] { p.Baud, 2 * p.Baud, p.Baud / 2 })
+          // 4× reaches the Luca-2k4 class (label 2k4, ~9k6 on air — forced blind FSK 9600 CRCs where
+          // {b, 2b, ½b} cannot; a lock-on-CRC session can never chain two doublings). Trial bauds the
+          // sample rate cannot carry (< 2 samples/symbol) are skipped.
+          foreach (double b in new[] { p.Baud, 2 * p.Baud, 4 * p.Baud, p.Baud / 2 })
           {
+            if (fs / b < 2) continue;
             var pBlind = p with { Modulation = Modulation.FSK, Baud = b, Deviation = null };
             var trialCfo = TrialCfo(pBlind);
             var wideQ = trialCfo.AveragedSpectrum(seg, 0, seg.Length);
@@ -1297,7 +1366,7 @@ namespace VE3NEA.SkyTlm.Core
             double? trialDevHz = est.IsFsk ? est.DeviationHz : null;
             if (b >= p.Baud)
             {
-              // CRC-proven at the labeled baud or 2×: lock the fallback session state.
+              // CRC-proven at the labeled baud or above: lock the fallback session state.
               fallbackParams = pTrial;
               fallbackDemod = trialDemod;
               fallbackCfo = trialCfo;
@@ -1309,10 +1378,12 @@ namespace VE3NEA.SkyTlm.Core
             else
               Log.Information("Blind fallback: ½-baud trial decoded this burst at {Baud:F0} Bd (deviation {Dev:F0} Hz) — adopted without locking the session",
                 b, trialDevHz ?? 0);
-            // adopt the trial decode for this burst.
+            // adopt the trial decode for this burst. The CRC-valid trial frame is absolute proof of a real
+            // digital burst, so a rejected-trigger burst flips to validated and passes the gate below.
             soft = tSoft;
             trace = tTrace;
             burstFrames = tFrames;
+            validated = true;
             info = new BurstSpectralInfo(est.CfoHz, 0, 0);
             measured = trialCfo.EstimateShapeFromSpectrum(wideQ, est.CfoHz);
             (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(trialDevHz, pTrial));
@@ -1356,6 +1427,20 @@ namespace VE3NEA.SkyTlm.Core
         {
           var curInfo = cfo.AnalyzeSpectrum(avgQ);
           var (cSoft, cTrace, cFrames) = decodeWith(this.demod, p, curInfo.CfoHz);
+          // detector retry, locked-session flavor (class (d)): a fallback-locked burst never reaches the
+          // retry block above (pEffective is the locked blind FSK), so the curated re-trial carries the
+          // discriminator arm here — QMR-KWT 2 @331 s and Luca-9k6 @110 s decode on the curated label
+          // ONLY via the discriminator, and both sessions are locked long before those bursts arrive.
+          // The carrier is the fallback's known-deviation estimate (info.CfoHz), not curInfo's template
+          // correlation: the QMR @331 s decode tolerates < ±100 Hz of carrier error and only the
+          // known-dev estimate sits inside that window.
+          if (!cFrames.Any(f => f.CrcValid == true) && o.DiscriminatorRetry
+              && p.Modulation is Modulation.GMSK or Modulation.GFSK
+              && (o.GmskOptions.UseMlse || o.GmskOptions.DifferentialOrder >= 2))
+          {
+            var discDemod = Demodulators.Create(p, o.GmskOptions with { UseMlse = false, DifferentialOrder = 0 });
+            if (discDemod != null) (cSoft, cTrace, cFrames) = decodeWith(discDemod, p, info.CfoHz);
+          }
           if (cFrames.Any(f => f.CrcValid == true))
           {
             soft = cSoft;
