@@ -358,6 +358,10 @@ namespace VE3NEA.SkyTlm.Core
     private readonly float[] zFloorRing;      // recent no-burst zStat values (empirical floor of the max statistic)
     private readonly float[] zFloorScratch;
     private int zFloorCount, zFloorHead;
+    private readonly float[] zPending = new float[12];   // quarantine: a no-burst zStat enters the floor ring only
+    private int zPendingCount, zPendingHead;             // after 12 more no-burst frames — a burst trigger discards
+                                                         // the pending samples, so onset ramps (the trigger back-dates
+                                                         // up to the averaging delay) never contaminate the floor
     private double zOnThresh, zOffThresh;     // effective Schmitt thresholds: OnSigma/OffSigma raised by the measured floor
     private readonly int warmupFrames;
     private readonly int minFrames, hangFrames, guard, keepFrames, maxBurstSamples;
@@ -532,8 +536,12 @@ namespace VE3NEA.SkyTlm.Core
       oobRing = new float[noiseFrames];
       oobScratch = new float[noiseFrames];
       warmupFrames = Math.Min(noiseFrames, 16);   // collect a little noise history before triggering
-      zFloorRing = new float[noiseFrames];
-      zFloorScratch = new float[noiseFrames];
+      // the z-floor window is much longer than the noise window: the floor raise keys on the MEDIAN of the
+      // no-burst statistic, and over a short window a busy pass's signal activity drags the median (and the
+      // thresholds) up transiently, costing true weak bursts; over a minute the median only reflects a
+      // genuinely persistent (colored/birdie) floor.
+      zFloorRing = new float[20 * noiseFrames];
+      zFloorScratch = new float[20 * noiseFrames];
       zOnThresh = o.OnSigma;
       zOffThresh = o.OffSigma;
 
@@ -751,16 +759,23 @@ namespace VE3NEA.SkyTlm.Core
       for (int i = 0; i < nShifts; i++) { double v = zSum[i] / norm; if (v > zStat) zStat = v; }
 
       // empirical CFAR on the statistic itself: the analytic normalization holds on white noise, but birdies
-      // and colored in-band noise inflate the no-burst floor of the max statistic (CUBEBUG-2: floor ≈ 4σ with
+      // and colored in-band noise inflate the no-burst floor of the max statistic (CUBEBUG-2: floor ≈ 3.5σ with
       // excursions to 8σ against OnSigma 5.5 → dozens of false bursts while the true bursts sit at 75σ).
-      // Track the median/MAD of the no-burst zStat and raise the Schmitt thresholds to
-      // floor + OnSigma/OffSigma·scale — never below the analytic values, so clean recordings are unchanged.
+      // Track the median of the QUARANTINED no-burst zStat (a sample is committed only after 12 more no-burst
+      // frames, so a burst trigger can discard its own onset ramp) and raise the Schmitt thresholds when the
+      // median floor is elevated — see UpdateZThresholds; clean recordings are unchanged.
       if (!inBurst)
       {
-        zFloorRing[zFloorHead] = (float)zStat;
-        zFloorHead = (zFloorHead + 1) % zFloorRing.Length;
-        if (zFloorCount < zFloorRing.Length) zFloorCount++;
-        UpdateZThresholds();
+        if (zPendingCount == zPending.Length)
+        {
+          zFloorRing[zFloorHead] = zPending[zPendingHead];   // commit the oldest quarantined sample
+          zFloorHead = (zFloorHead + 1) % zFloorRing.Length;
+          if (zFloorCount < zFloorRing.Length) zFloorCount++;
+          UpdateZThresholds();
+        }
+        zPending[zPendingHead] = (float)zStat;
+        zPendingHead = (zPendingHead + 1) % zPending.Length;
+        if (zPendingCount < zPending.Length) zPendingCount++;
       }
 
       framesSeen++;
@@ -775,6 +790,7 @@ namespace VE3NEA.SkyTlm.Core
           if (zStat > zOnThresh)
           {
             inBurst = true;
+            zPendingCount = 0; zPendingHead = 0;   // the quarantined samples are this burst's onset ramp — discard
             startFrameAbs = OnsetFrame(absFrame);
             lastAboveAbs = absFrame;
             ResetBurstStats();
@@ -972,21 +988,33 @@ namespace VE3NEA.SkyTlm.Core
       return NoiseFloor.TrimmedMeanInPlace(oobScratch, oobCount);
     }
 
-    /// <summary>Refresh the effective Schmitt thresholds from the no-burst zStat ring: median + MAD-derived
-    /// scale of the measured statistic floor, thresholds = floor + OnSigma/OffSigma·scale, floored at the
-    /// analytic OnSigma/OffSigma (so on white noise, where the floor matches the analytic model, nothing
-    /// changes). Median/MAD tolerate the ring being partly contaminated by sub-threshold signal.</summary>
+    /// <summary>Top of the no-burst max-over-shifts floor on WHITE noise (~2.5–3σ; see
+    /// <see cref="StreamingOptions.OnSigma"/>). Only a median floor above this counts as colored-noise
+    /// inflation and raises the thresholds.</summary>
+    private const double NormalZFloor = 3.0;
+
+    /// <summary>Slope of the threshold raise per unit of median-floor elevation. Calibrated on the corpus:
+    /// CUBEBUG-2 (persistent birdie floor, median 3.4, false bursts at 6–8σ against true bursts at 75σ)
+    /// needs the onset near 6.5–7σ, while HADES-SA (clean floor, median 2.6, REAL weak bursts at 5.5–6.5σ)
+    /// must stay at the analytic 5.5σ — the deadband keeps HADES untouched and the slope lifts CUBEBUG.</summary>
+    private const double ZFloorRaiseSlope = 3.0;
+
+    /// <summary>Refresh the effective Schmitt thresholds from the no-burst zStat ring: both thresholds are
+    /// shifted by <see cref="ZFloorRaiseSlope"/>× the measured MEDIAN floor's elevation above
+    /// <see cref="NormalZFloor"/>, while a recording with a normal floor keeps the analytic
+    /// OnSigma/OffSigma exactly, so borderline true bursts there are untouched. The median (over a
+    /// minute-scale window) tolerates the ring being partly contaminated by sub-threshold signal; scale
+    /// estimates (MAD, lower-quantile) were tried and rejected — on busy passes they overshoot and cost
+    /// true weak bursts.</summary>
     private void UpdateZThresholds()
     {
       if (zFloorCount < 16) return;   // keep the analytic thresholds until there is enough floor history
       Array.Copy(zFloorRing, zFloorScratch, zFloorCount);
       Array.Sort(zFloorScratch, 0, zFloorCount);
       double med = zFloorScratch[zFloorCount / 2];
-      for (int i = 0; i < zFloorCount; i++) zFloorScratch[i] = Math.Abs(zFloorScratch[i] - med);
-      Array.Sort(zFloorScratch, 0, zFloorCount);
-      double scale = 1.4826 * zFloorScratch[zFloorCount / 2];   // MAD → σ of a Gaussian floor
-      zOnThresh = Math.Max(o.OnSigma, med + o.OnSigma * scale);
-      zOffThresh = Math.Max(o.OffSigma, med + o.OffSigma * scale);
+      double raise = ZFloorRaiseSlope * Math.Max(0, med - NormalZFloor);
+      zOnThresh = o.OnSigma + raise;
+      zOffThresh = o.OffSigma + raise;
     }
 
     private void ResetBurstPsd() { Array.Clear(burstPsdSum); burstPsdCount = 0; }
