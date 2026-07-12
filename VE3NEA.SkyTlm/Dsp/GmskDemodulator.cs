@@ -29,6 +29,18 @@ namespace VE3NEA.SkyTlm.Dsp
     /// </summary>
     public double RxSmoothingSymbols { get; init; } = 0.6;
 
+    /// <summary>
+    /// Symbol-timing recovery for the <b>per-burst</b> path (<see cref="CpmFskDemodulator.Trace"/>):
+    /// the Gardner loop (default), or the whole-burst feed-forward estimator
+    /// (<see cref="CpmFskDemodulator.FeedforwardSync"/> — no acquisition transient, exact clock-rate
+    /// tracking, envelope-weighted against fading tails; see <see cref="PskTiming.Feedforward"/>).
+    /// The continuous path (<see cref="CpmFskDemodulator.TraceStream"/>) always uses the Gardner loop —
+    /// a whole-burst block estimate does not apply to an unbounded stream. Class-level default Gardner
+    /// (the historical behavior); the production pipelines choose via
+    /// <see cref="Demodulators.DefaultGmskOptions"/> (<c>FSKDEMOD_FFTIMING</c>).
+    /// </summary>
+    public PskTiming Timing { get; init; } = PskTiming.Gardner;
+
     /// <summary>Gardner loop normalized bandwidth (cycles/symbol). Small = slow, stable tracking.</summary>
     public double LoopBandwidth { get; init; } = 0.01;
 

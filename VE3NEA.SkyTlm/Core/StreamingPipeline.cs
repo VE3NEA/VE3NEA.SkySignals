@@ -243,6 +243,17 @@ namespace VE3NEA.SkyTlm.Core
     /// per burst — no session lock, the next burst may favor the coherent detector again.</summary>
     public bool DiscriminatorRetry { get; init; } = true;
 
+    /// <summary>When <c>true</c> (default), every validated (or rejected-but-strong) CPM/FSK-family burst is
+    /// decoded once more with the <b>other</b> symbol-timing recovery (Phase 7 feed-forward port: the
+    /// whole-burst feed-forward estimate vs the Gardner loop, <see cref="Dsp.GmskDemodOptions.Timing"/>).
+    /// The two timings are complementary per burst — the block estimate has no acquisition transient and
+    /// nails the clock <i>rate</i> (short/marginal bursts: NIGHTJAR 29→33 crc, UmKA-1 5→7 on the timing
+    /// A/B), but its single linear clock model breaks on long multi-frame bursts where the TX clock
+    /// wanders within the burst (UND ROADS 2: the 8 s / 39k-symbol burst drops 47→42 frames under
+    /// feed-forward while Gardner tracks the wander). CRC-gated competition, adopt-only on strictly more
+    /// CRC-valid frames — per burst, no session state.</summary>
+    public bool TimingRetry { get; init; } = true;
+
     /// <summary>Second blind-fallback trial trigger (regime 2 — cold-start wrong mode/baud): a burst that
     /// FAILED validation but whose matched SNR is at least this many dB still reaches the blind trials.
     /// Detection tolerates a wrong curated template (broad analytic shape, CFAR statistic) but validation is
@@ -1361,6 +1372,11 @@ namespace VE3NEA.SkyTlm.Core
           return first;
         }
 
+        // dedup-registry snapshot from before ANY of this burst's decodes: the timing retry below
+        // re-decodes the same burst, and only a rollback to this state lets its identical frames
+        // register so the CRC-count comparison is unbiased.
+        var preMainFrames = new List<RecentFrame>(recentFrames);
+
         var (soft, trace, burstFrames) = decodeWith(activeDemod, pEffective, info.CfoHz);
 
         // the curated label produced a CRC-valid frame before any fallback lock — the label is proven, so
@@ -1504,6 +1520,10 @@ namespace VE3NEA.SkyTlm.Core
           }
         }
 
+        // the hypothesis the timing retry (below the trials) competes against — the blind-trial
+        // adoption swaps it to the winning trial's params.
+        SignalParams timingParams = pEffective;
+
         if (o.BlindFallback && fallbackParams == null && !curatedCrcSeen && !p.IsBlind
             && (validated || rejectedStrong)
             && (burstFrames.Count == 0 || retryCrc > 0)
@@ -1582,7 +1602,47 @@ namespace VE3NEA.SkyTlm.Core
             info = new BurstSpectralInfo(est.CfoHz, 0, 0);
             measured = trialCfo.EstimateShapeFromSpectrum(wideQ, est.CfoHz);
             (match, matchedHyp, shapePass) = MatchBank(measured, snr, BlindBank(trialDevHz, pTrial));
+            timingParams = pTrial;   // the timing retry below competes against the adopted hypothesis
             break;
+          }
+        }
+
+        // Phase 7 timing retry: the whole-burst feed-forward timing (CpmFskDemodulator.FeedforwardSync)
+        // and the Gardner loop are complementary per burst — the block estimate has no acquisition
+        // transient and nails the clock RATE (short/marginal bursts: NIGHTJAR 29→34 crc, UmKA-1 5→6,
+        // HADES-SA +1 on the timing A/B), but its single linear clock model breaks on long multi-frame
+        // bursts whose TX clock wanders within the burst (UND ROADS 2: the 8 s / 39k-symbol burst drops
+        // 47→42 frames under feed-forward while Gardner tracks the wander). So every CPM burst decodes
+        // under both timings and the CRC count picks the winner: adopt-only on STRICTLY more CRC-valid
+        // frames (the blind-trial competition semantics), decoded over the pre-decode dedup registry so
+        // the earlier decodes' registrations don't suppress the retry's identical frames and bias the
+        // count. Runs AFTER the blind trials, against whichever hypothesis won the burst so far
+        // (timingParams + the post-adoption info.CfoHz): placed before them it CRC'd QMR-KWT 2's
+        // marginal @151 s burst on the curated label, which blocked the blind trial's session lock
+        // (retryCrc gate) — and the @331 s burst decodes only through the locked-session machinery
+        // (7→6 crc). Per burst only — no session state, no effect on locking; a win flips validated
+        // (CRC = absolute proof). The demod-type guard keeps this to the CPM/discriminator path
+        // (BPSK defaults to feed-forward already; AFSK has its own DPLL timing).
+        if (o.TimingRetry && (validated || rejectedStrong))
+        {
+          var retryTiming = o.GmskOptions.Timing == PskTiming.Feedforward ? PskTiming.Gardner : PskTiming.Feedforward;
+          var retryDemod = Demodulators.Create(timingParams, o.GmskOptions with { Timing = retryTiming });
+          if (retryDemod is CpmFskDemodulator)
+          {
+            int haveCrc = burstFrames.Count(f => f.CrcValid == true);
+            var afterCurrent = new List<RecentFrame>(recentFrames);
+            restoreFrames(preMainFrames);
+            var (tSoft, tTrace, tFrames) = decodeWith(retryDemod, timingParams, info.CfoHz);
+            if (tFrames.Count(f => f.CrcValid == true) > haveCrc)
+            {
+              Log.Information("Timing retry: {Timing} timing decoded {N} CRC-valid frame(s) at {Time:F2} s (vs {Have} before)",
+                retryTiming, tFrames.Count(f => f.CrcValid == true), timeSeconds, haveCrc);
+              soft = tSoft;
+              trace = tTrace;
+              burstFrames = tFrames;
+              validated = true;
+            }
+            else restoreFrames(afterCurrent);   // a lost retry must not ghost-suppress later decodes
           }
         }
 

@@ -23,7 +23,12 @@ namespace VE3NEA.SkyTlm.Dsp
       // 9600→8×, 19200→16×, 4800→4×, ≤1200→1×). FSKDEMOD_TARGETSPS overrides it (0 disables) for A/B.
       UpsampleTargetSps = double.TryParse(Environment.GetEnvironmentVariable("FSKDEMOD_TARGETSPS"), out var t) ? t : 40,
       // coherent MLSE/PSP detector for h = 1/2 profiles, on by default. FSKDEMOD_MLSE=0 selects DF-DD instead.
-      UseMlse = Environment.GetEnvironmentVariable("FSKDEMOD_MLSE") != "0"
+      UseMlse = Environment.GetEnvironmentVariable("FSKDEMOD_MLSE") != "0",
+      // PRIMARY symbol timing of the per-burst discriminator path (the continuous path always keeps
+      // Gardner). Gardner measured better as the primary (global feed-forward = net −8 corpus crc: it
+      // loses long bursts whose TX clock wanders); the StreamingPipeline TimingRetry competition decodes
+      // every burst under the OTHER timing anyway, CRC-gated. FSKDEMOD_FFTIMING=1 flips the primary for A/B.
+      Timing = Environment.GetEnvironmentVariable("FSKDEMOD_FFTIMING") == "1" ? PskTiming.Feedforward : PskTiming.Gardner
     };
 
     /// <summary>True if FskDemod currently has a demodulator for this modulation family.</summary>

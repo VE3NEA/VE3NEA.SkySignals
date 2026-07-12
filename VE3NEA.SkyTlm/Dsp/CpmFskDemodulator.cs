@@ -141,7 +141,11 @@ namespace VE3NEA.SkyTlm.Dsp
       double sps = p.SampleRate / p.Baud;
       float[] disc = Discriminate(chan, p, out float discCenter);   // instantaneous frequency, normalized to ±1 nominal
       float[] mf = Smooth(disc, sps);                // short noise LP (NOT a full freq-pulse matched filter — that double-filters)
-      var (gardnerSoft, strobes, settledSps) = GardnerSync(mf, sps); // timing recovery → one soft symbol per period
+      // timing recovery → one soft symbol per period: the whole-burst feed-forward estimate (exact clock
+      // rate + O&M phase, envelope-weighted) when selected, else the Gardner loop.
+      var (gardnerSoft, strobes, settledSps) = opt.Timing == PskTiming.Feedforward
+        ? FeedforwardSync(mf, sps, EnvelopeSquared(chan))
+        : GardnerSync(mf, sps);
 
       // pluggable decision stage. The discriminator detector returns the Gardner soft unchanged (byte-identical
       // slicer path); DF-DD resamples the complex baseband at the recovered strobes for the ~2.5-3 dB gain.
@@ -484,6 +488,65 @@ namespace VE3NEA.SkyTlm.Dsp
     /// <summary>Symbols of signal the anchor re-seed estimates its Oerder–Meyr phase over — well inside
     /// even the shortest (~0.1 s) detected bursts, long enough to average the discriminator noise.</summary>
     private const int SeedSymbols = 256;
+
+    // --- stage 3b: feed-forward symbol-timing recovery (whole burst) ---------------------------
+
+    /// <summary>
+    /// Feed-forward symbol timing over the whole (buffered) burst — the discriminator-path port of
+    /// <see cref="BpskDemodulator.FeedforwardSync"/> (<see cref="GmskDemodOptions.Timing"/> selects it;
+    /// the continuous path always keeps the Gardner loop — a block estimate does not apply to an unbounded
+    /// stream). The symbol-rate spectral line lives in <c>c[n] = mf²</c>: the discriminator NRZ dips through
+    /// zero at data transitions, so its square is baud-periodic — the same statistic
+    /// <see cref="OerderMeyrPhase"/> integrates, and its maxima sit at the symbol centres. The optional
+    /// <paramref name="weight"/> (<c>|chan|²</c>, a free per-sample SNR estimate) keeps fades — where the
+    /// discriminator outputs full-scale noise at undiminished amplitude — from swamping the line estimate
+    /// (the T3 envelope-weighting lesson: unweighted O&amp;M fails on fading tails). One block estimate of
+    /// the line's frequency (true clock rate) and phase (Oerder–Meyr offset) replaces the Gardner loop:
+    /// no acquisition transient, lower variance, and a TX↔RX clock-rate offset is tracked exactly instead
+    /// of lagged. Strobes are struck at the constant estimated period; the soft output is
+    /// <paramref name="y"/> cubic-interpolated at the strobes, exactly like the Gardner decision samples.
+    /// </summary>
+    internal (float[] soft, double[] strobes, double settledSps) FeedforwardSync(float[] y, double sps, float[]? weight = null)
+    {
+      int n = y.Length;
+      if (n < 4 || sps <= 1)
+        return (Array.Empty<float>(), Array.Empty<double>(), sps);
+
+      // c[n] = y² (envelope-weighted when a weight is given), mean-removed so the strong DC term doesn't
+      // bias the near-DC numerics.
+      var c = new double[n];
+      double mean = 0;
+      for (int i = 0; i < n; i++)
+      {
+        double v = (double)y[i] * y[i];
+        if (weight != null) v *= weight[i];
+        c[i] = v; mean += v;
+      }
+      mean /= n;
+      for (int i = 0; i < n; i++) c[i] -= mean;
+
+      var (period, tau) = FeedforwardTiming.EstimateClock(c, sps, opt.MaxClockError);
+
+      // strike one strobe per symbol at the constant true period (cubic interpolation, valid index range).
+      int cap = (int)(n / period) + 2;
+      var soft = new System.Collections.Generic.List<float>(cap);
+      var strobes = new System.Collections.Generic.List<double>(cap);
+      for (double t = tau; t + 2 < n; t += period)
+      {
+        if (t < 1) continue;
+        soft.Add(VDsp.Interp(y, t)); strobes.Add(t);
+      }
+      return (soft.ToArray(), strobes.ToArray(), period);
+    }
+
+    /// <summary>Per-sample envelope power <c>|x|²</c> of the channel-filtered baseband — the free SNR
+    /// estimate that weights the feed-forward baud-line statistic.</summary>
+    internal static float[] EnvelopeSquared(Complex32[] x)
+    {
+      var w = new float[x.Length];
+      for (int i = 0; i < x.Length; i++) w[i] = x[i].Real * x[i].Real + x[i].Imaginary * x[i].Imaginary;
+      return w;
+    }
 
     /// <summary>
     /// Oerder–Meyr feed-forward symbol-timing estimate: the phase of the symbol-rate spectral line in
