@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>VE3NEA.SkySSTV.Tests</RootNamespace>
+    <AssemblyName>VE3NEA.SkySSTV.Tests</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- FluentAssertions 7.x is the last Apache-2.0 release (v8+ is commercial). -->
+    <PackageReference Include="FluentAssertions" Version="7.0.0" />
+    <!-- Spectrogram-inspection harness (SstvSpectrogramHarness): same ScottPlot heatmap the FskDemod
+         reference tool uses, so the PNGs a coding assistant inspects look identical. -->
+    <PackageReference Include="ScottPlot.WinForms" Version="5.1.58" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VE3NEA.SkySSTV\VE3NEA.SkySSTV.csproj" />
+    <!-- WavIqReader for the real-capture decode-to-PNG harness (SstvImageHarness). -->
+    <ProjectReference Include="..\VE3NEA.SkyTlm\VE3NEA.SkyTlm.csproj" />
+  </ItemGroup>
+
+</Project>
