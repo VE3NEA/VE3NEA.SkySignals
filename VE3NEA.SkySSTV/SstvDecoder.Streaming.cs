@@ -62,8 +62,10 @@ namespace VE3NEA.SkySSTV
     private int nextImageId;
     private bool flushed;
 
-    /// <summary>Raised when an image train's reconstruction changed (new or re-rendered lines). Only
-    /// trains that pass the image-emission gate (plan §4.1 / the P7 comb pulse-support guard) surface.</summary>
+    /// <summary>Raised when an image train's reconstruction changed (new or re-rendered lines), surfaced
+    /// progressively from the first rendered line so the image builds line-by-line. Gated by
+    /// <see cref="SstvPulseTrainExtractor.IsEmergingImageTrain"/> — a promoted train (plus the P7 comb
+    /// pulse-support guard), without the completeness requirement <see cref="ImageCompleted"/> keeps.</summary>
     public event Action<SstvImageEvent>? ImageUpdated;
 
     /// <summary>Raised once per image when its train retires or the stream ends.</summary>
@@ -121,7 +123,7 @@ namespace VE3NEA.SkySSTV
       foreach (var builder in builders.Values)
       {
         finalized.Add(builder.Train);
-        if (chain.Extractor.IsImageTrain(builder.Train)) Emit(builder, final: true);
+        if (builder.Emitted || chain.Extractor.IsImageTrain(builder.Train)) Emit(builder, final: true);
       }
       builders.Clear();
     }
@@ -235,14 +237,14 @@ namespace VE3NEA.SkySSTV
         {
           finalized.Add(train);
           if (!builders.TryGetValue(train, out var builder)) continue;
-          if (chain.Extractor.IsImageTrain(train)) Emit(builder, final: true);
+          if (builder.Emitted || chain.Extractor.IsImageTrain(train)) Emit(builder, final: true);
           builders.Remove(train);
         }
         retirees.Clear();
       }
 
       foreach (var builder in builders.Values)
-        if (builder.Dirty && chain.Extractor.IsImageTrain(builder.Train))
+        if (builder.Dirty && chain.Extractor.IsEmergingImageTrain(builder.Train))
           Emit(builder, final: false);
     }
 
@@ -258,7 +260,7 @@ namespace VE3NEA.SkySSTV
         builder.Train.Regr.GetPulseTime(0) / fs, builder.Train is SstvVisPulseTrain,
         builder.Snapshot(), builder.ValidRows, final);
       if (final) ImageCompleted?.Invoke(evt);
-      else ImageUpdated?.Invoke(evt);
+      else { builder.Emitted = true; ImageUpdated?.Invoke(evt); }
     }
 
 

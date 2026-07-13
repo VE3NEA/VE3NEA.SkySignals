@@ -198,9 +198,22 @@ namespace VE3NEA.SkySSTV
     /// may emit an image.</para></summary>
     public bool IsImageTrain(SstvPulseTrain train)
     {
+      if (!IsEmergingImageTrain(train)) return false;
+      return ClaimedLines(train) >= MinLineFraction * SstvModes.Get(train.Format).LineCount;
+    }
+
+    /// <summary>The progressive-emission gate for live line-by-line display: a promoted train (or a comb
+    /// train that clears the P7 pulse-support guard) may surface its image as soon as it has rendered any
+    /// rows, WITHOUT the <see cref="MinLineFraction"/> completeness requirement <see cref="IsImageTrain"/>
+    /// keeps for finalization. This lets the reconstruction be shown from its first line — so the image
+    /// grows a line at a time instead of appearing as one block once a quarter of it has arrived, and the
+    /// receiving pass surfaces in the UI as soon as the transmission is confirmed rather than seconds later.
+    /// The MHT promotion gates (triplet + N-of-M) plus the comb guard still reject pure noise.</summary>
+    public bool IsEmergingImageTrain(SstvPulseTrain train)
+    {
       if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) return false;
       if (train is SstvCombPulseTrain && train.PulseCnt < MinCombPulses) return false;
-      return ClaimedLines(train) >= MinLineFraction * SstvModes.Get(train.Format).LineCount;
+      return true;
     }
 
     /// <summary>Fraction of the train's claimed lines that carry a detected sync pulse — an image-quality

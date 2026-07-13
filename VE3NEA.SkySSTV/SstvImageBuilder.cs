@@ -25,6 +25,11 @@ namespace VE3NEA.SkySSTV
     /// <summary>Rows changed since the last <see cref="Snapshot"/>.</summary>
     public bool Dirty { get; private set; }
 
+    /// <summary>Whether a progressive image event has been emitted for this builder. Once true, the train
+    /// must be finalized even if it never reaches the <see cref="SstvPulseTrainExtractor.IsImageTrain"/>
+    /// completeness gate, so an image shown line-by-line is properly completed (and saved) at the end.</summary>
+    public bool Emitted { get; set; }
+
     public SstvImageBuilder(SstvPulseTrain train, SstvDecodeOptions o, int imageId)
     {
       Train = train;
