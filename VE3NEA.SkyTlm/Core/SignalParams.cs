@@ -84,6 +84,15 @@ namespace VE3NEA.SkyTlm.Core
     public double? ResolvedDeviation { get; set; }
 
     /// <summary>
+    /// The baud rate the streaming decoder actually locked when the curated <see cref="Baud"/> label was
+    /// distrusted and a blind-fallback trial at a different rate produced the first CRC-valid frame (see
+    /// <c>StreamingPipeline</c> blind fallback) — the run-time counterpart to the curated <see cref="Baud"/>.
+    /// <c>null</c> when the curated baud was used as-is. <b>Mutable</b> so the decoder can write the discovered
+    /// value back into the caller's params object for display.
+    /// </summary>
+    public double? ResolvedBaud { get; set; }
+
+    /// <summary>
     /// AFSK only: audio subcarrier centre frequency in Hz (Bell-202 = 1700, midway between the 1200 Hz mark and
     /// 2200 Hz space tones), from the satyaml <c>af_carrier</c> field. The AFSK demodulator FM-discriminates the
     /// RF to recover this audio, then mixes it down by this frequency so the two tones straddle DC at ±<see

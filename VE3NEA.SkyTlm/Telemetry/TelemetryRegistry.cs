@@ -17,6 +17,10 @@ namespace VE3NEA.SkyTlm.Telemetry
     // norad_id -> definition; built once at construction from the embedded resources or a user folder.
     private readonly Dictionary<int, TelemetryDefinition> byNorad = new();
 
+    // every successfully-parsed definition, in load order (one entry per file, whereas byNorad maps many
+    // norads to the same instance). Backs the user-facing telemetry-format override list in the UI.
+    private readonly List<TelemetryDefinition> allDefinitions = new();
+
     // resource-name segment that marks a bundled definition; the text after it is the on-disk file name.
     private const string Marker = ".Telemetry.Definitions.";
 
@@ -34,6 +38,13 @@ namespace VE3NEA.SkyTlm.Telemetry
     /// <summary>Definition for a satellite by NORAD ID, or null when none is registered.</summary>
     public TelemetryDefinition? ForNorad(int? noradId) =>
       noradId is int nid && byNorad.TryGetValue(nid, out var def) ? def : null;
+
+    /// <summary>Every loaded definition (one per file), for populating a manual telemetry-format override list.</summary>
+    public IReadOnlyList<TelemetryDefinition> AllDefinitions => allDefinitions;
+
+    /// <summary>The loaded definition whose <see cref="TelemetryDefinition.Id"/> matches, or null.</summary>
+    public TelemetryDefinition? ById(string? id) =>
+      id == null ? null : allDefinitions.FirstOrDefault(d => d.Id == id);
 
     /// <summary>Load every <c>*.json</c> in <paramref name="folder"/>, indexing each by the NORAD IDs in its
     /// <c>norad</c> array. Files are matched by content, not by name.</summary>
@@ -109,6 +120,7 @@ namespace VE3NEA.SkyTlm.Telemetry
         if (def.Norad.Count == 0)
           Log.Warning("TelemetryRegistry: {Source} lists no norad IDs; it will never be resolved", source);
         foreach (int nid in def.Norad) byNorad[nid] = def;
+        allDefinitions.Add(def);
       }
     }
 

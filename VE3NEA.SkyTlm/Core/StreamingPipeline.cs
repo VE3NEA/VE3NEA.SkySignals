@@ -1587,6 +1587,7 @@ namespace VE3NEA.SkyTlm.Core
               fallbackCfo = trialCfo;
               fallbackDevHz = trialDevHz;
               resolvedTarget.ResolvedDeviation = fallbackDevHz;   // surface the discovered deviation to the caller's UI
+              resolvedTarget.ResolvedBaud = b;                    // surface the discovered baud to the caller's UI
               Log.Information("Blind fallback: curated {Mod} {LabelBaud:F0} Bd label distrusted — locked blind FSK at {Baud:F0} Bd, deviation {Dev:F0} Hz from first CRC-valid frame",
                 p.Modulation, p.Baud, b, fallbackDevHz ?? 0);
             }
