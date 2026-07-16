@@ -1579,17 +1579,21 @@ namespace VE3NEA.SkyTlm.Core
               continue;
             }
             double? trialDevHz = est.IsFsk ? est.DeviationHz : null;
+            // surface the baud/deviation this burst actually decoded at so the UI shows the value used to
+            // recover the frame instead of the distrusted label — including when the trial rate is BELOW the
+            // label (a different transmitter's rate on the same frequency), independent of the session-lock below.
+            resolvedTarget.ResolvedDeviation = trialDevHz;
+            resolvedTarget.ResolvedBaud = b;
             if (b >= p.Baud && retryCrc == 0)
             {
-              // CRC-proven at the labeled baud or above: lock the fallback session state.
+              // CRC-proven at the labeled baud or above: also lock the fallback session state so later bursts
+              // skip the label and demod directly at the discovered rate.
               fallbackParams = pTrial;
               fallbackDemod = trialDemod;
               fallbackCfo = trialCfo;
               fallbackDevHz = trialDevHz;
-              resolvedTarget.ResolvedDeviation = fallbackDevHz;   // surface the discovered deviation to the caller's UI
-              resolvedTarget.ResolvedBaud = b;                    // surface the discovered baud to the caller's UI
               Log.Information("Blind fallback: curated {Mod} {LabelBaud:F0} Bd label distrusted — locked blind FSK at {Baud:F0} Bd, deviation {Dev:F0} Hz from first CRC-valid frame",
-                p.Modulation, p.Baud, b, fallbackDevHz ?? 0);
+                p.Modulation, p.Baud, b, trialDevHz ?? 0);
             }
             else
               Log.Information("Blind fallback: trial decoded this burst at {Baud:F0} Bd (deviation {Dev:F0} Hz) — adopted without locking the session",
