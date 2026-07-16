@@ -21,6 +21,18 @@ namespace VE3NEA.SkyTlm.Deframing
       return $"{src} -> {dest}";
     }
 
+    /// <summary>Byte length of the AX.25 address field (destination + source + any digipeaters), i.e. up
+    /// through the first address octet with the end-of-address bit (bit 0) set. Scanning starts at the source
+    /// subfield's SSID octet so the result is never shorter than the mandatory dest+source 14 bytes. Returns 0
+    /// when no end-of-address octet is found within the frame.</summary>
+    public static int AddressFieldLength(byte[] frame)
+    {
+      // each address subfield is 7 octets; the last one has bit 0 of its 7th (SSID) octet set
+      for (int offset = 13; offset < frame.Length; offset += 7)
+        if ((frame[offset] & 0x01) != 0) return offset + 1;
+      return 0;
+    }
+
     private static string Callsign(byte[] frame, int offset)
     {
       if (offset + 7 > frame.Length) return string.Empty;

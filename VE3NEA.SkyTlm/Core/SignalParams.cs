@@ -26,6 +26,7 @@ namespace VE3NEA.SkyTlm.Core
     BPSK,
     QPSK,
     CW,
+    FM,
     SSTV,
     Other
   }
