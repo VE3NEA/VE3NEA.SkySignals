@@ -32,6 +32,7 @@ namespace VE3NEA.SkyFM.Tests
         output.WriteLine($"{c.StartSeconds,7:0.0}s  {c.Kind,-8} {c.Text,-9} conf {c.Confidence:0.00}");
       Report("callsigns", result.Callsigns);
       Report("grids", result.Grids);
+      Report("symbols", result.Symbols);
 
       // measured 2026-07-18: callsigns P 0.75 R 0.62 F1 0.68 (6/8 Gold near), grids P 0.50 R 0.50
       // (EM85 FM18 recovered; JI23 FN20 artifacts) — floors just below guard against regression
@@ -39,6 +40,11 @@ namespace VE3NEA.SkyFM.Tests
       result.Callsigns.Recall.Should().BeGreaterThanOrEqualTo(0.61);
       result.Grids.Precision.Should().BeGreaterThanOrEqualTo(0.49);
       result.Grids.Recall.Should().BeGreaterThanOrEqualTo(0.49);
+
+      // symbol track measured 2026-07-18: P 0.82 R 0.95 F1 0.88 — 10/12 Gold identifiers fully
+      // covered at the individual-symbol level, incl. all four the assembler misses
+      result.Symbols.Precision.Should().BeGreaterThanOrEqualTo(0.81);
+      result.Symbols.Recall.Should().BeGreaterThanOrEqualTo(0.94);
     }
 
     private void Report(string kind, EvalScore s)

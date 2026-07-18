@@ -1,6 +1,59 @@
 {
   "recordings": [
     {
+      "file": "2026-06-12_19_31_01_SO-50.iq.wav",
+      "satellite": "SO-50",
+      "role": "train",
+      "utterances": [
+        { "time": 54, "symbols": "EU?EM" },
+        { "time": 339, "symbols": "5?W" },
+        { "time": 340, "symbols": "5?GW" },
+        { "time": 349, "symbols": "0UYEM48" },
+        { "time": 349, "symbols": "0UYEM48" },
+        { "time": 349, "symbols": "0UYEM48" },
+        { "time": 371, "symbols": "EM7" },
+        { "time": 375, "symbols": "W?MDW9BEDEM48" },
+        { "time": 382, "symbols": "BE?48" },
+        { "time": 428, "symbols": "DM" },
+        { "time": 452, "symbols": "WA?D" },
+        { "time": 455, "symbols": "WBDE?A84ZD" },
+        { "time": 464, "symbols": "?4ZDWI5DEM" },
+        { "time": 474, "symbols": "W" },
+        { "time": 480, "symbols": "73" },
+        { "time": 487, "symbols": "WO3U" },
+        { "time": 529, "symbols": "W?WO04?00" }
+      ]
+    },
+    {
+      "file": "2026-07-01_13_29_31_SO-50.iq.wav",
+      "satellite": "SO-50",
+      "role": "train",
+      "utterances": [
+        { "time": 10, "symbols": "31" },
+        { "time": 12, "symbols": "25" },
+        { "time": 15, "symbols": "?7" },
+        { "time": 19, "symbols": "D?2FYA?1" },
+        { "time": 23, "symbols": "FM31" }
+      ]
+    },
+    {
+      "file": "2026-07-04_22_32_27_AO-123.iq.wav",
+      "satellite": "AO-123",
+      "role": "train",
+      "utterances": [
+        { "time": 131, "symbols": "3118" },
+        { "time": 139, "symbols": "WO3UFN00" },
+        { "time": 151, "symbols": "F3UW0J?EM" },
+        { "time": 158, "symbols": "JWEN" },
+        { "time": 240, "symbols": "1WMBEM" }
+      ]
+    },
+    {
+      "file": "2026-07-04_22_45_37_SO-50.iq.wav",
+      "satellite": "SO-50",
+      "role": "train"
+    },
+    {
       "file": "2026-07-04_23_03_57_ARISS.iq.wav",
       "satellite": "ARISS",
       "role": "train",
@@ -18,6 +71,67 @@
         { "text": "FM17", "kind": "grid", "tag": "gold", "times": [266, 332] },
         { "text": "FM22", "kind": "grid", "tag": "gold", "times": [286] },
         { "text": "KF4UJ", "kind": "callsign", "tag": "partial", "times": [333] }
+      ]
+    },
+    {
+      "file": "2026-07-12_09_56_40_AO-123.iq.wav",
+      "satellite": "AO-123",
+      "role": "train",
+      "utterances": [
+        { "time": 1, "symbols": "BQZAO4?I?99" },
+        { "time": 21, "symbols": "W8?WWF4WEM74" },
+        { "time": 25, "symbols": "WF4WW8LOWEN80" },
+        { "time": 31, "symbols": "OWAO4" },
+        { "time": 40, "symbols": "PQIEM66" },
+        { "time": 44, "symbols": "KC9?Q" },
+        { "time": 48, "symbols": "KD9PQI" },
+        { "time": 66, "symbols": "KD?PQINN" },
+        { "time": 74, "symbols": "N" },
+        { "time": 83, "symbols": "FM18K" },
+        { "time": 96, "symbols": "N80?F" },
+        { "time": 171, "symbols": "KW4" },
+        { "time": 186, "symbols": "KF8DIM" }
+      ]
+    },
+    {
+      "file": "2026-07-12_10_00_58_SO-50.iq.wav",
+      "satellite": "SO-50",
+      "role": "train",
+      "utterances": [
+        { "time": 21, "symbols": "3IW4HM" }
+      ]
+    },
+    {
+      "file": "2026-07-13_22_19_36_AO-123.iq.wav",
+      "satellite": "AO-123",
+      "role": "train",
+      "utterances": [
+        { "time": 5, "symbols": "1" },
+        { "time": 19, "symbols": "31FM" },
+        { "time": 39, "symbols": "B3WN3YFM" },
+        { "time": 53, "symbols": "WN3Y" },
+        { "time": 60, "symbols": "FM18" }
+      ]
+    },
+    {
+      "file": "2026-07-13_22_29_15_ARISS.iq.wav",
+      "satellite": "ARISS",
+      "role": "train",
+      "utterances": [
+        { "time": 10, "symbols": "MK" },
+        { "time": 21, "symbols": "2" },
+        { "time": 37, "symbols": "KF8" },
+        { "time": 41, "symbols": "EM40" },
+        { "time": 44, "symbols": "FKF8GF?2" },
+        { "time": 87, "symbols": "0JMJ2F" },
+        { "time": 103, "symbols": "FM41?TFKN2F" },
+        { "time": 147, "symbols": "KF8GFKN2FYA" },
+        { "time": 165, "symbols": "L2FYA41" },
+        { "time": 181, "symbols": "FYAFN" },
+        { "time": 227, "symbols": "N2F?T" },
+        { "time": 233, "symbols": "2FYA" },
+        { "time": 255, "symbols": "2FYA" },
+        { "time": 287, "symbols": "2FYA" }
       ]
     }
   ]

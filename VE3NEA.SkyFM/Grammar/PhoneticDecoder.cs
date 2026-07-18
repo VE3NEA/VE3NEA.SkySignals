@@ -31,6 +31,17 @@ namespace VE3NEA.SkyFM
       ["nine"] = '9', ["niner"] = '9'
     };
 
+    /// <summary>The closed spoken vocabulary the decoder maps to symbols — NATO words and spoken
+    /// digits. This is the source of truth for Pass-B constrained grammars / hotword lists (§5.3).</summary>
+    public static IEnumerable<string> VocabularyWords
+    {
+      get
+      {
+        foreach (string w in Nato.Keys) yield return w;
+        foreach (string w in Digits.Keys) yield return w;
+      }
+    }
+
     /// <summary>The symbols (upper-case letters/digits) <paramref name="word"/> contributes to an
     /// identifier, or "" when the word is a separator (ordinary English).</summary>
     public static string ToSymbols(string word)

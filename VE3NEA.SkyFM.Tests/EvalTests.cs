@@ -72,16 +72,44 @@ namespace VE3NEA.SkyFM.Tests
     }
 
     [Fact]
+    public void SymbolTrack_Utterances_MatchAbsorbAndRecall()
+    {
+      var utterances = new List<TruthUtterance>
+      {
+        new() { Time = 100, Symbols = "KF8?2" },
+        new() { Time = 300, Symbols = "EM48" }
+      };
+      var symbols = new List<(char, double)>
+      {
+        ('K', 100), ('F', 101), ('9', 102),                  // K F correct; 9 absorbed by the '?'
+        ('Z', 300), ('E', 301), ('M', 301)                   // Z unmatched (no '?' there); E M correct
+      };
+
+      var s = SymbolEval.Score(symbols, utterances);
+
+      s.CorrectChars.Should().Be(4);
+      s.EmittedChars.Should().Be(5, "the absorbed symbol is excluded from the precision denominator");
+      s.Unmatched.Should().Equal("Z");
+      s.GoldChars.Should().Be(8, "known chars only — '?' is not part of the recall denominator");
+      s.RecalledChars.Should().Be(4, "K F of the first utterance, E M of the second");
+      s.RecoveredGold.Should().BeEmpty();
+    }
+
+    [Fact]
     public void SeedCorpus_Loads()
     {
-      // the consolidated ground-truth file (plan §4), seeded with the spike's ARISS ear truth
+      // the consolidated ground-truth file (plan §4): the spike's ARISS identifier labels + the
+      // 2026-07-18 operator symbol-level ear transcripts of the other recordings
       for (var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory); dir != null; dir = dir.Parent)
       {
         string p = System.IO.Path.Combine(dir.FullName, "corpus", "ground-truth.json");
         if (!System.IO.File.Exists(p)) continue;
         var corpus = Corpus.Load(p);
-        var ariss = corpus.Recordings.Should().ContainSingle(r => r.Satellite == "ARISS").Which;
+        corpus.Recordings.Should().HaveCount(9);
+        var ariss = corpus.Recordings.Should().ContainSingle(r => r.File == "2026-07-04_23_03_57_ARISS.iq.wav").Which;
         ariss.Identifiers.Count(i => i.Tag == TruthTag.Gold).Should().Be(12);
+        corpus.Recordings.Single(r => r.File == "2026-07-13_22_29_15_ARISS.iq.wav")
+          .Utterances.Should().HaveCount(14);
         return;
       }
       Assert.Fail("corpus/ground-truth.json not found above the test directory");
