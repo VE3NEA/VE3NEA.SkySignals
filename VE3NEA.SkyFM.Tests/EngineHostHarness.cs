@@ -26,7 +26,7 @@ namespace VE3NEA.SkyFM.Tests
     private static readonly string ArissClipDir = Path.Combine(DecodedDir, "2026-07-04_23_03_57_ARISS");
 
     private readonly ITestOutputHelper output;
-    private readonly Dictionary<string, SidecarEngine> engines = new();
+    private readonly Dictionary<string, IAsrEngine> engines = new();
 
     public EngineHostHarness(ITestOutputHelper o) => output = o;
 
@@ -62,6 +62,20 @@ namespace VE3NEA.SkyFM.Tests
       => Score("hybrid whisper+vosk", CachedWords("whisper", SidecarEngine.FasterWhisper, ArissClipDir)
         .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, ArissClipDir)).ToList(), ArissRecording());
 
+    [ManualFact("2026-07-18: callsigns P 0.44 R 0.22 (AB2IW KB2IW), grids P 0.38 R 0.19 (FN22 direct; " +
+      "an EM85 at 200.4s scores unmatched — outside every truth mention's ±25 s window, likely a truth " +
+      "gap worth an operator look), symbols P 0.66 R 0.87 vs unbiased R 0.77 — the hotword gain is real " +
+      "at the symbol level; ~5 s for 56 clips, ~150x realtime")]
+    public void Ariss_SherpaHotwords_DecodedClips_ScoreAgainstCorpusTruth()
+      => Score("sherpa zipformer hotwords", CachedWords("sherpa", () => SherpaOnnxEngine.Hotwords(), ArissClipDir),
+        ArissRecording());
+
+    [ManualFact("2026-07-18: callsigns P 0.44 R 0.22, grids P 0.88 R 0.44 (EM85 FM22), symbols " +
+      "P 0.66 R 0.77 — the no-hotwords control for the biasing measurement")]
+    public void Ariss_SherpaUnbiased_DecodedClips_ScoreAgainstCorpusTruth()
+      => Score("sherpa zipformer unbiased", CachedWords("sherpa0", SherpaOnnxEngine.Unbiased, ArissClipDir),
+        ArissRecording());
+
 
     // ----------------------------------------------------------------------------------------------------
     //                                    full-corpus harnesses
@@ -86,6 +100,25 @@ namespace VE3NEA.SkyFM.Tests
     public void All_HybridWhisperVosk_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir)
         .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, dir)).ToList());
+
+    [ManualFact("2026-07-18: CORPUS symbols P 0.62 R 0.42 F1 0.50 (155/372) vs unbiased 0.58/0.33 — " +
+      "hotword biasing buys +0.09 recall +0.04 precision at decode time (the ATCO2 bet, directionally " +
+      "confirmed), but the engine alone stays well below whisper 0.84/0.62; junk 'A'/'ARE' single " +
+      "words on noise clips are its filler mode")]
+    public void All_SherpaHotwords_ScoreAgainstCorpusTruth()
+      => ScoreAll(dir => CachedWords("sherpa", () => SherpaOnnxEngine.Hotwords(), dir));
+
+    [ManualFact("2026-07-18: CORPUS symbols P 0.58 R 0.33 F1 0.42 (122/372) — the no-hotwords control")]
+    public void All_SherpaUnbiased_ScoreAgainstCorpusTruth()
+      => ScoreAll(dir => CachedWords("sherpa0", SherpaOnnxEngine.Unbiased, dir));
+
+    [ManualFact("2026-07-18 (post 3:17 truth fix): CORPUS symbols P 0.76 R 0.68 F1 0.72 (254/372, +23 " +
+      "recalled over whisper-alone), grids P 0.94 R 0.94 — best grid track of any run; ARISS callsigns " +
+      "P 0.52 R 0.58, symbol recall 1.00 (all 12 Gold); callsign precision cost comes from sherpa's " +
+      "flat placeholder conf 0.80 (no posteriors from the C API), the §5.5 thresholding target")]
+    public void All_HybridWhisperSherpa_ScoreAgainstCorpusTruth()
+      => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir)
+        .Concat(CachedWords("sherpa", () => SherpaOnnxEngine.Hotwords(), dir)).ToList());
 
     private void ScoreAll(Func<string, List<AsrWord[]>> wordsFor)
     {
@@ -162,11 +195,11 @@ namespace VE3NEA.SkyFM.Tests
       Report("symbols", result.Symbols);
       output.WriteLine("stored-transcript baseline: callsigns P 0.75 R 0.62 F1 0.68, grids P 0.50 R 0.50, " +
         "symbols P 0.82 R 0.95 F1 0.88");
-      output.WriteLine("audio-E2E whisper baseline: callsigns P 0.63 R 0.56 F1 0.59, grids P 0.55 R 0.69, " +
-        "symbols P 0.76 R 0.97 F1 0.85");
+      output.WriteLine("audio-E2E whisper baseline (post 3:17 truth fix): callsigns P 0.63 R 0.56 F1 0.59, " +
+        "grids P 0.75 R 0.94, symbols P 0.78 R 0.97 F1 0.87");
     }
 
-    private List<AsrWord[]> CachedWords(string tag, Func<SidecarEngine> engineFactory, string clipDir)
+    private List<AsrWord[]> CachedWords(string tag, Func<IAsrEngine> engineFactory, string clipDir)
     {
       Assert.True(Directory.Exists(clipDir), $"decoded clips expected under {clipDir} (run FmDemodHarness first)");
       string cache = $"{clipDir}.{tag}.words.json";

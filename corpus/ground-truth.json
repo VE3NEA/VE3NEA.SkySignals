@@ -58,7 +58,7 @@
       "satellite": "ARISS",
       "role": "train",
       "identifiers": [
-        { "text": "KQ4GIK", "kind": "callsign", "tag": "gold", "times": [137, 145, 229] },
+        { "text": "KQ4GIK", "kind": "callsign", "tag": "gold", "times": [145, 197, 229] },
         { "text": "KR4JIQ", "kind": "callsign", "tag": "gold", "times": [207, 229] },
         { "text": "KQ4RGI", "kind": "callsign", "tag": "gold", "times": [247] },
         { "text": "AB2IW", "kind": "callsign", "tag": "gold", "times": [286, 290] },
@@ -66,7 +66,7 @@
         { "text": "KB2IW", "kind": "callsign", "tag": "gold", "times": [338, 344] },
         { "text": "K2HZV", "kind": "callsign", "tag": "gold", "times": [344, 430] },
         { "text": "KC1ZFD", "kind": "callsign", "tag": "gold", "times": [407, 424] },
-        { "text": "EM85", "kind": "grid", "tag": "gold", "times": [137, 145, 229, 290] },
+        { "text": "EM85", "kind": "grid", "tag": "gold", "times": [145, 197, 229, 290] },
         { "text": "FM18", "kind": "grid", "tag": "gold", "times": [247, 275] },
         { "text": "FM17", "kind": "grid", "tag": "gold", "times": [266, 332] },
         { "text": "FM22", "kind": "grid", "tag": "gold", "times": [286] },
