@@ -20,4 +20,10 @@
   <Project Path="VE3NEA.SkySSTV.Tests/VE3NEA.SkySSTV.Tests.csproj">
     <Platform Project="x64" />
   </Project>
+  <Project Path="VE3NEA.SkyFM/VE3NEA.SkyFM.csproj">
+    <Platform Project="x64" />
+  </Project>
+  <Project Path="VE3NEA.SkyFM.Tests/VE3NEA.SkyFM.Tests.csproj">
+    <Platform Project="x64" />
+  </Project>
 </Solution>
