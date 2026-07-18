@@ -37,8 +37,10 @@ namespace VE3NEA.SkyFM.Tests
     public string Name { get; }
 
     /// <summary>Biased decode: hotwords = the phonetic vocabulary, uppercased to match the GigaSpeech
-    /// BPE. <paramref name="hotwordsScore"/> is the per-token boost (sherpa default 1.5).</summary>
-    public static SherpaOnnxEngine Hotwords(float hotwordsScore = 1.5f)
+    /// BPE. <paramref name="hotwordsScore"/> is the per-token boost — sherpa ships 1.5, but the §13
+    /// corpus sweep picked 2.5 (callsign recall nearly doubles, grids hold; 3.0 starts trading grid
+    /// recall away in the hybrid).</summary>
+    public static SherpaOnnxEngine Hotwords(float hotwordsScore = 2.5f)
       => new($"sherpa zipformer hotwords {hotwordsScore:0.0}", hotwordsScore);
 
     /// <summary>Unbiased control — same model and beam search, no hotwords. Measures what the biasing

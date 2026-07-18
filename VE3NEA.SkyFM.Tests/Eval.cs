@@ -14,6 +14,10 @@ namespace VE3NEA.SkyFM.Tests
     public required List<string> RecoveredGold { get; init; }
     public required List<string> Unmatched { get; init; }
 
+    /// <summary>The §11 near-miss tracker: matched emissions one edit away from their truth
+    /// ("emitted→truth") — the fusion/rerank stages' work queue.</summary>
+    public List<string> NearMisses { get; init; } = [];
+
     public double Precision => EmittedChars == 0 ? 1.0 : (double)CorrectChars / EmittedChars;
     public double Recall => GoldChars == 0 ? 1.0 : (double)RecalledChars / GoldChars;
     public double F1 => Precision + Recall == 0 ? 0.0 : 2 * Precision * Recall / (Precision + Recall);
@@ -40,10 +44,12 @@ namespace VE3NEA.SkyFM.Tests
       var goldLcs = new Dictionary<string, int>();
       var recovered = new List<string>();
       var unmatched = new List<string>();
+      var nearMisses = new List<string>();
 
       foreach (var c in candidates.Where(c => c.Kind == kind))
       {
-        emitted += c.Text.Length;
+        // an abstained '?' in a partial is not emitted (§11) — honest partials cost no precision
+        foreach (char ch in c.Text) if (ch != '?') emitted++;
 
         TruthIdentifier? best = null;
         double bestR = 0;
@@ -57,6 +63,8 @@ namespace VE3NEA.SkyFM.Tests
         if (best == null || bestR < 0.5) { unmatched.Add(c.Text); continue; }
         int lcs = Lcs(c.Text, best.Text);
         correct += lcs;
+        if (c.Text != best.Text && PhoneticDecoder.WithinEdit1(c.Text, best.Text))
+          nearMisses.Add($"{c.Text}→{best.Text}");
         if (best.Tag == TruthTag.Gold)
         {
           if (!recovered.Contains(best.Text)) recovered.Add(best.Text);
@@ -71,7 +79,8 @@ namespace VE3NEA.SkyFM.Tests
         GoldChars = gold.Sum(t => t.Text.Length),
         RecalledChars = gold.Sum(t => Math.Min(goldLcs.GetValueOrDefault(t.Text), t.Text.Length)),
         RecoveredGold = recovered,
-        Unmatched = unmatched
+        Unmatched = unmatched,
+        NearMisses = nearMisses
       };
     }
 

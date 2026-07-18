@@ -67,9 +67,11 @@ namespace VE3NEA.SkyFM
     //                                        candidate emission
     // ----------------------------------------------------------------------------------------------------
 
-    /// <summary>Scan the finished symbol run for the single longest callsign and single longest grid
-    /// full-match (a spoken ID is one contiguous sub-run, not every substring of a merge), then clear
-    /// the run.</summary>
+    /// <summary>Scan the finished symbol run for the best non-overlapping partition into valid
+    /// identifiers — maximum covered characters, then fewest identifiers (precision-first) — then clear
+    /// the run. A merged run holds identifiers back to back ("EM85 KR4JIQ", "AB2IW FN22",
+    /// "KB2IW K2HZV"), so independent longest-match scans let a concatenation ("EM85KR", "AB2IWFN",
+    /// "KB2IWK") shadow the true parse and emit junk-suffix candidates.</summary>
     private static void Flush(List<(char Sym, float Conf, double Start, double End)> run, List<Candidate> candidates)
     {
       if (run.Count == 0) return;
@@ -78,17 +80,52 @@ namespace VE3NEA.SkyFM
       for (int i = 0; i < run.Count; i++) chars[i] = run[i].Sym;
       string s = new string(chars);
 
-      (int At, int Len) call = (0, 0), grid = (0, 0);
+      // all structurally valid spans of either kind (identifiers are ≥ 2 chars by both grammars), plus
+      // run-end truncated-callsign spans ("KR4" — complete prefix, suffix cut off): a partial is
+      // trusted only when it continues directly from a completed GRID (the glue-forward damage mode:
+      // "EM85KR4…" truncated by a separator must parse EM85|KR4, not the junk callsign EM85KR), never
+      // on its own — a bare noise run "AB2" still emits nothing, and never after a callsign, where the
+      // extra coverage would fragment a longer valid parse (KR4JI must not split into KR4J|I23)
+      var spans = new List<(int At, int Len, CandidateKind Kind, bool Partial)>();
       for (int i = 0; i < s.Length; i++)
         for (int j = s.Length; j > i + 1; j--)
         {
           string sub = s[i..j];
-          if (sub.Length > call.Len && CallsignParser.IsValid(sub)) call = (i, sub.Length);
-          if (sub.Length > grid.Len && MaidenheadParser.IsValid(sub)) grid = (i, sub.Length);
+          if (CallsignParser.IsValid(sub)) spans.Add((i, j - i, CandidateKind.Callsign, false));
+          if (MaidenheadParser.IsValid(sub)) spans.Add((i, j - i, CandidateKind.Grid, false));
+          if (j == s.Length && i > 0 && CallsignParser.IsTruncated(sub))
+            spans.Add((i, j - i, CandidateKind.Callsign, true));
         }
 
-      if (call.Len > 0) candidates.Add(FromRun(run, call.At, call.Len, CandidateKind.Callsign));
-      if (grid.Len > 0) candidates.Add(FromRun(run, grid.At, grid.Len, CandidateKind.Grid));
+      // dynamic program over run positions: best[i] covers s[0..i), preferring more covered chars,
+      // then fewer identifiers, then more grid-covered chars (the rigid 4-char grid outweighs the loose
+      // callsign grammar: "EM85KR4JIQ" must split EM85|KR4JIQ, not EM85K|R4JIQ), then longer earlier
+      // spans (larger Prev: junk glues forward onto the next identifier — "KB2IWK2HZV" must split
+      // KB2IW|K2HZV, not KB2I|WK2HZV); Prev/Span chain the chosen partition for the walk-back
+      var best = new (int Cover, int Count, int GridChars, int Span, int Prev)[s.Length + 1];
+      for (int i = 1; i <= s.Length; i++)
+      {
+        best[i] = best[i - 1] with { Span = -1, Prev = i - 1 };
+        for (int k = 0; k < spans.Count; k++)
+        {
+          var sp = spans[k];
+          if (sp.At + sp.Len != i) continue;
+          if (sp.Partial && (best[sp.At].Span < 0 ||
+              spans[best[sp.At].Span].Kind != CandidateKind.Grid)) continue;
+          int cover = best[sp.At].Cover + sp.Len, count = best[sp.At].Count + 1;
+          int gridChars = best[sp.At].GridChars + (sp.Kind == CandidateKind.Grid ? sp.Len : 0);
+          if (cover > best[i].Cover || (cover == best[i].Cover &&
+              (count < best[i].Count || (count == best[i].Count &&
+              (gridChars > best[i].GridChars || (gridChars == best[i].GridChars && sp.At > best[i].Prev))))))
+            best[i] = (cover, count, gridChars, k, sp.At);
+        }
+      }
+
+      var chosen = new List<(int At, int Len, CandidateKind Kind, bool Partial)>();
+      for (int i = s.Length; i > 0; i = best[i].Prev)
+        if (best[i].Span >= 0) chosen.Add(spans[best[i].Span]);
+      for (int k = chosen.Count - 1; k >= 0; k--)
+        candidates.Add(FromRun(run, chosen[k].At, chosen[k].Len, chosen[k].Kind));
       run.Clear();
     }
 

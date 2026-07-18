@@ -25,13 +25,15 @@ namespace VE3NEA.SkyFM.Tests
   /// </summary>
   public static class HeadlessRunner
   {
-    public static HeadlessResult Run(IEnumerable<IReadOnlyList<AsrWord>> transmissions, CorpusRecording truth)
+    public static HeadlessResult Run(IEnumerable<IReadOnlyList<AsrWord>> transmissions, CorpusRecording truth,
+      EmitPolicy? policy = null)
     {
       var all = transmissions.ToList();
       var assembler = new Assembler();
       var candidates = new List<Candidate>();
       foreach (var words in all) candidates.AddRange(assembler.Assemble(words));
       var fused = CandidateFusion.Fuse(candidates);
+      if (policy != null) fused = policy.Apply(fused);
 
       return new HeadlessResult
       {

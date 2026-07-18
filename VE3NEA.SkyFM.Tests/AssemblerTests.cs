@@ -74,6 +74,72 @@ namespace VE3NEA.SkyFM.Tests
       // the spike's 3:53 near-miss: suffix garbled, longest valid parse is KR4JI (LCS 5/6 of KR4JIQ) —
       // full recovery is the fusion stage's job, not the assembler's
       c.Should().Contain(x => x.Kind == CandidateKind.Callsign && x.Text == "KR4JI");
+      // the overlapping JI23 grid reading of the same symbols loses to the callsign in the partition —
+      // the spike's known assembly-artifact FP class, now suppressed at the source
+      c.Should().NotContain(x => x.Kind == CandidateKind.Grid);
+    }
+
+    [Fact]
+    public void MergedRun_GridThenCallsign_PartitionsCleanly()
+    {
+      // the real ARISS 3:52 run "…EM85 Kilo Romeo 4 Juliet India Quebec": independent longest-match
+      // scans emitted junk EM85KR shadowing the true KR4JIQ — the partition must split EM85|KR4JIQ
+      var c = Assemble("Echo", "Mike", "85.", "Kilo,", "Romeo", "4,", "Juliet", "India", "Quebec");
+      c.Should().HaveCount(2);
+      c.Should().Contain(x => x.Kind == CandidateKind.Grid && x.Text == "EM85");
+      c.Should().Contain(x => x.Kind == CandidateKind.Callsign && x.Text == "KR4JIQ");
+    }
+
+    [Fact]
+    public void CollapsedCallsignGridToken_PartitionsCleanly()
+    {
+      // the real ARISS 4:47 token "AB2IWFN22?": not a valid callsign, so its symbols form one run —
+      // AB2IWFN must not steal the grid's FN
+      var c = Assemble("can", "you", "copy", "AB2IWFN22?");
+      c.Should().HaveCount(2);
+      c.Should().Contain(x => x.Kind == CandidateKind.Callsign && x.Text == "AB2IW");
+      c.Should().Contain(x => x.Kind == CandidateKind.Grid && x.Text == "FN22");
+    }
+
+    [Fact]
+    public void TruncatedTailAfterIdentifier_EmitsPartialCallsign()
+    {
+      // the real hybrid ARISS run "…EM85 Kilo Romeo 4" (the rest lost to a 'Julius' separator): the
+      // truncated KR4 must not glue onto the grid as the junk callsign EM85KR
+      var c = Assemble("Echo", "Mike", "85.", "Kilo,", "Romeo", "4,");
+      c.Should().HaveCount(2);
+      c.Should().Contain(x => x.Kind == CandidateKind.Grid && x.Text == "EM85");
+      c.Should().Contain(x => x.Kind == CandidateKind.Callsign && x.Text == "KR4");
+    }
+
+    [Fact]
+    public void TruncatedPrefixAlone_EmitsNothing()
+    {
+      // with no completed grid in front of it, a bare prefix is noise, not a partial
+      Assemble("Kilo", "Romeo", "4,").Should().BeEmpty();
+      Assemble("Alpha", "Bravo", "Two").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void TruncatedTailAfterCallsign_IsNotAPartial()
+    {
+      // after a callsign a truncated tail is never claimed as a partial (that would fragment longer
+      // valid parses, e.g. KR4JI into KR4J|I23); when it happens to extend the callsign grammar it
+      // still glues on — the known junk mode whose recovery path is fusion's containment absorption
+      // into the repeated true text
+      var c = Assemble("Kilo", "Bravo", "Two", "India", "Whiskey", "Kilo", "Romeo", "Four");
+      c.Should().ContainSingle().Which.Text.Should().Be("KB2IWKR");
+    }
+
+    [Fact]
+    public void AdjacentCallsigns_BothParsed()
+    {
+      // the sherpa phonetic stream "…KB2IW K2HZV" with no separator: the equal-coverage tie
+      // KB2I|WK2HZV must lose to KB2IW|K2HZV (longer earlier span — junk glues forward)
+      var c = Assemble("Kilo", "Bravo", "Two", "India", "Whiskey", "Kilo", "Two", "Hotel", "Zulu", "Victor");
+      c.Should().HaveCount(2);
+      c[0].Text.Should().Be("KB2IW");
+      c[1].Text.Should().Be("K2HZV");
     }
 
 

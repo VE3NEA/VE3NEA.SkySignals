@@ -60,6 +60,31 @@ namespace VE3NEA.SkyFM.Tests
     }
 
     [Fact]
+    public void PartialWithQuestionMarks_AbstainedCharsNotEmitted()
+    {
+      var score = Eval.Score(
+        [Cand("KQ4??K", CandidateKind.Callsign, 100)],
+        [Truth("KQ4GIK", CandidateKind.Callsign, TruthTag.Gold, 100)],
+        CandidateKind.Callsign);
+
+      score.EmittedChars.Should().Be(4, "the two '?' are abstained, not emitted (§11)");
+      score.Precision.Should().Be(1.0, "honest partials cost no precision");
+      score.Recall.Should().BeApproximately(4.0 / 6.0, 1e-9, "'?' is a miss — abstention trades recall");
+    }
+
+    [Fact]
+    public void OneCharSlip_IsTrackedAsNearMiss()
+    {
+      var score = Eval.Score(
+        [Cand("K2HZB", CandidateKind.Callsign, 340), Cand("KB2IW", CandidateKind.Callsign, 320)],
+        [Truth("K2HZV", CandidateKind.Callsign, TruthTag.Gold, 340),
+         Truth("KB2IW", CandidateKind.Callsign, TruthTag.Gold, 320)],
+        CandidateKind.Callsign);
+
+      score.NearMisses.Should().Equal("K2HZB→K2HZV");
+    }
+
+    [Fact]
     public void FarAwayInTime_DoesNotMatch()
     {
       var score = Eval.Score(

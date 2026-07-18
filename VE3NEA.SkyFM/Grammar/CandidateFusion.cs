@@ -14,11 +14,14 @@ namespace VE3NEA.SkyFM
   /// ("KR4JI" ⊂ "KR4JIQ", truncation is the common damage mode; overlap ≥ 4 chars), or by a single
   /// character slip ("KB3IW" → "KB2IW") *only* into a cluster with ≥ 2 mentions. Two independently
   /// repeated texts never merge: the pass really contained both AB2IW and KB2IW, one character apart —
-  /// a plain edit-distance clustering falsely unified them.</para>
+  /// a plain edit-distance clustering falsely unified them. "Uncorroborated singleton" is
+  /// utterance-based, not mention-based: in a hybrid run two engines hear the same utterance, and such
+  /// same-time duplicates are one acoustic event, not independent repeats.</para>
   /// </summary>
   public static class CandidateFusion
   {
     private const int MinContainmentOverlap = 4;
+    private const double SameUtteranceS = 3.0;
 
     /// <summary>Fuse candidates gathered across all transmissions of a pass; returns one candidate per
     /// identifier cluster, in time order.</summary>
@@ -29,7 +32,7 @@ namespace VE3NEA.SkyFM
 
       for (int i = 0; i < clusters.Count; i++)
       {
-        if (absorbed[i] || clusters[i].Count != 1) continue;
+        if (absorbed[i] || !SingleUtterance(clusters[i])) continue;
         var s = clusters[i][0];
 
         List<Candidate>? target = null;
@@ -43,10 +46,27 @@ namespace VE3NEA.SkyFM
           if (!ok) continue;
           if (target == null || Support(t) > Support(target)) target = t;
         }
-        if (target != null) { target.Add(s); absorbed[i] = true; }
+        if (target != null) { target.AddRange(clusters[i]); absorbed[i] = true; }
       }
 
       return clusters.Where((_, i) => !absorbed[i]).Select(Merge).OrderBy(c => c.StartSeconds).ToList();
+    }
+
+    /// <summary>All mentions within one utterance window — one acoustic event (possibly heard by
+    /// several engines), not independent corroboration.</summary>
+    private static bool SingleUtterance(List<Candidate> cluster)
+      => cluster.Max(c => c.StartSeconds) - cluster.Min(c => c.StartSeconds) <= SameUtteranceS;
+
+    /// <summary>Distinct utterances among the mentions: times closer than the window collapse into
+    /// one.</summary>
+    private static int UtteranceCount(IEnumerable<Candidate> mentions)
+    {
+      int count = 0;
+      double last = double.NegativeInfinity;
+      foreach (var c in mentions.OrderBy(c => c.StartSeconds))
+        if (c.StartSeconds - last > SameUtteranceS) { count++; last = c.StartSeconds; }
+        else last = c.StartSeconds;
+      return count;
     }
 
     /// <summary>One text inside the other with enough overlap to rule out coincidence.</summary>
@@ -59,10 +79,10 @@ namespace VE3NEA.SkyFM
     {
       if (cluster.Count == 1) return cluster[0];
 
-      // the winning text: most mentions, then the longer string (truncation loses characters), then
-      // summed confidence
+      // the winning text: most distinct utterances (same-time engine duplicates are one vote), then
+      // the longer string (truncation loses characters), then summed confidence
       var best = cluster.GroupBy(c => c.Text)
-        .OrderByDescending(g => g.Count())
+        .OrderByDescending(g => UtteranceCount(g))
         .ThenByDescending(g => g.Key.Length)
         .ThenByDescending(g => g.Sum(c => c.Confidence))
         .First();

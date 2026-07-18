@@ -76,6 +76,24 @@ namespace VE3NEA.SkyFM.Tests
     }
 
     [Fact]
+    public void CrossEngineDuplicate_IsNotCorroboration()
+    {
+      // hybrid runs: both engines hear the garbled utterance "KB3IW" at the same time — one acoustic
+      // event, still a singleton for the merge guard, so it absorbs into the repeated KB2IW; its
+      // mentions all join the soft-OR
+      var fused = CandidateFusion.Fuse(new List<Candidate>
+      {
+        Cand("KB3IW", CandidateKind.Callsign, 0.82f, 319.9),
+        Cand("KB3IW", CandidateKind.Callsign, 0.80f, 320.4),
+        Cand("KB2IW", CandidateKind.Callsign, 0.87f, 339),
+        Cand("KB2IW", CandidateKind.Callsign, 0.50f, 344)
+      });
+      var c = fused.Should().ContainSingle().Which;
+      c.Text.Should().Be("KB2IW");
+      c.StartSeconds.Should().Be(319.9);
+    }
+
+    [Fact]
     public void TwoUncorroboratedSlips_DoNotMerge()
     {
       // a single KB3IW next to a single KB2IW: no way to tell garble from distinct station — keep both
