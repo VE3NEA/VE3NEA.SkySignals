@@ -60,6 +60,11 @@ namespace VE3NEA.SkyFM
     /// <summary>Lines closed so far, in time order.</summary>
     public IReadOnlyList<FmTranscriptLine> Lines => lines;
 
+    /// <summary>The in-progress (not-yet-closed) line, or null when none is open — the live tail the
+    /// panel shows before a pause closes it (§10.3). A snapshot; safe to marshal to the UI thread.</summary>
+    public FmTranscriptLine? Pending =>
+      text.Length == 0 ? null : new FmTranscriptLine(text.ToString(), lineStart, lastEnd);
+
     /// <summary>Feed the next recognized word (recording-relative times, non-decreasing). Words outside
     /// the display vocabulary are ignored and do not affect spacing.</summary>
     public void Add(AsrWord word)

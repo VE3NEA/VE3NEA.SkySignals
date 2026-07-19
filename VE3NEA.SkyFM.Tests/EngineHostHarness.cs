@@ -74,7 +74,7 @@ namespace VE3NEA.SkyFM.Tests
     [ManualFact("2026-07-18 (post partition/fusion): callsigns P 0.53 R 0.29, grids P 0.88 R 0.44 " +
       "(EM85 FM22), symbols P 0.68 R 0.77 — the no-hotwords control for the biasing measurement")]
     public void Ariss_SherpaUnbiased_DecodedClips_ScoreAgainstCorpusTruth()
-      => Score("sherpa zipformer unbiased", CachedWords("sherpa0", SherpaOnnxEngine.Unbiased, ArissClipDir),
+      => Score("sherpa zipformer unbiased", CachedWords("sherpa0", () => SherpaOnnxEngine.Unbiased(), ArissClipDir),
         ArissRecording());
 
 
@@ -113,7 +113,7 @@ namespace VE3NEA.SkyFM.Tests
 
     [ManualFact("2026-07-18: CORPUS symbols P 0.58 R 0.33 F1 0.42 (122/372) — the no-hotwords control")]
     public void All_SherpaUnbiased_ScoreAgainstCorpusTruth()
-      => ScoreAll(dir => CachedWords("sherpa0", SherpaOnnxEngine.Unbiased, dir));
+      => ScoreAll(dir => CachedWords("sherpa0", () => SherpaOnnxEngine.Unbiased(), dir));
 
     [ManualFact("2026-07-18 (partials + sherpa@2.5 + grid-glue prior + depth weight): the three-engine " +
       "pool in one CandidateFusion pass — callsigns P 0.76 R 0.67 raw (glue prior killed EM85KR: " +
@@ -234,6 +234,87 @@ namespace VE3NEA.SkyFM.Tests
       }
       output.WriteLine($"{label,-22} callsigns {Fmt(calls)}   grids {Fmt(grids)}");
     }
+
+    [ManualFact("plan S0 int8-vs-fp32 gate: decodes every corpus recording with sherpa@2.5 in both " +
+      "quantizations (fp32 cache tag sherpa25, int8 tag sherpa25int8), reports the corpus symbol/" +
+      "callsign/grid tracks side by side plus the FmTranscriptBuilder line/token counts (the shipped " +
+      "view), and times a fresh ARISS decode (ctor load + 56-clip decode) for each. 2026-07-19 RESULT " +
+      "— int8 ≈ fp32 on the shipped tracks: CORPUS symbols int8 0.69/0.45 F1 0.55 vs fp32 0.67/0.42 " +
+      "F1 0.52 (int8 marginally better, within the ~3% metric resolution), transcript 105 lines/199 " +
+      "tokens vs 110/210, grids identical 0.88/0.44; the only regression is ARISS callsign precision " +
+      "0.75 → 0.65 (the identifier-assembly path, NOT shipped in the v1 transcript view). int8 is " +
+      "~20% faster (ARISS decode 2770 vs 3446 ms, load 1547 vs 1691) and ~4.5x smaller (encoder 73 vs " +
+      "263 MB → ~71 MB vs ~326 MB pack). DECISION: ship int8.")]
+    public void All_SherpaInt8VsFp32_Comparison()
+    {
+      var corpus = Corpus.Load(RepoFiles.Find(Path.Combine("corpus", "ground-truth.json")));
+      (int E, int C, int G, int R) fpSym = default, iqSym = default, fpCall = default, iqCall = default,
+        fpGrid = default, iqGrid = default;
+      int fpLines = 0, iqLines = 0, fpTokens = 0, iqTokens = 0;
+
+      foreach (var rec in corpus.Recordings)
+      {
+        string clipDir = Path.Combine(DecodedDir, rec.File.Replace(".iq.wav", ""));
+        if (!Directory.Exists(clipDir)) { output.WriteLine($"skip {rec.File}: no clips"); continue; }
+
+        var fp = CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), clipDir);
+        var iq = CachedWords("sherpa25int8", () => SherpaOnnxEngine.Hotwords(2.5f, int8: true), clipDir, engineKey: "sherpa25int8");
+        var fpRes = HeadlessRunner.Run(fp, rec);
+        var iqRes = HeadlessRunner.Run(iq, rec);
+
+        fpSym = Add(fpSym, fpRes.Symbols); iqSym = Add(iqSym, iqRes.Symbols);
+        var (fl, ft) = TranscriptSize(fp); var (il, it) = TranscriptSize(iq);
+        fpLines += fl; fpTokens += ft; iqLines += il; iqTokens += it;
+
+        output.WriteLine($"--- {rec.File} [{rec.Role}]");
+        output.WriteLine($"  fp32 symbols {Fmt2(fpRes.Symbols)}  transcript {fl} lines / {ft} tokens");
+        output.WriteLine($"  int8 symbols {Fmt2(iqRes.Symbols)}  transcript {il} lines / {it} tokens");
+        if (rec.Identifiers.Count > 0)
+        {
+          fpCall = Add(fpCall, fpRes.Callsigns); iqCall = Add(iqCall, iqRes.Callsigns);
+          fpGrid = Add(fpGrid, fpRes.Grids); iqGrid = Add(iqGrid, iqRes.Grids);
+          output.WriteLine($"  fp32 callsigns {Fmt2(fpRes.Callsigns)}  grids {Fmt2(fpRes.Grids)}");
+          output.WriteLine($"  int8 callsigns {Fmt2(iqRes.Callsigns)}  grids {Fmt2(iqRes.Grids)}");
+        }
+      }
+
+      output.WriteLine("");
+      output.WriteLine($"CORPUS fp32: symbols {Fmt(fpSym)}  callsigns {Fmt(fpCall)}  grids {Fmt(fpGrid)}  " +
+        $"transcript {fpLines} lines / {fpTokens} tokens");
+      output.WriteLine($"CORPUS int8: symbols {Fmt(iqSym)}  callsigns {Fmt(iqCall)}  grids {Fmt(iqGrid)}  " +
+        $"transcript {iqLines} lines / {iqTokens} tokens");
+
+      // speed: fresh ARISS decode (ctor load + 56 clips) for each quantization
+      output.WriteLine("");
+      TimeDecode("fp32", () => SherpaOnnxEngine.Hotwords());
+      TimeDecode("int8", () => SherpaOnnxEngine.Hotwords(2.5f, int8: true));
+    }
+
+    // total closed lines and non-empty display tokens the FmTranscriptBuilder (the shipped §10.2 view)
+    // produces from one recording's per-transmission words — the metric that speaks to the transcript, not
+    // the identifier assembly
+    private static (int Lines, int Tokens) TranscriptSize(List<AsrWord[]> transmissions)
+    {
+      var builder = new FmTranscriptBuilder();
+      foreach (var w in transmissions.SelectMany(t => t).OrderBy(w => w.StartSeconds)) builder.Add(w);
+      builder.Flush();
+      int tokens = builder.Lines.Sum(l => l.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
+      return (builder.Lines.Count, tokens);
+    }
+
+    private void TimeDecode(string label, Func<SherpaOnnxEngine> factory)
+    {
+      var sw = System.Diagnostics.Stopwatch.StartNew();
+      using var engine = factory();
+      long loadMs = sw.ElapsedMilliseconds;
+      sw.Restart();
+      var words = HeadlessRunner.TranscribeClips(engine, ArissClipDir);
+      long decodeMs = sw.ElapsedMilliseconds;
+      output.WriteLine($"{label}: load {loadMs} ms, ARISS 56-clip decode {decodeMs} ms " +
+        $"({words.Sum(t => t.Length)} words)");
+    }
+
+    private static string Fmt2(EvalScore s) => $"P {s.Precision:0.00} R {s.Recall:0.00} F1 {s.F1:0.00}";
 
     [ManualFact("§13 hotwords-score sweep: re-decodes the corpus clips with sherpa hotword biasing at " +
       "each strength (cache tags sherpa10/sherpa/sherpa20/sherpa25/sherpa30) and reports the corpus " +

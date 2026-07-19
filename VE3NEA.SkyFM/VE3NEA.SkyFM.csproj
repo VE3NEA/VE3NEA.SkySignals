@@ -14,6 +14,12 @@
     <AssemblyName>VE3NEA.SkyFM</AssemblyName>
     <Platforms>x64</Platforms>
     <Platform>x64</Platform>
+    <!-- emit transitive package assets (the sherpa-onnx managed binding + its win-x64 native
+         onnxruntime/sherpa-onnx-c-api DLLs under runtimes\) into this library's own bin, so the
+         SkyRoof vendoring target has a single source-of-truth directory to copy from (integration
+         plan A5 / Phase B — SkyRoof references the vendored DLL by HintPath, not by NuGet, so the
+         natives do not flow automatically). -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +32,10 @@
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <!-- OnlineIirFilter for the SoftSquelch detector, same as the SkyRoof original it is ported from. -->
     <PackageReference Include="MathNet.Filtering" Version="0.7.0" />
+    <!-- sherpa-onnx C# bindings: the Pass-B production engine (plan §5.3 contender 1, promoted into the
+         core per integration plan A1) — zipformer transducer + hotword biasing, native, no Python
+         sidecar. Flows its win-x64 native onnxruntime/sherpa-onnx-c-api DLLs to the referencing app. -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.4" />
   </ItemGroup>
 
   <!-- VE3NEA.Dsp is a source project in this solution; the project reference flows its compile

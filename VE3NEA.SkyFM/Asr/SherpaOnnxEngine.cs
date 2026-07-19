@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using SherpaOnnx;
 
-namespace VE3NEA.SkyFM.Tests
+namespace VE3NEA.SkyFM
 {
   /// <summary>
   /// The Pass-B production favourite (plan §5.3 contender 1): a sherpa-onnx Zipformer transducer
@@ -15,15 +15,22 @@ namespace VE3NEA.SkyFM.Tests
   /// <para>Bake-off caveat found here: the sherpa-onnx C API returns tokens + timestamps but <b>no
   /// per-token posteriors</b>, so words carry <see cref="PlaceholderConfidence"/> — the §5.3
   /// disqualification clause ("engines that cannot expose token confidence") currently bites the
-  /// favourite; production adoption needs posteriors exposed upstream or confidence from an external
-  /// scorer.</para>
+  /// favourite. The v1 SkyRoof integration ships the §10.2 transcript view, which carries no
+  /// confidence, so the placeholder is harmless there; a later identifier view needs real posteriors.</para>
+  /// <para>Promoted from the Tests project into the core (integration plan A1): the model directory is
+  /// no longer a repo-relative test lookup but <see cref="ModelDirectory"/> (SkyRoof points it at the
+  /// downloaded model pack; tests point it at the repo model dir), or a per-call <c>modelDir</c>.</para>
   /// </summary>
   public sealed class SherpaOnnxEngine : IAsrEngine
   {
     /// <summary>Stand-in word confidence while the C API exposes no posteriors (see class remarks).</summary>
     public const float PlaceholderConfidence = 0.80f;
 
-    private const string ModelDir = "sherpa-onnx-zipformer-gigaspeech-2023-12-12";
+    /// <summary>Directory holding the sherpa model files (encoder/decoder/joiner/tokens.txt/bpe.vocab).
+    /// The production host sets this to the downloaded model-pack folder; tests set it to the repo model
+    /// dir. A per-call <c>modelDir</c> on the factories overrides it. Required before any factory call.</summary>
+    public static string ModelDirectory { get; set; } = "";
+
     /// <summary>End of the last word in a clip when no next-token timestamp bounds it.</summary>
     private const double TrailingWordSeconds = 0.3;
     /// <summary>A pause longer than this between spelled tokens ends the spelled sequence.</summary>
@@ -39,25 +46,33 @@ namespace VE3NEA.SkyFM.Tests
     /// <summary>Biased decode: hotwords = the phonetic vocabulary, uppercased to match the GigaSpeech
     /// BPE. <paramref name="hotwordsScore"/> is the per-token boost — sherpa ships 1.5, but the §13
     /// corpus sweep picked 2.5 (callsign recall nearly doubles, grids hold; 3.0 starts trading grid
-    /// recall away in the hybrid).</summary>
-    public static SherpaOnnxEngine Hotwords(float hotwordsScore = 2.5f)
-      => new($"sherpa zipformer hotwords {hotwordsScore:0.0}", hotwordsScore);
+    /// recall away in the hybrid). <paramref name="int8"/> selects the quantized weights (plan S0 shipped
+    /// int8 — the ~71 MB pack vs the ~326 MB fp32). <paramref name="modelDir"/> overrides
+    /// <see cref="ModelDirectory"/>.</summary>
+    public static SherpaOnnxEngine Hotwords(float hotwordsScore = 2.5f, bool int8 = false, string? modelDir = null)
+      => new($"sherpa zipformer hotwords {hotwordsScore:0.0}{(int8 ? " int8" : "")}", hotwordsScore, int8, modelDir);
 
     /// <summary>Unbiased control — same model and beam search, no hotwords. Measures what the biasing
     /// itself buys (the ATCO2 question).</summary>
-    public static SherpaOnnxEngine Unbiased() => new("sherpa zipformer unbiased", null);
+    public static SherpaOnnxEngine Unbiased(bool int8 = false, string? modelDir = null)
+      => new("sherpa zipformer unbiased" + (int8 ? " int8" : ""), null, int8, modelDir);
 
-    private SherpaOnnxEngine(string name, float? hotwordsScore)
+    private SherpaOnnxEngine(string name, float? hotwordsScore, bool int8, string? modelDir)
     {
       Name = name;
-      string modelPath = Path.GetDirectoryName(
-        RepoFiles.Find(Path.Combine("asr-spike", "sherpa", ModelDir, "tokens.txt")))!;
+      string modelPath = modelDir ?? ModelDirectory;
+      if (string.IsNullOrEmpty(modelPath))
+        throw new InvalidOperationException(
+          "SherpaOnnxEngine.ModelDirectory is not set (the sherpa model-pack folder); " +
+          "set it, or pass modelDir, before creating the engine.");
 
+      // int8 selects the *.int8.onnx quantized triplet (encoder ~73 MB vs ~263 MB fp32); same tokens/bpe
+      string q = int8 ? ".int8" : "";
       var config = new OfflineRecognizerConfig();
       config.FeatConfig.SampleRate = 16000;
-      config.ModelConfig.Transducer.Encoder = Path.Combine(modelPath, "encoder-epoch-30-avg-1.onnx");
-      config.ModelConfig.Transducer.Decoder = Path.Combine(modelPath, "decoder-epoch-30-avg-1.onnx");
-      config.ModelConfig.Transducer.Joiner = Path.Combine(modelPath, "joiner-epoch-30-avg-1.onnx");
+      config.ModelConfig.Transducer.Encoder = Path.Combine(modelPath, $"encoder-epoch-30-avg-1{q}.onnx");
+      config.ModelConfig.Transducer.Decoder = Path.Combine(modelPath, $"decoder-epoch-30-avg-1{q}.onnx");
+      config.ModelConfig.Transducer.Joiner = Path.Combine(modelPath, $"joiner-epoch-30-avg-1{q}.onnx");
       config.ModelConfig.Tokens = Path.Combine(modelPath, "tokens.txt");
       config.ModelConfig.NumThreads = 4;
       config.DecodingMethod = "modified_beam_search";
@@ -138,9 +153,9 @@ namespace VE3NEA.SkyFM.Tests
     /// tokens ("A B TWO I W") and numbers as number words ("TWENTY TWO"), which the production
     /// <see cref="PhoneticDecoder"/> deliberately treats as separators (the spike's whisper precision
     /// trap, §5.4). Merge each gap-bounded sequence of two or more spelled tokens — a single letter,
-    /// a digit word, a digit string, or a teens/tens number word ("F N TWENTY TWO" → "FN22") — into
-    /// one collapsed fragment, the same form Whisper emits natively; isolated letters (the engine's
-    /// junk "A"/"I" on noise) stay separators.</summary>
+    /// a digit word, a digit string, or a teens/tens number word ("F N TWENTY TWO" → "FN22", "EIGHTY
+    /// FIVE" → "85") — into one collapsed fragment, the same form Whisper emits natively; isolated
+    /// letters (the engine's junk "A"/"I" on noise) stay separators.</summary>
     public static List<AsrWord> CollapseSpelled(List<AsrWord> words)
     {
       var result = new List<AsrWord>(words.Count);
