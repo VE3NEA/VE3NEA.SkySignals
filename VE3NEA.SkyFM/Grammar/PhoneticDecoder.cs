@@ -31,6 +31,20 @@ namespace VE3NEA.SkyFM
       ["nine"] = '9', ["niner"] = '9'
     };
 
+    /// <summary>The amateur spelling-alphabet variants of plan §5.4 ("kilowatt watt 4 radio germany
+    /// israel"). Mapping-only vocabulary: they join <see cref="ToSymbols"/> (exact matches, no edit-1
+    /// fuzz — several are one slip from ordinary words) but NOT <see cref="VocabularyWords"/>, so the
+    /// Pass-B grammars/hotword lists stay NATO-tight. The English-homonym risk ("easy", "radio") is
+    /// bounded structurally: an isolated variant maps to a 1-symbol run that assembles nothing
+    /// (identifiers need ≥ 2 chars), so junk requires a variant colliding directly with other symbol
+    /// words — see the corpus measurement in the §5.4 as-built note.</summary>
+    private static readonly Dictionary<string, char> AmateurVariants = new()
+    {
+      ["america"] = 'A', ["baker"] = 'B', ["easy"] = 'E', ["honolulu"] = 'H', ["italy"] = 'I',
+      ["kilowatt"] = 'K', ["london"] = 'L', ["mexico"] = 'M', ["nancy"] = 'N', ["peter"] = 'P',
+      ["radio"] = 'R', ["sugar"] = 'S', ["united"] = 'U', ["zebra"] = 'Z'
+    };
+
     /// <summary>The closed spoken vocabulary the decoder maps to symbols — NATO words and spoken
     /// digits. This is the source of truth for Pass-B constrained grammars / hotword lists (§5.3).</summary>
     public static IEnumerable<string> VocabularyWords
@@ -50,6 +64,7 @@ namespace VE3NEA.SkyFM
       if (w.Length == 0) return "";
       if (Nato.TryGetValue(w, out char ltr)) return ltr.ToString();
       if (Digits.TryGetValue(w, out char dig)) return dig.ToString();
+      if (AmateurVariants.TryGetValue(w, out char variant)) return variant.ToString();
 
       // fuzzy NATO (edit distance <= 1) — catches 'juliett', 'quebeck', minor slips
       foreach (var (name, c) in Nato)

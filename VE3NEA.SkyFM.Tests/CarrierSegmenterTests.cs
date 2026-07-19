@@ -77,5 +77,72 @@ namespace VE3NEA.SkyFM.Tests
       t.Should().HaveCount(1, "a transmission still keyed at end-of-stream must be finalized by Flush");
       t[0].EndSeconds.Should().BeApproximately(2.15, 0.01);
     }
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                         quieting depth
+    // ----------------------------------------------------------------------------------------------------
+    private static FmTransmission[] RunWithLevels(byte[] gates, float open, float closed)
+    {
+      var levels = new float[gates.Length];
+      for (int i = 0; i < gates.Length; i++) levels[i] = gates[i] != 0 ? open : closed;
+      var seg = new CarrierSegmenter(new FmDecodeOptions());
+      int at = 0;
+      foreach (int len in new[] { 1000, 30000, gates.Length })
+      {
+        int n = Math.Min(len, gates.Length - at);
+        seg.Process(gates.AsSpan(at, n), levels.AsSpan(at, n));
+        at += n;
+        if (at >= gates.Length) break;
+      }
+      seg.Flush();
+      return [.. seg.Transmissions];
+    }
+
+    [Fact]
+    public void TagsQuietingDepth()
+    {
+      // noise ceiling 0.1 (-20 dB), quieted carrier 0.01 (-40 dB) → 20 dB of quieting
+      var t = RunWithLevels(Gates(4.0, (1.0, 2.0)), open: 0.01f, closed: 0.1f);
+      t.Should().HaveCount(1);
+      t[0].QuietingDepthDb.Should().BeApproximately(20.0, 0.5);
+    }
+
+    [Fact]
+    public void ShallowDip_MeasuresSmallDepth()
+    {
+      // a weak carrier quiets the noise only a little: 0.095 → 0.06 is ~4 dB (the spike's weak-burst
+      // regime)
+      var t = RunWithLevels(Gates(4.0, (1.0, 2.0)), open: 0.06f, closed: 0.095f);
+      t.Should().HaveCount(1);
+      t[0].QuietingDepthDb.Should().BeApproximately(20.0 * Math.Log10(0.095 / 0.06), 0.5);
+    }
+
+    [Fact]
+    public void NoLevels_DepthIsNaN()
+    {
+      var t = Run(Gates(3.0, (0.5, 1.5)));
+      t.Should().HaveCount(1);
+      t[0].QuietingDepthDb.Should().Be(double.NaN, "the gates-only overload cannot measure depth");
+    }
+
+    [Fact]
+    public void OpenAtStreamStart_TrailingNoiseSeedsTheCeiling()
+    {
+      // the ceiling EMA may seed from closed samples after the span — trailing noise is as good a
+      // local ceiling as leading noise
+      var t = RunWithLevels(Gates(2.0, (0.0, 1.0)), open: 0.01f, closed: 0.1f);
+      t.Should().HaveCount(1);
+      t[0].QuietingDepthDb.Should().BeApproximately(20.0, 0.5);
+    }
+
+    [Fact]
+    public void KeyedEndToEnd_NoCeilingEver_DepthIsNaN()
+    {
+      var t = RunWithLevels(Gates(2.0, (0.0, 2.0)), open: 0.01f, closed: 0.1f);
+      t.Should().HaveCount(1);
+      t[0].QuietingDepthDb.Should().Be(double.NaN,
+        "the gate never closed, so there is no noise ceiling to measure against");
+    }
   }
 }

@@ -53,6 +53,10 @@ namespace VE3NEA.SkyFM
     /// plan §5.2.</summary>
     public IReadOnlyList<float> SquelchLevelDb => squelchLevelDb;
 
+    /// <summary>Earliest time (s) a still-pending transmission might need audio from (see
+    /// <see cref="CarrierSegmenter.PendingStartSeconds"/>).</summary>
+    public double PendingStartSeconds => segmenter.PendingStartSeconds;
+
     public FmFrontEnd(FmDecodeOptions o)
     {
       fs = o.SampleRate;
@@ -138,7 +142,7 @@ namespace VE3NEA.SkyFM
       float inv = (float)(1.0 / fs);
       for (int i = 0; i < n; i++) { firIn[i] = (float)d[i]; normBuf[i] = firIn[i] * inv; }
       squelch.Process(normBuf.AsSpan(0, n), gateBuf.AsSpan(0, n), levelBuf.AsSpan(0, n));
-      segmenter.Process(gateBuf.AsSpan(0, n));
+      segmenter.Process(gateBuf.AsSpan(0, n), levelBuf.AsSpan(0, n));
 
       long firstIndex = disc.EmittedCount - n;   // absolute index of d[0]
       for (int i = 0; i < n; i++)

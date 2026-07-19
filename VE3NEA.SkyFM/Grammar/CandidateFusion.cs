@@ -17,10 +17,19 @@ namespace VE3NEA.SkyFM
   /// a plain edit-distance clustering falsely unified them. "Uncorroborated singleton" is
   /// utterance-based, not mention-based: in a hybrid run two engines hear the same utterance, and such
   /// same-time duplicates are one acoustic event, not independent repeats.</para>
+  ///
+  /// <para>The §5.4 rerank seam's first prior is callsign↔grid cross-validation: a callsign cluster
+  /// whose text is a fused grid plus 1–2 leftover characters, every mention of which coincides with a
+  /// mention of that grid, is the grid+junk glue artifact ("EM85KR" over the spoken "EM85 KR4JIQ" —
+  /// an engine whose run held no separate grid span for the partition to anchor on), not a station.
+  /// Cross-repeat corroboration cannot save it, because each repeat coincides with a grid repeat —
+  /// the corroboration is FOR the grid. Precision-first: the residue ≤ 2 bound keeps any real
+  /// grid-shaped callsign ("FN20ABC") out of the rule's reach.</para>
   /// </summary>
   public static class CandidateFusion
   {
     private const int MinContainmentOverlap = 4;
+    private const int MaxGlueResidue = 2;
     private const double SameUtteranceS = 3.0;
 
     /// <summary>Fuse candidates gathered across all transmissions of a pass; returns one candidate per
@@ -49,7 +58,27 @@ namespace VE3NEA.SkyFM
         if (target != null) { target.AddRange(clusters[i]); absorbed[i] = true; }
       }
 
+      // callsign↔grid cross-validation (see the class summary): glue artifacts die after absorption,
+      // so any junk variants they soaked up die with them
+      for (int i = 0; i < clusters.Count; i++)
+      {
+        if (absorbed[i] || clusters[i][0].Kind != CandidateKind.Callsign) continue;
+        for (int j = 0; j < clusters.Count; j++)
+          if (j != i && !absorbed[j] && IsGridGlue(clusters[i], clusters[j])) { absorbed[i] = true; break; }
+      }
+
       return clusters.Where((_, i) => !absorbed[i]).Select(Merge).OrderBy(c => c.StartSeconds).ToList();
+    }
+
+    /// <summary>True when the callsign cluster is the grid+junk glue artifact of the grid cluster:
+    /// its text is the grid's text plus a short residue, and each of its mentions coincides in time
+    /// with a mention of the grid — no independent sighting exists.</summary>
+    private static bool IsGridGlue(List<Candidate> callsign, List<Candidate> grid)
+    {
+      if (grid[0].Kind != CandidateKind.Grid) return false;
+      string c = callsign[0].Text, g = grid[0].Text;
+      if (c.Length - g.Length < 1 || c.Length - g.Length > MaxGlueResidue || !c.StartsWith(g)) return false;
+      return callsign.All(m => grid.Any(gm => Math.Abs(m.StartSeconds - gm.StartSeconds) <= SameUtteranceS));
     }
 
     /// <summary>All mentions within one utterance window — one acoustic event (possibly heard by

@@ -26,14 +26,16 @@ namespace VE3NEA.SkyFM.Tests
   public static class HeadlessRunner
   {
     public static HeadlessResult Run(IEnumerable<IReadOnlyList<AsrWord>> transmissions, CorpusRecording truth,
-      EmitPolicy? policy = null)
+      EmitPolicy? policy = null, IReadOnlyList<double>? depths = null, DepthConfidence? depthWeight = null)
     {
       var all = transmissions.ToList();
-      var assembler = new Assembler();
-      var candidates = new List<Candidate>();
-      foreach (var words in all) candidates.AddRange(assembler.Assemble(words));
-      var fused = CandidateFusion.Fuse(candidates);
-      if (policy != null) fused = policy.Apply(fused);
+      var options = new SkyFmOptions
+      {
+        Policy = policy ?? new EmitPolicy(),
+        Depth = depthWeight ?? new DepthConfidence()
+      };
+      var (raw, gated) = SkyFmDecoder.Extract(all, depthWeight != null ? depths : null, options);
+      var fused = policy != null ? gated : raw;
 
       return new HeadlessResult
       {
@@ -79,6 +81,20 @@ namespace VE3NEA.SkyFM.Tests
     public static void SaveWords(string path, IReadOnlyList<AsrWord[]> transmissions)
       => File.WriteAllText(path, JsonSerializer.Serialize(transmissions.Select(t =>
         t.Select(w => new { w = w.Text, s = w.StartSeconds, e = w.EndSeconds, p = w.Confidence }))));
+
+    /// <summary>Loads the per-clip quieting depths (dB; -1 = unknown) that <see cref="FmDemodHarness"/>
+    /// wrote beside the clips, in the same sorted-clip order <see cref="TranscribeClips"/> uses — the
+    /// index-aligned depth list for <see cref="Run"/>. Null when the recording predates depth
+    /// export.</summary>
+    public static List<double>? LoadDepths(string clipDir)
+    {
+      string path = Path.Combine(clipDir, "depths.json");
+      if (!File.Exists(path)) return null;
+      using var doc = JsonDocument.Parse(File.ReadAllText(path));
+      var byClip = doc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetDouble());
+      return Directory.GetFiles(clipDir, "seg*.wav").OrderBy(p => p)
+        .Select(p => byClip.GetValueOrDefault(Path.GetFileName(p), -1.0)).ToList();
+    }
 
     /// <summary>Loads word sequences saved by <see cref="SaveWords"/>.</summary>
     public static List<AsrWord[]> LoadWords(string path)

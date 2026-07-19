@@ -114,20 +114,26 @@ namespace VE3NEA.SkyFM.Tests
     public void All_SherpaUnbiased_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("sherpa0", SherpaOnnxEngine.Unbiased, dir));
 
-    [ManualFact("2026-07-18 (partials + sherpa@2.5): the three-engine pool in one CandidateFusion " +
-      "pass — callsigns P 0.69 R 0.67 raw → **P 0.85 R 0.67 F1 0.75** with the calibrated policy " +
-      "(best gated F1 and recall of any combination, all 6 recoverable Gold callsigns incl. KR4JIQ), " +
-      "grids 0.94/0.94, symbols P 0.77 R 0.68; vs w+s gated 0.88/0.62 (more P, less R) and w+v gated " +
-      "0.79/0.42 — vosk adds corroboration the policy can then afford to emit")]
+    [ManualFact("2026-07-18 (partials + sherpa@2.5 + grid-glue prior + depth weight): the three-engine " +
+      "pool in one CandidateFusion pass — callsigns P 0.76 R 0.67 raw (glue prior killed EM85KR: " +
+      "0.69 → 0.76) → P 0.85 R 0.67 with the calibrated policy → **P 0.93 R 0.67 F1 0.78, ZERO " +
+      "unmatched emissions** with policy + DepthConfidence (all 6 recoverable Gold callsigns incl. " +
+      "KR4JIQ; the depth weight killed the shallow-burst WN3Y/N3Y leak; only the KF4UJU→KF4UJ " +
+      "near-miss chars remain), grids 0.94/0.94, symbols P 0.77 R 0.68; vs w+s policy+depth 0.97/0.62 " +
+      "(more P, less R) and w+v gated 0.79/0.42 — vosk adds corroboration the policy can then afford " +
+      "to emit; G2 train precision 0.93 ≥ the 0.90 floor")]
     public void All_HybridWhisperVoskSherpa_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir)
         .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, dir))
         .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), dir)).ToList());
 
-    [ManualFact("2026-07-18 (partials + sherpa@2.5): CORPUS symbols P 0.77 R 0.68 F1 0.72, symbol " +
-      "recall 1.00 on ARISS (all 12 Gold); callsigns P 0.67 R 0.67 raw → 0.88/0.62 with the " +
-      "calibrated policy, grids 0.94/0.94; residual callsign leak: EM85KR still emerges from sherpa's " +
-      "own runs (no whisper grid span to anchor the partial) + corroborated WN3Y")]
+    [ManualFact("2026-07-18 (partials + sherpa@2.5 + grid-glue prior + depth weight): CORPUS symbols " +
+      "P 0.77 R 0.68 F1 0.72, symbol recall 1.00 on ARISS (all 12 Gold); callsigns P 0.75 R 0.67 raw " +
+      "(glue prior killed EM85KR: 0.67 → 0.75 — whisper's EM85 grid mentions coincide with every " +
+      "sherpa EM85KR mention, so the fusion-level cross-validation drops what the run-level partial " +
+      "anchor could not) → 0.88/0.62 with the calibrated policy → **0.97/0.62, zero unmatched** with " +
+      "policy + DepthConfidence, grids 0.94/0.94; sherpa-ALONE still shows EM85KR — its own grid " +
+      "mentions don't cover every glue mention")]
     public void All_HybridWhisperSherpa_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir)
         .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), dir)).ToList());
@@ -135,8 +141,9 @@ namespace VE3NEA.SkyFM.Tests
     [ManualFact("§5.5 emit/abstain/partial calibration on the hybrid whisper+sherpa candidates: sweeps " +
       "EmitThreshold × CharThreshold over the cached words and prints corpus identifier P/R/F1 per row " +
       "(the symbol track is pre-assembly and unaffected); each row doubles as an independent per-kind " +
-      "calibration because scoring is per-kind. 2026-07-18 (partials + sherpa@2.5): callsigns best at " +
-      "emit/char 0.85 — P 0.88 R 0.62 vs baseline 0.67/0.67 (kills the flat-0.80 sherpa singletons); " +
+      "calibration because scoring is per-kind. 2026-07-18 (partials + sherpa@2.5 + grid-glue prior): " +
+      "callsigns best at emit/char 0.85 — P 0.88 R 0.62 vs baseline 0.75/0.67 (kills the flat-0.80 " +
+      "sherpa singletons); " +
       "grids best at emit 0.75 char 0.70 — P 0.94 R 0.94, dropping only the low-conf FN20 artifact → " +
       "the per-kind EmitPolicy defaults; the final 'calibrated per-kind' row prints the frozen " +
       "operating point")]
@@ -158,6 +165,56 @@ namespace VE3NEA.SkyFM.Tests
           SweepRow($"emit {emit:0.00} char {ch:0.00}", new EmitPolicy
             { Callsigns = new(emit, ch), Grids = new(emit, ch) }, runs);
       SweepRow("calibrated per-kind", new EmitPolicy(), runs);
+    }
+
+    [ManualFact("§5.2 role-b depth-weight sweep on the three-engine hybrid + calibrated policy: scales " +
+      "per-mention confidence by the transmission's quieting depth (DepthConfidence ramp) before " +
+      "fusion, sweeping MinWeight × FullDb at ShallowDb 4, and prints raw + gated identifier P/R/F1 " +
+      "per row against the no-depth baseline — does demoting weak-burst mentions buy precision " +
+      "before it costs the cross-repeat weak-burst recall (KQ4GIK class)? 2026-07-18: with grids " +
+      "exempt, a stable plateau at gated callsigns P 0.93 R 0.67 (grids hold 0.94/0.94) spans " +
+      "minW 0.7–0.8 × full 14–16 dB (and full 12 at minW 0.5–0.6); harder demotion collapses " +
+      "weak-burst recall 0.67 → 0.53/0.47 exactly as predicted → defaults ShallowDb 4 FullDb 14 " +
+      "MinWeight 0.7 GridMinWeight 1; weighting grids too only cost their recall (0.94 → 0.81)")]
+    public void All_HybridWhisperVoskSherpa_DepthWeightSweep()
+    {
+      var corpus = Corpus.Load(RepoFiles.Find(Path.Combine("corpus", "ground-truth.json")));
+      var runs = new List<(List<AsrWord[]> Words, List<double>? Depths, CorpusRecording Rec)>();
+      foreach (var rec in corpus.Recordings)
+      {
+        string clipDir = Path.Combine(DecodedDir, rec.File.Replace(".iq.wav", ""));
+        if (rec.Identifiers.Count == 0 || !Directory.Exists(clipDir)) continue;
+        var words = CachedWords("whisper", SidecarEngine.FasterWhisper, clipDir)
+          .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, clipDir))
+          .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), clipDir)).ToList();
+        var d = HeadlessRunner.LoadDepths(clipDir);
+        var depths = d == null ? null : d.Concat(d).Concat(d).ToList();
+        runs.Add((words, depths, rec));
+      }
+
+      DepthRow("baseline (no depth)", null, runs);
+      foreach (float minW in new[] { 0.5f, 0.6f, 0.7f, 0.8f })
+        foreach (double full in new[] { 12.0, 14.0, 16.0 })
+          DepthRow($"minW {minW:0.0} full {full:0} dB",
+            new DepthConfidence { ShallowDb = 4, FullDb = full, MinWeight = minW }, runs);
+      DepthRow("calibrated defaults", new DepthConfidence(), runs);
+    }
+
+    private void DepthRow(string label, DepthConfidence? weight,
+      List<(List<AsrWord[]> Words, List<double>? Depths, CorpusRecording Rec)> runs)
+    {
+      var policy = new EmitPolicy();
+      (int E, int C, int G, int R) calls = default, gCalls = default, gGrids = default;
+      foreach (var (words, depths, rec) in runs)
+      {
+        var d = weight == null ? null : depths;
+        calls = Add(calls, HeadlessRunner.Run(words, rec, null, d, weight).Callsigns);
+        var gated = HeadlessRunner.Run(words, rec, policy, d, weight);
+        gCalls = Add(gCalls, gated.Callsigns);
+        gGrids = Add(gGrids, gated.Grids);
+      }
+      output.WriteLine($"{label,-22} raw callsigns {Fmt(calls)}   gated callsigns {Fmt(gCalls)}   " +
+        $"gated grids {Fmt(gGrids)}");
     }
 
     private void SweepRow(string label, EmitPolicy? policy, List<(List<AsrWord[]> Words, CorpusRecording Rec)> runs)
@@ -211,6 +268,58 @@ namespace VE3NEA.SkyFM.Tests
       }
     }
 
+    [ManualFact("§13 M6 fan-out measurement: whisper re-hears the ARISS pass through the @pad40 and " +
+      "@sq85 DSP variants (Real_DemodAriss_FanOutVariants) and each variant pool joins the standard " +
+      "three-engine pool at the identifier level — utterance-based corroboration counts a variant " +
+      "duplicate as the same acoustic event, so fusion can only add content, not votes. Scores " +
+      "raw + policy+depth per pool vs the single-DSP baseline; the recovered/unmatched lists show " +
+      "whether the dropped-leading-Kilo class (KQ4GIK/KQ4RGI) or new weak partials appear. " +
+      "2026-07-18 VERDICT — NOT WORTH IT: recall froze at 0.67 in every pool (zero new content — the " +
+      "misses are acoustic, spike 2's teacher-forced finding), while precision fell (gated callsigns " +
+      "0.93 → 0.72 with @pad40's K2H artifact + resurfaced WN3Y/W3NY; 0.93 → 0.85 with @sq85; grids " +
+      "0.94 → 0.69/0.81 recall — @pad40's merged segments lose FM17). Variant mentions only add junk " +
+      "utterance corroboration that pushes leaks past the calibrated gates; M6 closes")]
+    public void Ariss_FanOutVariants_ScoreAgainstCorpusTruth()
+    {
+      var rec = ArissRecording();
+      var policy = new EmitPolicy();
+      var weight = new DepthConfidence();
+
+      var baseWords = CachedWords("whisper", SidecarEngine.FasterWhisper, ArissClipDir)
+        .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, ArissClipDir))
+        .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), ArissClipDir)).ToList();
+      var d = HeadlessRunner.LoadDepths(ArissClipDir)!;
+      var baseDepths = d.Concat(d).Concat(d).ToList();
+
+      FanOutRow("baseline w+v+s", baseWords, baseDepths, rec, policy, weight);
+
+      var pooledWords = new List<AsrWord[]>(baseWords);
+      var pooledDepths = new List<double>(baseDepths);
+      foreach (string variant in new[] { "@pad40", "@sq85" })
+      {
+        string vDir = ArissClipDir + variant;
+        Assert.True(Directory.Exists(vDir), $"variant clips expected under {vDir} (run Real_DemodAriss_FanOutVariants)");
+        var vWords = CachedWords("whisper" + variant, SidecarEngine.FasterWhisper, vDir, engineKey: "whisper");
+        var vDepths = HeadlessRunner.LoadDepths(vDir)!;
+        FanOutRow($"+ whisper{variant}", baseWords.Concat(vWords).ToList(),
+          baseDepths.Concat(vDepths).ToList(), rec, policy, weight);
+        pooledWords.AddRange(vWords);
+        pooledDepths.AddRange(vDepths);
+      }
+      FanOutRow("+ both variants", pooledWords, pooledDepths, rec, policy, weight);
+    }
+
+    private void FanOutRow(string label, List<AsrWord[]> words, List<double> depths, CorpusRecording rec,
+      EmitPolicy policy, DepthConfidence weight)
+    {
+      var raw = HeadlessRunner.Run(words, rec);
+      var gated = HeadlessRunner.Run(words, rec, policy, depths, weight);
+      output.WriteLine($"--- {label}");
+      Report("  raw callsigns  ", raw.Callsigns);
+      Report("  gated callsigns", gated.Callsigns);
+      Report("  gated grids    ", gated.Grids);
+    }
+
     private static (int, int, int, int) Add((int E, int C, int G, int R) t, EvalScore s)
       => (t.E + s.EmittedChars, t.C + s.CorrectChars, t.G + s.GoldChars, t.R + s.RecalledChars);
 
@@ -228,12 +337,15 @@ namespace VE3NEA.SkyFM.Tests
     {
       var corpus = Corpus.Load(RepoFiles.Find(Path.Combine("corpus", "ground-truth.json")));
       var policy = new EmitPolicy();
+      var depthWeight = new DepthConfidence();
       var totals = new Dictionary<string, (int Emitted, int Correct, int Known, int Recalled)>
       {
         ["callsigns"] = default,
         ["grids"] = default,
         ["callsigns+policy"] = default,
         ["grids+policy"] = default,
+        ["callsigns+policy+depth"] = default,
+        ["grids+policy+depth"] = default,
         ["symbols"] = default
       };
       void Accumulate(string key, EvalScore s)
@@ -267,6 +379,18 @@ namespace VE3NEA.SkyFM.Tests
           var gated = HeadlessRunner.Run(wordsFor(clipDir), rec, policy);
           Accumulate("callsigns+policy", gated.Callsigns);
           Accumulate("grids+policy", gated.Grids);
+
+          // the full operating point: policy + the §5.2 role-b depth weight (per-clip depths repeated
+          // per engine, since every engine contributes one word list per clip)
+          var words = wordsFor(clipDir);
+          var d = HeadlessRunner.LoadDepths(clipDir);
+          var depths = d != null && d.Count > 0 && words.Count % d.Count == 0
+            ? Enumerable.Repeat(d, words.Count / d.Count).SelectMany(x => x).ToList()
+            : null;
+          var gatedDepth = HeadlessRunner.Run(words, rec, policy, depths, depthWeight);
+          Report("callsigns+policy+depth", gatedDepth.Callsigns);
+          Accumulate("callsigns+policy+depth", gatedDepth.Callsigns);
+          Accumulate("grids+policy+depth", gatedDepth.Grids);
         }
         Report("symbols", result.Symbols);
         Accumulate("symbols", result.Symbols);
@@ -309,13 +433,15 @@ namespace VE3NEA.SkyFM.Tests
         "grids P 0.75 R 0.94, symbols P 0.78 R 0.97 F1 0.87");
     }
 
-    private List<AsrWord[]> CachedWords(string tag, Func<IAsrEngine> engineFactory, string clipDir)
+    private List<AsrWord[]> CachedWords(string tag, Func<IAsrEngine> engineFactory, string clipDir,
+      string? engineKey = null)
     {
       Assert.True(Directory.Exists(clipDir), $"decoded clips expected under {clipDir} (run FmDemodHarness first)");
       string cache = $"{clipDir}.{tag}.words.json";
       if (File.Exists(cache)) return HeadlessRunner.LoadWords(cache);
 
-      if (!engines.TryGetValue(tag, out var engine)) engines[tag] = engine = engineFactory();
+      engineKey ??= tag;
+      if (!engines.TryGetValue(engineKey, out var engine)) engines[engineKey] = engine = engineFactory();
       var transmissions = HeadlessRunner.TranscribeClips(engine, clipDir);
       HeadlessRunner.SaveWords(cache, transmissions);
       return transmissions;

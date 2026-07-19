@@ -123,5 +123,55 @@ namespace VE3NEA.SkyFM.Tests
       var fused = CandidateFusion.Fuse([Cand("KF4UJ", CandidateKind.Callsign, 0.72f, 333)]);
       fused.Should().ContainSingle().Which.Confidence.Should().Be(0.72f);
     }
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                 callsign↔grid cross-validation
+    // ----------------------------------------------------------------------------------------------------
+    [Fact]
+    public void GridGlueCallsign_EveryMentionAtAGridMention_IsDropped()
+    {
+      // the residual leak of the M5 hybrid: sherpa's run "EM85KR…" holds no separate grid span, so its
+      // partition emits the valid-looking callsign EM85KR at every "EM85 KR4JIQ" utterance; repeats
+      // corroborate it past the emit gate, but each repeat coincides with a grid repeat — glue, not a
+      // station
+      var fused = CandidateFusion.Fuse(new List<Candidate>
+      {
+        Cand("EM85", CandidateKind.Grid, 0.9f, 100),
+        Cand("EM85", CandidateKind.Grid, 0.8f, 220),
+        Cand("EM85KR", CandidateKind.Callsign, 0.8f, 100.5),
+        Cand("EM85KR", CandidateKind.Callsign, 0.8f, 220.4)
+      });
+      var c = fused.Should().ContainSingle().Which;
+      c.Kind.Should().Be(CandidateKind.Grid);
+      c.Text.Should().Be("EM85");
+    }
+
+    [Fact]
+    public void GridPrefixedCallsign_SightedAwayFromTheGrid_Survives()
+    {
+      // an independent sighting with no coincident grid mention is evidence of a real station
+      var fused = CandidateFusion.Fuse(new List<Candidate>
+      {
+        Cand("EM85", CandidateKind.Grid, 0.9f, 100),
+        Cand("EM85KR", CandidateKind.Callsign, 0.8f, 100.5),
+        Cand("EM85KR", CandidateKind.Callsign, 0.8f, 400)
+      });
+      fused.Should().HaveCount(2);
+      fused.Select(c => c.Text).Should().BeEquivalentTo(["EM85", "EM85KR"]);
+    }
+
+    [Fact]
+    public void GridShapedCallsign_WithLongSuffix_Survives()
+    {
+      // a real callsign that merely starts with a grid-shaped quad keeps a full-length suffix —
+      // outside the residue ≤ 2 bound, never dropped
+      var fused = CandidateFusion.Fuse(new List<Candidate>
+      {
+        Cand("FN20", CandidateKind.Grid, 0.9f, 100),
+        Cand("FN20ABC", CandidateKind.Callsign, 0.8f, 100.5)
+      });
+      fused.Should().HaveCount(2);
+    }
   }
 }
