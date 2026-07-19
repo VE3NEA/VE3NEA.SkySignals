@@ -42,6 +42,26 @@ namespace VE3NEA.SkyFM.Tests
       hyps[0].Words.Count.Should().BeGreaterThan(5);
     }
 
+    [ManualFact("integration Phase D: load the int8 pack from the DEPLOYED SkyRoof ASR_models folder (what " +
+      "the download command installs and TelemetryPanel.EnsureFmEngine loads) and decode the test wav — " +
+      "proves the hosted/extracted pack is complete and loadable via the production ModelDirectory path")]
+    public void DeployedPack_LoadsAndDecodes()
+    {
+      string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Afreet", "Products", "SkyRoof", "ASR_models");
+      SherpaModelPack.IsPresent(dir).Should().BeTrue($"the deployed int8 pack must be under {dir}");
+
+      using var engine = SherpaOnnxEngine.Hotwords(int8: true, modelDir: dir);
+      var (samples, rate) = Wav16.Read(RepoFiles.Find(Path.Combine("asr-spike", "sherpa",
+        "sherpa-onnx-zipformer-gigaspeech-2023-12-12", "test_wavs", "1089-134686-0001.wav")));
+      var hyps = engine.Transcribe(samples, rate);
+
+      hyps.Should().NotBeEmpty();
+      hyps[0].Words.Count.Should().BeGreaterThan(5);
+      output.WriteLine($"decoded {hyps[0].Words.Count} words from the deployed pack: " +
+        string.Join(" ", hyps[0].Words.Select(w => w.Text)));
+    }
+
     [Fact]
     public void WordsFromTokens_GroupsBpePiecesIntoWords()
     {
