@@ -90,7 +90,8 @@ namespace VE3NEA.SkyFM.Tests
 
     [ManualFact("2026-07-18 (symbol-utterance truth): CORPUS symbols P 0.84 R 0.62 F1 0.72 (231/372 " +
       "known recalled) — the free-ASR ceiling to beat; strong on both ARISS and 07-12 AO-123, zero on " +
-      "07-12 SO-50 (3IW4HM unheard), R 0.19 on 07-13 AO-123 (WN3Y/FM18 mostly missed)")]
+      "07-12 SO-50 (3IW4HM unheard), R 0.19 on 07-13 AO-123 (WN3Y/FM18 mostly missed). Post split: " +
+      "train symbols 0.88/0.59, TEST symbols 0.86/0.68 F1 0.76 — the best test symbol precision")]
     public void All_FasterWhisper_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir));
 
@@ -121,7 +122,11 @@ namespace VE3NEA.SkyFM.Tests
       "KR4JIQ; the depth weight killed the shallow-burst WN3Y/N3Y leak; only the KF4UJU→KF4UJ " +
       "near-miss chars remain), grids 0.94/0.94, symbols P 0.77 R 0.68; vs w+s policy+depth 0.97/0.62 " +
       "(more P, less R) and w+v gated 0.79/0.42 — vosk adds corroboration the policy can then afford " +
-      "to emit; G2 train precision 0.93 ≥ the 0.90 floor")]
+      "to emit; G2 train precision 0.93 ≥ the 0.90 floor. 2026-07-18 later (operator: WN3Y → ARISS " +
+      "Partial; train/test split per §11): train callsigns raw 0.88 / policy 0.94 / policy+depth " +
+      "0.93 R 0.67 zero unmatched, grids 0.94/0.94; first held-out row — TEST symbols P 0.72 R 0.74 " +
+      "F1 0.73 vs train F1 0.72 (whisper-alone TEST symbols 0.86/0.68: sherpa buys test symbol " +
+      "recall at precision cost; identifier-level test needs identifier labels)")]
     public void All_HybridWhisperVoskSherpa_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir)
         .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, dir))
@@ -133,7 +138,8 @@ namespace VE3NEA.SkyFM.Tests
       "sherpa EM85KR mention, so the fusion-level cross-validation drops what the run-level partial " +
       "anchor could not) → 0.88/0.62 with the calibrated policy → **0.97/0.62, zero unmatched** with " +
       "policy + DepthConfidence, grids 0.94/0.94; sherpa-ALONE still shows EM85KR — its own grid " +
-      "mentions don't cover every glue mention")]
+      "mentions don't cover every glue mention. Post WN3Y-partial/split: train callsigns policy " +
+      "0.98/0.62, +depth 0.97/0.62; TEST symbols 0.73/0.74")]
     public void All_HybridWhisperSherpa_ScoreAgainstCorpusTruth()
       => ScoreAll(dir => CachedWords("whisper", SidecarEngine.FasterWhisper, dir)
         .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), dir)).ToList());
@@ -154,7 +160,7 @@ namespace VE3NEA.SkyFM.Tests
       foreach (var rec in corpus.Recordings)
       {
         string clipDir = Path.Combine(DecodedDir, rec.File.Replace(".iq.wav", ""));
-        if (rec.Identifiers.Count == 0 || !Directory.Exists(clipDir)) continue;
+        if (rec.Role == "test" || rec.Identifiers.Count == 0 || !Directory.Exists(clipDir)) continue;
         runs.Add((CachedWords("whisper", SidecarEngine.FasterWhisper, clipDir)
           .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), clipDir)).ToList(), rec));
       }
@@ -183,7 +189,7 @@ namespace VE3NEA.SkyFM.Tests
       foreach (var rec in corpus.Recordings)
       {
         string clipDir = Path.Combine(DecodedDir, rec.File.Replace(".iq.wav", ""));
-        if (rec.Identifiers.Count == 0 || !Directory.Exists(clipDir)) continue;
+        if (rec.Role == "test" || rec.Identifiers.Count == 0 || !Directory.Exists(clipDir)) continue;
         var words = CachedWords("whisper", SidecarEngine.FasterWhisper, clipDir)
           .Concat(CachedWords("vosk", SidecarEngine.VoskGrammar, clipDir))
           .Concat(CachedWords("sherpa25", () => SherpaOnnxEngine.Hotwords(), clipDir)).ToList();
@@ -249,7 +255,7 @@ namespace VE3NEA.SkyFM.Tests
         foreach (var rec in corpus.Recordings)
         {
           string clipDir = Path.Combine(DecodedDir, rec.File.Replace(".iq.wav", ""));
-          if (!Directory.Exists(clipDir)) continue;
+          if (rec.Role == "test" || !Directory.Exists(clipDir)) continue;
           var sherpa = CachedWords(tag, () => SherpaOnnxEngine.Hotwords(score), clipDir);
           var alone = HeadlessRunner.Run(sherpa, rec);
           sym = Add(sym, alone.Symbols);
@@ -338,20 +344,14 @@ namespace VE3NEA.SkyFM.Tests
       var corpus = Corpus.Load(RepoFiles.Find(Path.Combine("corpus", "ground-truth.json")));
       var policy = new EmitPolicy();
       var depthWeight = new DepthConfidence();
-      var totals = new Dictionary<string, (int Emitted, int Correct, int Known, int Recalled)>
-      {
-        ["callsigns"] = default,
-        ["grids"] = default,
-        ["callsigns+policy"] = default,
-        ["grids+policy"] = default,
-        ["callsigns+policy+depth"] = default,
-        ["grids+policy+depth"] = default,
-        ["symbols"] = default
-      };
+      // totals split by corpus role (§11: the held-out test set is never tuned on — and never pooled
+      // into the train numbers)
+      var totals = new Dictionary<string, (int Emitted, int Correct, int Known, int Recalled)>();
+      string role = "train";
       void Accumulate(string key, EvalScore s)
       {
-        var t = totals[key];
-        totals[key] = (t.Emitted + s.EmittedChars, t.Correct + s.CorrectChars,
+        var t = totals.GetValueOrDefault($"{role} {key}");
+        totals[$"{role} {key}"] = (t.Emitted + s.EmittedChars, t.Correct + s.CorrectChars,
           t.Known + s.GoldChars, t.Recalled + s.RecalledChars);
       }
 
@@ -363,9 +363,10 @@ namespace VE3NEA.SkyFM.Tests
           output.WriteLine($"skip {rec.File}: no decoded clips");
           continue;
         }
+        role = rec.Role == "test" ? "TEST" : "train";
         var result = HeadlessRunner.Run(wordsFor(clipDir), rec);
 
-        output.WriteLine($"--- {rec.File}");
+        output.WriteLine($"--- {rec.File} [{rec.Role}]");
         foreach (var c in result.Fused)
           output.WriteLine($"{c.StartSeconds,7:0.0}s  {c.Kind,-8} {c.Text,-9} conf {c.Confidence:0.00}");
 
@@ -396,7 +397,7 @@ namespace VE3NEA.SkyFM.Tests
         Accumulate("symbols", result.Symbols);
       }
 
-      foreach (var (key, t) in totals)
+      foreach (var (key, t) in totals.OrderBy(kv => kv.Key.StartsWith("TEST") ? 1 : 0))
       {
         var s = new EvalScore
         {
