@@ -28,7 +28,7 @@ namespace VE3NEA.SkyFM.Tests
       }
     }
 
-    // words 0.3 s apart within a clip (gap 0.1 s ≤ WordGapS → single space, same line)
+    // words 0.3 s apart within a clip — one squelch-open interval, so one line, single-spaced
     private static AsrWord[] Words(params string[] texts)
       => texts.Select((t, i) => new AsrWord(t, 0.2 + 0.3 * i, 0.4 + 0.3 * i, 0.8f)).ToArray();
 
@@ -53,7 +53,7 @@ namespace VE3NEA.SkyFM.Tests
     }
 
     [Fact]
-    public void Transcript_ProducesPauseFormattedLines_OnRecordingTimeline()
+    public void Transcript_ProducesOneLinePerSquelchInterval_OnRecordingTimeline()
     {
       // a junk word ("thank") is outside the display vocabulary and must be dropped from the line
       var engine = new ScriptedEngine(
@@ -62,14 +62,15 @@ namespace VE3NEA.SkyFM.Tests
       using var sd = new SkySpeechDecoder(engine);
       Feed(sd, TwoBursts());
 
-      // the > 2.5 s inter-burst pause ends the first line; each burst is its own line
+      // the two bursts are ~2.5 s apart — far beyond the 0.5 s merge gap — so each is its own line
       sd.Lines.Should().HaveCount(2);
       sd.Lines[0].Text.Should().Be("kilo bravo 2 india whiskey");
       sd.Lines[1].Text.Should().Be("echo mike 8 5", "the non-vocabulary word is ignored");
       sd.Pending.Should().BeNull("the last line closed on Flush");
 
-      sd.Lines[0].StartSeconds.Should().BeInRange(1.0, 2.0, "clip-relative word times shift by the segment start");
-      sd.Lines[1].StartSeconds.Should().BeInRange(5.0, 6.0);
+      // the line span is the padded squelch-open interval, on the recording timeline
+      sd.Lines[0].StartSeconds.Should().BeInRange(0.5, 2.0);
+      sd.Lines[1].StartSeconds.Should().BeInRange(4.5, 6.0);
       sd.Lines[0].EndSeconds.Should().BeGreaterThan(sd.Lines[0].StartSeconds);
     }
 
@@ -115,13 +116,15 @@ namespace VE3NEA.SkyFM.Tests
     }
 
     [Fact]
-    public void NoSpeech_ProducesNoLines()
+    public void NoSpeech_ProducesQuestionMarkLines_OnePerSquelchInterval()
     {
       var engine = new ScriptedEngine([], []);   // engine hears nothing in either burst
       using var sd = new SkySpeechDecoder(engine);
       Feed(sd, TwoBursts());
 
-      sd.Lines.Should().BeEmpty();
+      // a squelch-open interval with no recognized text is still a line — it prints "???"
+      sd.Lines.Should().HaveCount(2);
+      sd.Lines.Should().OnlyContain(l => l.Text == FmTranscriptBuilder.NoText);
       sd.Pending.Should().BeNull();
     }
   }

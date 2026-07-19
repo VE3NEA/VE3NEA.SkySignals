@@ -32,70 +32,79 @@ namespace VE3NEA.SkyFM.Tests
 
 
     // ----------------------------------------------------------------------------------------------------
-    //                                     pause-driven formatting
+    //                                 squelch-interval line boundaries
     // ----------------------------------------------------------------------------------------------------
+
+    // feed one squelch-open interval [start, end] and its words (spaced 0.3 s apart within the interval)
+    private static void Tx(FmTranscriptBuilder b, double start, double end, params string[] words)
+      => b.Add(start, end, words.Select((t, i) => W(t, start + 0.3 * i)));
+
     [Fact]
-    public void PausesDriveSpacingAndLineBreaks()
+    public void EachIntervalIsALine_TokensSingleSpaced_SpannedByTheSquelchTimes()
     {
       var b = new FmTranscriptBuilder();
-      // "kilo delta 5" — tight; then a 1.5 s pause (3 spaces); then "echo mike 85";
-      // then a 4 s pause → new line "victor echo 3 N E A"
-      b.Add(W("kilo", 10.0));
-      b.Add(W("delta", 10.4));
-      b.Add(W("five", 10.8));
-      b.Add(W("echo", 12.6));
-      b.Add(W("mike", 13.0));
-      b.Add(W("85", 13.4));
-      b.Add(W("victor", 17.7));
-      b.Add(W("echo", 18.1));
-      b.Add(W("three", 18.5));
-      b.Add(W("en", 18.9));
-      b.Add(W("ee", 19.3));
-      b.Add(W("ay", 19.7));
+      Tx(b, 10.0, 12.0, "kilo", "delta", "five");
+      Tx(b, 15.0, 16.0, "echo", "mike", "85");   // 3 s gap → its own line
       b.Flush();
 
       b.Lines.Should().HaveCount(2);
-      b.Lines[0].Text.Should().Be("kilo delta 5   echo mike 85");
-      b.Lines[1].Text.Should().Be("victor echo 3 N E A");
+      b.Lines[0].Text.Should().Be("kilo delta 5");
+      b.Lines[1].Text.Should().Be("echo mike 85");
       b.Lines[0].StartSeconds.Should().Be(10.0);
-      b.Lines[0].EndSeconds.Should().BeApproximately(13.7, 1e-9, "the click-to-play span covers the whole line");
-      b.Lines[1].StartSeconds.Should().Be(17.7);
+      b.Lines[0].EndSeconds.Should().Be(12.0, "the click-to-play span is the squelch-open interval, not the word times");
+      b.Lines[1].StartSeconds.Should().Be(15.0);
     }
 
     [Fact]
-    public void IgnoredWords_DoNotAffectSpacing()
+    public void IntervalsWithinTheMergeGap_ShareALine()
     {
       var b = new FmTranscriptBuilder();
-      b.Add(W("kilo", 10.0));
-      b.Add(W("thanks", 10.5));
-      b.Add(W("delta", 11.2));
+      Tx(b, 10.0, 12.0, "kilo", "delta");
+      Tx(b, 12.4, 13.0, "five");          // 0.4 s gap ≤ 0.5 → merged into the same line
+      Tx(b, 14.0, 15.0, "echo");          // 1.0 s gap > 0.5 → new line
       b.Flush();
 
-      b.Lines.Should().ContainSingle().Which.Text.Should().Be("kilo   delta",
-        "the gap is measured across the ignored word — 0.9 s of silence in the display vocabulary");
+      b.Lines.Should().HaveCount(2);
+      b.Lines[0].Text.Should().Be("kilo delta 5");
+      b.Lines[0].StartSeconds.Should().Be(10.0);
+      b.Lines[0].EndSeconds.Should().Be(13.0, "a merged line spans through the last merged interval");
+      b.Lines[1].Text.Should().Be("echo");
     }
 
     [Fact]
-    public void AllWordsIgnored_ProducesNoLines()
+    public void IntervalWithNoDisplayText_PrintsQuestionMarks()
     {
       var b = new FmTranscriptBuilder();
-      b.Add(W("thank", 10.0));
-      b.Add(W("very", 10.4));
-      b.Add(W("much", 10.8));
+      Tx(b, 10.0, 12.0, "thank", "very", "much");   // all outside the display vocabulary
+      Tx(b, 20.0, 21.0);                             // the engine heard nothing at all
       b.Flush();
-      b.Lines.Should().BeEmpty();
+
+      b.Lines.Should().HaveCount(2);
+      b.Lines[0].Text.Should().Be(FmTranscriptBuilder.NoText);
+      b.Lines[1].Text.Should().Be(FmTranscriptBuilder.NoText);
+      b.Lines[0].StartSeconds.Should().Be(10.0);
+      b.Lines[0].EndSeconds.Should().Be(12.0);
     }
 
     [Fact]
-    public void StreamingAcrossTransmissions_LinesGrowIncrementally()
+    public void IgnoredWords_AreDroppedButTheNeighboursStaySingleSpaced()
     {
       var b = new FmTranscriptBuilder();
-      b.Add(W("kilo", 10.0));
-      b.Add(W("bravo", 10.4));
-      b.Lines.Should().BeEmpty("the line is still open");
+      Tx(b, 10.0, 12.0, "kilo", "thanks", "delta");
+      b.Flush();
+      b.Lines.Should().ContainSingle().Which.Text.Should().Be("kilo delta");
+    }
 
-      b.Add(W("echo", 100.0));
-      b.Lines.Should().ContainSingle("a pause beyond the group gap closes the previous line");
+    [Fact]
+    public void StreamingAcrossIntervals_LinesCloseWhenTheNextOneStartsBeyondTheMergeGap()
+    {
+      var b = new FmTranscriptBuilder();
+      Tx(b, 10.0, 11.0, "kilo", "bravo");
+      b.Lines.Should().BeEmpty("the line stays open until the next interval decides the merge");
+      b.Pending!.Text.Should().Be("kilo bravo");
+
+      Tx(b, 100.0, 101.0, "echo");   // far beyond the merge gap → closes the previous line
+      b.Lines.Should().ContainSingle();
       b.Flush();
       b.Lines.Should().HaveCount(2);
       b.Lines.Select(l => l.Text).Should().Equal("kilo bravo", "echo");

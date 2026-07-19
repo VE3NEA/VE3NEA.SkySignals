@@ -126,13 +126,14 @@ namespace VE3NEA.SkyFM
       if (e <= s) return;
       var clip = Normalized((int)s, (int)(e - s));
 
+      // the whole squelch-open interval is one line (merged with a near-abutting neighbor by the builder),
+      // its span the transmission times; an interval the engine heard nothing in still prints "???"
       var hyps = engine.Transcribe(clip, OutputSampleRate);
-      if (hyps.Count == 0) return;
+      IEnumerable<AsrWord> words = hyps.Count > 0 ? hyps[0].Words : Array.Empty<AsrWord>();
 
       int linesBefore = builder.Lines.Count;
       var pendingBefore = builder.Pending;
-      foreach (var w in hyps[0].Words)
-        builder.Add(w with { StartSeconds = w.StartSeconds + t.StartSeconds, EndSeconds = w.EndSeconds + t.StartSeconds });
+      builder.Add(t.StartSeconds, t.EndSeconds, words);
 
       for (int i = linesBefore; i < builder.Lines.Count; i++) LineCompleted?.Invoke(builder.Lines[i], i);
       var pending = builder.Pending;

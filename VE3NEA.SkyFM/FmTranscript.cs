@@ -4,16 +4,12 @@ using System.Text;
 
 namespace VE3NEA.SkyFM
 {
-  /// <summary>Tunables of the §10.2/§10.3 transcript stream. Both pause thresholds are the plan's
-  /// declared TBDs — defaults here are starting points to tune on real passes.</summary>
+  /// <summary>Tunables of the §10.2/§10.3 transcript stream.</summary>
   public sealed record FmTranscriptOptions
   {
-    /// <summary>Pause (s) at or below which consecutive words share a single space.</summary>
-    public double WordGapS { get; init; } = 0.7;
-
-    /// <summary>Pause (s) at or below which words stay on one line (3 spaces); beyond it the line
-    /// ends.</summary>
-    public double GroupGapS { get; init; } = 2.5;
+    /// <summary>A line is one squelch-open interval; when the next interval starts within this gap (s) of
+    /// the current line's end, the two are merged onto one line.</summary>
+    public double MergeGapS { get; init; } = 0.5;
 
     /// <summary>The predefined prowords shown verbatim (§10.2; list TBD beyond these), lower
     /// case.</summary>
@@ -29,9 +25,11 @@ namespace VE3NEA.SkyFM
   /// Builds the §10.2/§10.3 decoded-transcript stream from recognized words: only the display
   /// vocabulary survives — phonetic words verbatim, numbers as digits, spoken letters collapsed to the
   /// letter, prowords upper-case, plus collapsed identifier-shaped fragments ("EM85") as the engines
-  /// emit them; every other token is ignored, never shown. Word spacing and line breaks are
-  /// pause-driven. Streaming: <see cref="Add"/> words in time order (across transmissions),
-  /// <see cref="Flush"/> at end of pass; <see cref="Lines"/> grows as lines close.
+  /// emit them; every other token is ignored, never shown. Line boundaries follow the squelch, not the
+  /// pauses between words: each line is one squelch-open interval (merged with the next when they nearly
+  /// abut, <see cref="FmTranscriptOptions.MergeGapS"/>), its tokens single-spaced; an interval with no
+  /// display vocabulary prints <see cref="NoText"/>. Streaming: <see cref="Add"/> intervals in time
+  /// order, <see cref="Flush"/> at end of pass; <see cref="Lines"/> grows as lines close.
   ///
   /// <para>Spoken letters are display-only vocabulary: the identifier path deliberately refuses them
   /// (<see cref="PhoneticDecoder"/> — the spike's precision trap), but the transcript shows the raw
@@ -40,6 +38,9 @@ namespace VE3NEA.SkyFM
   /// </summary>
   public sealed class FmTranscriptBuilder
   {
+    /// <summary>Shown in place of the text when a squelch-open interval yielded no display vocabulary.</summary>
+    public const string NoText = "???";
+
     private static readonly Dictionary<string, char> SpokenLetters = new()
     {
       ["ay"] = 'A', ["bee"] = 'B', ["cee"] = 'C', ["dee"] = 'D', ["ee"] = 'E', ["ef"] = 'F',
@@ -52,7 +53,8 @@ namespace VE3NEA.SkyFM
     private readonly FmTranscriptOptions options;
     private readonly List<FmTranscriptLine> lines = new();
     private readonly StringBuilder text = new();
-    private double lineStart, lastEnd;
+    private double lineStart, lineEnd;
+    private bool open;
 
     public FmTranscriptBuilder(FmTranscriptOptions? options = null)
       => this.options = options ?? new FmTranscriptOptions();
@@ -61,33 +63,30 @@ namespace VE3NEA.SkyFM
     public IReadOnlyList<FmTranscriptLine> Lines => lines;
 
     /// <summary>The in-progress (not-yet-closed) line, or null when none is open — the live tail the
-    /// panel shows before a pause closes it (§10.3). A snapshot; safe to marshal to the UI thread.</summary>
+    /// panel shows before the next interval closes it (§10.3). A snapshot; safe to marshal to the UI
+    /// thread.</summary>
     public FmTranscriptLine? Pending =>
-      text.Length == 0 ? null : new FmTranscriptLine(text.ToString(), lineStart, lastEnd);
+      open ? new FmTranscriptLine(text.Length == 0 ? NoText : text.ToString(), lineStart, lineEnd) : null;
 
-    /// <summary>Feed the next recognized word (recording-relative times, non-decreasing). Words outside
-    /// the display vocabulary are ignored and do not affect spacing.</summary>
-    public void Add(AsrWord word)
+    /// <summary>Feed one squelch-open interval and the words recognized within it (recording-relative
+    /// times, non-decreasing across calls). The interval opens a new line unless it starts within
+    /// <see cref="FmTranscriptOptions.MergeGapS"/> of the current line's end, in which case the two merge.
+    /// Words outside the display vocabulary are dropped; an interval with no display vocabulary prints
+    /// <see cref="NoText"/>.</summary>
+    public void Add(double startSeconds, double endSeconds, IEnumerable<AsrWord> words)
     {
-      string? token = DisplayToken(word.Text);
-      if (token == null) return;
+      if (open && startSeconds - lineEnd > options.MergeGapS) CloseLine();
 
-      if (text.Length == 0)
-        lineStart = word.StartSeconds;
-      else
+      if (!open) { lineStart = startSeconds; lineEnd = endSeconds; open = true; }
+      else lineEnd = Math.Max(lineEnd, endSeconds);
+
+      foreach (var word in words)
       {
-        double gap = word.StartSeconds - lastEnd;
-        if (gap > options.GroupGapS)
-        {
-          CloseLine();
-          lineStart = word.StartSeconds;
-        }
-        else
-          text.Append(gap <= options.WordGapS ? " " : "   ");
+        string? token = DisplayToken(word.Text);
+        if (token == null) continue;
+        if (text.Length > 0) text.Append(' ');
+        text.Append(token);
       }
-
-      text.Append(token);
-      lastEnd = Math.Max(lastEnd, word.EndSeconds);
     }
 
     /// <summary>End of pass: close the in-progress line. Call once after the last
@@ -96,9 +95,10 @@ namespace VE3NEA.SkyFM
 
     private void CloseLine()
     {
-      if (text.Length == 0) return;
-      lines.Add(new FmTranscriptLine(text.ToString(), lineStart, lastEnd));
+      if (!open) return;
+      lines.Add(new FmTranscriptLine(text.Length == 0 ? NoText : text.ToString(), lineStart, lineEnd));
       text.Clear();
+      open = false;
     }
 
 

@@ -296,7 +296,8 @@ namespace VE3NEA.SkyFM.Tests
     private static (int Lines, int Tokens) TranscriptSize(List<AsrWord[]> transmissions)
     {
       var builder = new FmTranscriptBuilder();
-      foreach (var w in transmissions.SelectMany(t => t).OrderBy(w => w.StartSeconds)) builder.Add(w);
+      foreach (var tx in transmissions.Where(t => t.Length > 0).OrderBy(t => t[0].StartSeconds))
+        builder.Add(tx.Min(w => w.StartSeconds), tx.Max(w => w.EndSeconds), tx);
       builder.Flush();
       int tokens = builder.Lines.Sum(l => l.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
       return (builder.Lines.Count, tokens);
