@@ -22,7 +22,8 @@ namespace VE3NEA
       processingThread.IsBackground = true;
       processingThread.Name = GetType().Name;
       processingThread.Start();
-      processingThread.Priority = ThreadPriority.Highest;
+      // below the SDR read thread, which runs at Highest, so that the reader is never starved by the DSP
+      processingThread.Priority = ThreadPriority.AboveNormal;
     }
 
     public virtual void Dispose()
@@ -66,10 +67,21 @@ namespace VE3NEA
 
         try
         {
-          // safety valve
+          // safety valve. the backlog is dropped unprocessed, which shortens the output stream,
+          // so report it instead of failing silently
           if (Queue.Count > 150)
+          {
+            int blockCount = 0, sampleCount = 0;
+
             while (Queue.TryDequeue(out DataEventArgs<T> args))
+            {
+              blockCount++;
+              sampleCount += args.Count;
               ArgsPool.Return(args);
+            }
+
+            Log.Error($"{GetType().Name} overloaded, discarded {blockCount} blocks ({sampleCount} samples)");
+          }
 
           while (Queue.Any())
           {
