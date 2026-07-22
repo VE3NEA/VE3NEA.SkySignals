@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net10.0-windows: the manual harnesses (playback of demodulated audio via CSCore) are Windows-only. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>VE3NEA.SkyFM.Tests</RootNamespace>
+    <AssemblyName>VE3NEA.SkyFM.Tests</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- FluentAssertions 7.x is the last Apache-2.0 release (v8+ is commercial). -->
+    <PackageReference Include="FluentAssertions" Version="7.0.0" />
+    <!-- sherpa-onnx flows transitively from VE3NEA.SkyFM (the engine was promoted into the core, plan A1). -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VE3NEA.SkyFM\VE3NEA.SkyFM.csproj" />
+    <!-- WavIqReader for the real-capture manual harnesses (same pattern as VE3NEA.SkySSTV.Tests). -->
+    <ProjectReference Include="..\VE3NEA.SkyTlm\VE3NEA.SkyTlm.csproj" />
+  </ItemGroup>
+
+</Project>

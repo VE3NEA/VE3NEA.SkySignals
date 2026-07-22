@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net10.0 like VE3NEA.Dsp: the core is pure (I/Q + options in, candidates out — ASR-plan.md G6),
+         no UI or System.Drawing dependency. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 64-bit only: VE3NEA.Dsp P/Invokes x64 native FFTW/liquid-dsp DLLs, so the whole repo is x64-only. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- the SoftSquelch port drives liquid-dsp firfilt via pointers, as in SkyRoof. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>VE3NEA.SkyFM</RootNamespace>
+    <AssemblyName>VE3NEA.SkyFM</AssemblyName>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <!-- emit transitive package assets (the sherpa-onnx managed binding + its win-x64 native
+         onnxruntime/sherpa-onnx-c-api DLLs under runtimes\) into this library's own bin, so the
+         SkyRoof vendoring target has a single source-of-truth directory to copy from (integration
+         plan A5 / Phase B — SkyRoof references the vendored DLL by HintPath, not by NuGet, so the
+         natives do not flow automatically). -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The test project unit-tests internal DSP stages directly, same as the SkySSTV precedent. -->
+    <InternalsVisibleTo Include="VE3NEA.SkyFM.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pinned to the version VE3NEA.Dsp was built against. -->
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
+    <!-- OnlineIirFilter for the SoftSquelch detector, same as the SkyRoof original it is ported from. -->
+    <PackageReference Include="MathNet.Filtering" Version="0.7.0" />
+    <!-- sherpa-onnx C# bindings: the Pass-B production engine (plan §5.3 contender 1, promoted into the
+         core per integration plan A1) — zipformer transducer + hotword biasing, native, no Python
+         sidecar. Flows its win-x64 native onnxruntime/sherpa-onnx-c-api DLLs to the referencing app. -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.4" />
+  </ItemGroup>
+
+  <!-- VE3NEA.Dsp is a source project in this solution; the project reference flows its compile
+       reference and native P/Invoke DLLs here and transitively to the test project. -->
+  <ItemGroup>
+    <ProjectReference Include="..\VE3NEA.Dsp\VE3NEA.Dsp.csproj" />
+  </ItemGroup>
+
+</Project>
