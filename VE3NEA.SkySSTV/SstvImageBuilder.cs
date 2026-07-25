@@ -47,7 +47,7 @@ namespace VE3NEA.SkySSTV
     /// it from the rolling brightness buffer.</summary>
     public (double start, double end) LineSpan(int pulseNo)
     {
-      double onset = Train.Regr.GetPulseTime(pulseNo);
+      double onset = Train.GetLineOnset(pulseNo);
       return (onset, onset + spec.LinePeriodMs / 1000.0 * o.SampleRate * 1.05);
     }
 
@@ -55,7 +55,7 @@ namespace VE3NEA.SkySSTV
     /// window onto the planes. Lines outside the image geometry are ignored.</summary>
     public void RenderLine(in BrightnessWindow bw, int pulseNo)
     {
-      double onset = Train.Regr.GetPulseTime(pulseNo);
+      double onset = Train.GetLineOnset(pulseNo);
       double corr = Train.Regr.CorrFactor;
       if (spec.Layout == SstvColorLayout.Pd)
       {

@@ -113,7 +113,7 @@ namespace VE3NEA.SkySSTV
       foreach (var train in trains)
         if (train is SstvCombPulseTrain comb && comb.Format == mode
             && comb.State == SstvTrainState.Active
-            && Math.Abs(anchorSample - comb.Regr.GetPulseTime(comb.Regr.GetPulseNo(anchorSample)))
+            && Math.Abs(anchorSample - comb.GetLineOnset(comb.GetLineNo(anchorSample)))
                <= MergeWingMs / 1000.0 * fs)
         { comb.RegisterHit(anchorSample); return; }
 
@@ -379,6 +379,8 @@ namespace VE3NEA.SkySSTV
             break;
 
           case SstvTrainState.Active:
+            int stepTime = train.TakePhaseStep();
+            if (stepTime >= 0) MarkDirty(stepTime);
             if (train.CanRetire(time))
             {
               train.State = SstvTrainState.Retired;
@@ -409,7 +411,7 @@ namespace VE3NEA.SkySSTV
         if (host.State != SstvTrainState.Active && host.State != SstvTrainState.Retired) continue;
         if (host.Regr.LastPulseTime >= candStart) continue;
         if (candStart - host.Regr.LastPulseTime > MergeGapSeconds * fs) continue;
-        double expected = host.Regr.GetPulseTime(host.Regr.GetPulseNo(candStart));
+        double expected = host.GetLineOnset(host.GetLineNo(candStart));
         if (Math.Abs(candStart - expected) <= wing) return host;
       }
       return null;
@@ -448,10 +450,10 @@ namespace VE3NEA.SkySSTV
 
         int pulseNo = lines.Count > 0 && lines[^1].Train == best
           ? lines[^1].PulseNo + 1
-          : best.Regr.GetPulseNo(blockStart);
+          : best.GetLineNo(blockStart);
         for (; ; pulseNo++)
         {
-          double pulseTime = best.Regr.GetPulseTime(pulseNo);
+          double pulseTime = best.GetLineOnset(pulseNo);
           if (pulseTime < blockStart) continue;
           if (pulseTime >= blockStart + blockSize) break;
           lines.Add(new SstvScanLine { BlkNo = b, PulseNo = pulseNo, Train = best });

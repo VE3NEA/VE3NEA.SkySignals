@@ -80,9 +80,9 @@ namespace VE3NEA.SkySSTV
       var onset = new double[spec.LineCount];
       if (o.Track && train != null)
       {
-        int line0 = train.Regr.GetPulseNo(start);
+        int line0 = train.GetLineNo(start);
         for (int line = 0; line < spec.LineCount; line++)
-          onset[line] = train.Regr.GetPulseTime(line0 + line);
+          onset[line] = train.GetLineOnset(line0 + line);
         return (onset, train.Regr.CorrFactor);
       }
       double nominal = spec.LinePeriodMs / 1000.0 * fs;

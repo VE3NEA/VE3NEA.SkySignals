@@ -30,6 +30,15 @@ namespace VE3NEA.SkySSTV
   /// within the promote timeout (back-filling earlier pulses it can explain, <see cref="AddOldPulses"/>), and
   /// <b>retires</b> after a run of inactivity. The extractor owns the state transitions and picks the best
   /// train per line block by smoothed sync power (<see cref="GetPower"/>) with hysteresis.
+  ///
+  /// <para>On top of the regressor's straight line sits a piecewise-constant <b>phase track</b>
+  /// (<see cref="GetLineOnset"/>): some transmissions step their sync phase mid-image — the 2026-07-20
+  /// UmKA-1 Robot36 burst steps −11.0 ms four times, against a per-pulse onset jitter of ~0.2 ms — and a
+  /// single line fit cannot represent that. Each step is detected as a run of consecutive off-grid pulses
+  /// (<see cref="TryPhaseStep"/>), held OUT of the regressor, and applied as an offset from the line it
+  /// began at. Keeping steps out of the period estimate matters as much as the offsets themselves: fitted
+  /// through the four UmKA-1 steps the period came out 7191.9 samples against a true 7200.1, shearing every
+  /// segment by up to ±30 px on top of the ±40 px offsets.</para>
   /// </summary>
   internal class SstvPulseTrain
   {
@@ -39,14 +48,28 @@ namespace VE3NEA.SkySSTV
     private const double WeakPower = 2 * SstvPulseDetector.ScoreThreshold;  // a weak last pulse holds the claim longer
     protected const int SmoothPulsesWing = 4;    // train power is smoothed over ±4 pulse slots
 
+    private const double StepAgreeMs = 2.0;      // off-grid residuals must agree within this to be one step
+    private const int StepConfirm = 3;           // consecutive off-grid line slots that confirm a step
+    private const int FillWindow = 20;           // recent-fill window (line slots) of the lock-quality gate
+    private const double MinStepFill = 0.5;      // lock quality required before a step may commit
+
     protected readonly double fs;
     protected readonly double nominalPeriod;
     protected readonly double promoteTimeout;
     protected readonly double retireTimeout;
     protected readonly List<SstvPulse> pulses = new();
+    private readonly double stepAgree;           // StepAgreeMs in samples
     private readonly int createdTime;            // seed time — bounds the promote window (N-of-M, retro P)
     private int lastPulseNo = int.MinValue;      // rejects a second pulse landing in the same line slot
     private int revisionCnt;
+
+    // phase track: the committed steps (ascending), the current offset, the off-grid run being adjudicated,
+    // the line slots that carried an in-gate pulse (the lock-quality gate), and the pending re-render mark
+    private readonly List<(int fromLineNo, double offset)> phaseSteps = new();
+    private readonly List<(SstvPulse pulse, int lineNo, double resid)> stepPending = new();
+    private readonly HashSet<int> filledLines = new();
+    private double phase;
+    private int phaseStepTime = -1;
 
     /// <summary>Time of the last spawn-tier (≥ <see cref="SstvPulseDetector.ScoreThreshold"/>) pulse — the
     /// retire/idle clock. Soft associate-tier pulses may confirm and extend the fit, but with the wide RLS
@@ -101,25 +124,28 @@ namespace VE3NEA.SkySSTV
       nominalPeriod = spec.LinePeriodMs / 1000.0 * fs;
       promoteTimeout = PromoteSeconds * fs;
       retireTimeout = RetireSeconds * fs;
+      stepAgree = StepAgreeMs / 1000.0 * fs;
       createdTime = 0;
       Regr = new SstvSyncRegressor(0, nominalPeriod, fs);
     }
 
     /// <summary>Try to associate a pulse with this train: rejected if of the wrong sync-duration family, past
-    /// the image end, outside the regressor's time gate, or landing in an already-filled line
-    /// slot (a duplicate would be double-fitted and double-counted toward promotion, retro P); otherwise
-    /// folded in. Returns whether it was accepted.</summary>
+    /// the image end, or landing in an already-filled line slot (a duplicate would be double-fitted and
+    /// double-counted toward promotion, retro P); otherwise folded in. A pulse outside the regressor's time
+    /// gate is not simply dropped — it is offered to <see cref="TryPhaseStep"/>, which claims it once a run
+    /// of them proves the sync phase stepped. Returns whether it was accepted.</summary>
     public virtual bool TryAddPulse(in SstvPulse pulse)
     {
       var spec = SstvModes.Get(Format);
       if (!MatchesFamily(pulse, spec)) return false;
-      if (pulse.Time > Regr.GetPulseTime(MaxPulseNo(spec))) return false;
+      if (pulse.Time > GetLineOnset(MaxPulseNo(spec))) return false;
 
-      int pulseNo = Regr.GetPulseNo(pulse.Time);
+      int pulseNo = GetLineNo(pulse.Time);
       if (pulseNo == lastPulseNo) return false;
-      double expected = Regr.GetPulseTime(pulseNo);
-      if (Math.Abs(pulse.Time - expected) > MaxError(pulseNo)) return false;
+      double resid = pulse.Time - GetLineOnset(pulseNo);
+      if (Math.Abs(resid) > MaxError(pulseNo)) return TryPhaseStep(pulse, pulseNo, resid);
 
+      stepPending.Clear();
       AddPulse(pulse);
       return true;
     }
@@ -139,7 +165,8 @@ namespace VE3NEA.SkySSTV
       => pulse.DurMs == 0 || Math.Abs(pulse.DurMs - spec.SyncMs) < 0.5;
 
     /// <summary>Fold an accepted pulse in: update the regressor. The pulse
-    /// list stays time-sorted (back-fill inserts at the front).</summary>
+    /// list stays time-sorted (back-fill inserts at the front). The regressor is fed the pulse time with
+    /// the line's phase offset removed, so it keeps modelling one clean line clock across the steps.</summary>
     public void AddPulse(in SstvPulse pulse)
     {
       if (pulses.Count > 0 && pulse.Time < pulses[0].Time) pulses.Insert(0, pulse);
@@ -150,8 +177,9 @@ namespace VE3NEA.SkySSTV
         StrongCnt++;
         if (pulse.Time > LastStrongTime) LastStrongTime = pulse.Time;
       }
-      lastPulseNo = Regr.GetPulseNo(pulse.Time);
-      Regr.ProcessPulse(pulse.Time);
+      lastPulseNo = GetLineNo(pulse.Time);
+      filledLines.Add(lastPulseNo);
+      Regr.ProcessPulse(pulse.Time - (int)Math.Round(Offset(lastPulseNo)));
     }
 
     /// <summary>On promotion, back-fill earlier detections this train explains (Hopper <c>AddOldPulses</c>):
@@ -159,7 +187,9 @@ namespace VE3NEA.SkySSTV
     /// pulses that pass the association gates, back to one retire-timeout before the start. Soft pulses are
     /// excluded here: back-fill has no future evidence to confirm them, and with the wide gate a chain of
     /// in-gate noise pulses would creep the start ever backward, before the real transmission. If any were
-    /// adopted, the regressor is rebuilt from the new first pulse and refitted over the whole train.
+    /// adopted, the regressor is rebuilt from the new first pulse and refitted over the whole train — with
+    /// the raw pulse times, which is exact because this runs at promotion, before any phase step can exist
+    /// (<see cref="TryPhaseStep"/> commits only on an Active train).
     /// Returns whether the start moved.</summary>
     public virtual bool AddOldPulses(IReadOnlyList<SstvPulse> all)
     {
@@ -255,6 +285,87 @@ namespace VE3NEA.SkySSTV
       if (due) revisionCnt++;
       return due;
     }
+
+
+
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                        sync phase-step track
+    // ----------------------------------------------------------------------------------------------------
+
+
+    /// <summary>Predicted sync onset of transmitted line <paramref name="lineNo"/>: the regressor's line
+    /// clock plus the phase track's offset. This — not <see cref="SstvSyncRegressor.GetPulseTime"/> — is the
+    /// grid the image is rendered on and pulses are associated to.</summary>
+    public double GetLineOnset(int lineNo) => Regr.GetPulseTime(lineNo) + Offset(lineNo);
+
+    /// <summary>Line number of an absolute sample time on the tracked grid. Resolved in two passes: the
+    /// current offset yields a first line number, which selects the offset actually in force there (a step
+    /// is a small fraction of a line period, so the first pass is never more than one slot out).</summary>
+    public int GetLineNo(int time)
+    {
+      int lineNo = Regr.GetPulseNo(time - (int)Math.Round(phase));
+      return Regr.GetPulseNo(time - (int)Math.Round(Offset(lineNo)));
+    }
+
+    /// <summary>The phase offset (samples) in force at <paramref name="lineNo"/>.</summary>
+    public double Offset(int lineNo)
+    {
+      for (int i = phaseSteps.Count - 1; i >= 0; i--)
+        if (phaseSteps[i].fromLineNo <= lineNo) return phaseSteps[i].offset;
+      return 0;
+    }
+
+    /// <summary>Sample time from which the image must be re-rendered because a phase step moved the grid
+    /// under lines already drawn on the stale phase; -1 when nothing is pending. Consumed once, by the
+    /// extractor's lifecycle pass, which turns it into a dirty-block mark (§1.13).</summary>
+    public int TakePhaseStep()
+    {
+      int time = phaseStepTime;
+      phaseStepTime = -1;
+      return time;
+    }
+
+    /// <summary>Adjudicate a pulse the association gate rejected as a sync <b>phase step</b>: buffer it, and
+    /// commit a step once <see cref="StepConfirm"/> of them land in consecutive line slots with residuals
+    /// agreeing within <see cref="StepAgreeMs"/>. Two guards keep noise out — the evidence must be
+    /// spawn-tier, and the train must be <i>in lock</i>: at least <see cref="MinStepFill"/> of the last
+    /// <see cref="FillWindow"/> line slots carried an in-gate pulse. The fill gate is what separates real
+    /// steps from false alarms; measured over the capture corpus the four real UmKA-1 steps sit at
+    /// 0.90–1.00 fill and every false candidate at 0.00–0.15, while tightening the pulse count, the
+    /// agreement window or the consecutiveness rule separates neither. On commit the buffered run is
+    /// adopted onto the corrected grid and the affected lines are marked for re-render.</summary>
+    private bool TryPhaseStep(in SstvPulse pulse, int lineNo, double resid)
+    {
+      if (State != SstvTrainState.Active || lineNo < 0) return false;
+      if (pulse.Power < SstvPulseDetector.ScoreThreshold) return false;
+
+      if (stepPending.Count > 0)
+      {
+        var prev = stepPending[^1];
+        if (lineNo - prev.lineNo > 1 || Math.Abs(resid - prev.resid) > stepAgree) stepPending.Clear();
+      }
+      stepPending.Add((pulse, lineNo, resid));
+      if (stepPending.Count < StepConfirm) return false;
+
+      int fromLineNo = stepPending[0].lineNo;
+      int filled = 0;
+      for (int k = 1; k <= FillWindow; k++) if (filledLines.Contains(fromLineNo - k)) filled++;
+      if (filled < MinStepFill * FillWindow) { stepPending.Clear(); return false; }
+
+      var residuals = new List<double>();
+      foreach (var (_, _, r) in stepPending) residuals.Add(r);
+      residuals.Sort();
+      phase += residuals[residuals.Count / 2];
+      phaseSteps.Add((fromLineNo, phase));
+
+      int from = stepPending[0].pulse.Time;
+      if (phaseStepTime < 0 || from < phaseStepTime) phaseStepTime = from;
+      lastPulseNo = int.MinValue;
+      foreach (var (p, _, _) in stepPending) AddPulse(p);
+      stepPending.Clear();
+      return true;
+    }
   }
 
   /// <summary>
@@ -345,7 +456,7 @@ namespace VE3NEA.SkySSTV
 
     /// <summary>The mode is known, so the train retires exactly at its predicted image end.</summary>
     public override bool CanRetire(int time)
-      => Regr.GetPulseTime(SstvModes.Get(Format).LineCount - 1) < time;
+      => GetLineOnset(SstvModes.Get(Format).LineCount - 1) < time;
 
     public override bool IsRetiredAt(int time) => State == SstvTrainState.Retired && CanRetire(time);
 
