@@ -66,8 +66,8 @@ namespace VE3NEA.SkySSTV
         : o.StartSample;
 
       var (lineOnset, corr) = LineOnsets(train, fs, spec, o, start);
-      double[] brightness = Brightness(disc, fs, o);
-      return Reconstruct(brightness, spec, o, lineOnset, corr);
+      double[] brightness = Brightness(disc, fs, o, out double[]? wide);
+      return Reconstruct(brightness, wide, spec, o, lineOnset, corr);
     }
 
     /// <summary>Per-transmitted-line sync-onset samples + the slant/clock correction (retro item F). With
@@ -201,13 +201,24 @@ namespace VE3NEA.SkySSTV
     /// term the mix pushes to −1900), then instantaneous frequency + 1900. All bounded-state (NCO + FIR +
     /// one-sample diff) — no whole-signal transform.</summary>
     internal static double[] Brightness(double[] disc, double fs, SstvDecodeOptions o)
+      => Brightness(disc, fs, o, out _);
+
+    /// <summary>Brightness with the §6.3 adaptive pair: the return value is the narrow branch,
+    /// <paramref name="wide"/> the wide one (null when <see cref="SstvDecodeOptions.BrightnessWideBwHz"/>
+    /// disables it). Both are on one timeline, sample for sample.</summary>
+    internal static double[] Brightness(double[] disc, double fs, SstvDecodeOptions o, out double[]? wide)
     {
       // thin wrapper over the streaming stage (P7.5(d)); equivalence pinned by SstvStreamingStageTests
       var opts = fs == o.SampleRate ? o : o with { SampleRate = fs };
       using var stage = new SstvStreamingBrightness(opts);
       var brightness = new double[disc.Length];
+      wide = opts.BrightnessWideBwHz > opts.BrightnessBwHz ? new double[disc.Length] : null;
+
       int at = CopySpan(stage.Process(disc), brightness, 0);
-      CopySpan(stage.Flush(), brightness, at);
+      if (wide != null) CopySpan(stage.Wide, wide, 0);
+      int atWide = at;
+      at = CopySpan(stage.Flush(), brightness, at);
+      if (wide != null) CopySpan(stage.Wide, wide, atWide);
       return brightness;
     }
 
@@ -255,17 +266,17 @@ namespace VE3NEA.SkySSTV
     /// <summary><paramref name="corr"/> is the RLS slant/clock correction (period / nominal): it scales the
     /// intra-line segment and pixel widths so a sample-clock error does not shear pixels within a line
     /// (retro item F; Hopper's <c>TimeScale = samplesPerMs·CorrFactor</c>).</summary>
-    private static RgbImage Reconstruct(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o,
-      double[] lineOnset, double corr)
+    private static RgbImage Reconstruct(double[] brightness, double[]? wide, SstvModeSpec spec,
+      SstvDecodeOptions o, double[] lineOnset, double corr)
       => spec.Layout == SstvColorLayout.Pd
-         ? ReconstructPd(brightness, spec, o, lineOnset, corr)
-         : ReconstructRobot(brightness, spec, o, lineOnset, corr);
+         ? ReconstructPd(brightness, wide, spec, o, lineOnset, corr)
+         : ReconstructRobot(brightness, wide, spec, o, lineOnset, corr);
 
-    private static RgbImage ReconstructRobot(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o,
-      double[] lineOnset, double corr)
+    private static RgbImage ReconstructRobot(double[] brightness, double[]? wide, SstvModeSpec spec,
+      SstvDecodeOptions o, double[] lineOnset, double corr)
     {
       int w = spec.Width, h = spec.Height;
-      var bw = new BrightnessWindow(brightness, 0, brightness.Length);
+      var bw = new BrightnessWindow(brightness, wide, 0, brightness.Length);
       var y = new double[h * w];
       var cr = new double[h * w];
       var cb = new double[h * w];
@@ -273,7 +284,11 @@ namespace VE3NEA.SkySSTV
       var hasCb = new bool[h];
 
       for (int line = 0; line < spec.LineCount && line < h; line++)
-        RenderRobotLine(bw, spec, o, lineOnset[line], corr, line, y, cr, cb, hasCr, hasCb);
+      {
+        double prev = line > 0 ? lineOnset[line - 1] : double.NaN;
+        double weight = WideWeight(bw, spec, o, corr, lineOnset[line], prev);
+        RenderRobotLine(bw, spec, o, lineOnset[line], corr, line, weight, y, cr, cb, hasCr, hasCb);
+      }
 
       FillMissingChroma(cr, hasCr, w, h);
       FillMissingChroma(cb, hasCb, w, h);
@@ -292,17 +307,21 @@ namespace VE3NEA.SkySSTV
 
     /// <summary>PD layout: each transmitted line is sync → porch → Y(even row) → R-Y → B-Y → Y(odd row),
     /// no separators, and the one chroma pair is shared by the two luma rows (plan §1.8, §2).</summary>
-    private static RgbImage ReconstructPd(double[] brightness, SstvModeSpec spec, SstvDecodeOptions o,
-      double[] lineOnset, double corr)
+    private static RgbImage ReconstructPd(double[] brightness, double[]? wide, SstvModeSpec spec,
+      SstvDecodeOptions o, double[] lineOnset, double corr)
     {
       int w = spec.Width, h = spec.Height;
-      var bw = new BrightnessWindow(brightness, 0, brightness.Length);
+      var bw = new BrightnessWindow(brightness, wide, 0, brightness.Length);
       var y = new double[h * w];
       var cr = new double[h * w];
       var cb = new double[h * w];
 
       for (int line = 0; line < spec.LineCount && 2 * line + 1 < h; line++)
-        RenderPdLine(bw, spec, o, lineOnset[line], corr, line, y, cr, cb);
+      {
+        double prev = line > 0 ? lineOnset[line - 1] : double.NaN;
+        double weight = WideWeight(bw, spec, o, corr, lineOnset[line], prev);
+        RenderPdLine(bw, spec, o, lineOnset[line], corr, line, weight, y, cr, cb);
+      }
 
       if (o.WienerEnabled) SstvWienerFilter.Apply(y, cr, cb, w, h);
 
@@ -321,7 +340,8 @@ namespace VE3NEA.SkySSTV
     /// shared by the batch reconstruction and the streaming image builder (P7.5). <paramref name="onset"/>
     /// is the line's tracked sync-onset sample (absolute, window coordinates).</summary>
     internal static void RenderRobotLine(in BrightnessWindow bw, SstvModeSpec spec, SstvDecodeOptions o,
-      double onset, double corr, int line, double[] y, double[] cr, double[] cb, bool[] hasCr, bool[] hasCb)
+      double onset, double corr, int line, double wideWeight, double[] y, double[] cr, double[] cb,
+      bool[] hasCr, bool[] hasCb)
     {
       int w = spec.Width;
       double fs = o.SampleRate * corr;                       // clock-corrected pixel time scale (retro F)
@@ -334,16 +354,16 @@ namespace VE3NEA.SkySSTV
         cursor += n;
         switch (kind)
         {
-          case Seg.ScanY: ReadScan(bw, segStart, n, w, o, y, line * w); break;
+          case Seg.ScanY: ReadScan(bw, segStart, n, w, o, wideWeight, y, line * w); break;
           case Seg.Sep: sepFreq = SegmentFreq(bw, segStart, n); break;
-          case Seg.ScanRY: ReadScan(bw, segStart, n, w, o, cr, line * w); hasCr[line] = true; break;
-          case Seg.ScanBY: ReadScan(bw, segStart, n, w, o, cb, line * w); hasCb[line] = true; break;
+          case Seg.ScanRY: ReadScan(bw, segStart, n, w, o, wideWeight, cr, line * w); hasCr[line] = true; break;
+          case Seg.ScanBY: ReadScan(bw, segStart, n, w, o, wideWeight, cb, line * w); hasCb[line] = true; break;
           case Seg.ScanChromaAuto:
             // Robot36: the separator tone names the chroma (1500 = R-Y, 2300 = B-Y, retro item M);
             // an ambiguous read falls back to the nominal even/odd alternation.
             bool ry = sepFreq < 1700 || (sepFreq < 2100 && (line & 1) == 0);
-            if (ry) { ReadScan(bw, segStart, n, w, o, cr, line * w); hasCr[line] = true; }
-            else { ReadScan(bw, segStart, n, w, o, cb, line * w); hasCb[line] = true; }
+            if (ry) { ReadScan(bw, segStart, n, w, o, wideWeight, cr, line * w); hasCr[line] = true; }
+            else { ReadScan(bw, segStart, n, w, o, wideWeight, cb, line * w); hasCb[line] = true; }
             break;
         }
       }
@@ -352,18 +372,19 @@ namespace VE3NEA.SkySSTV
     /// <summary>One transmitted PD line (= two image rows sharing a chroma pair) rendered onto the planes —
     /// shared by the batch reconstruction and the streaming image builder (P7.5).</summary>
     internal static void RenderPdLine(in BrightnessWindow bw, SstvModeSpec spec, SstvDecodeOptions o,
-      double onset, double corr, int line, double[] y, double[] cr, double[] cb)
+      double onset, double corr, int line, double wideWeight, double[] y, double[] cr, double[] cb)
     {
       int w = spec.Width;
       double fs = o.SampleRate * corr;                       // clock-corrected pixel time scale (retro F)
       int Ms(double ms) => (int)Math.Round(ms / 1000.0 * fs);
       int rowA = 2 * line, rowB = 2 * line + 1;
       double cursor = onset + Ms(spec.SyncMs) + Ms(spec.SyncPorchMs);   // skip this line's sync+porch
+      double ww = wideWeight;
 
-      int n = Ms(spec.ScanYMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, y, rowA * w); cursor += n;
-      n = Ms(spec.ScanChromaMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, cr, rowA * w); cursor += n;
-      n = Ms(spec.ScanChromaMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, cb, rowA * w); cursor += n;
-      n = Ms(spec.ScanYMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, y, rowB * w); cursor += n;
+      int n = Ms(spec.ScanYMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, ww, y, rowA * w); cursor += n;
+      n = Ms(spec.ScanChromaMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, ww, cr, rowA * w); cursor += n;
+      n = Ms(spec.ScanChromaMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, ww, cb, rowA * w); cursor += n;
+      n = Ms(spec.ScanYMs); ReadScan(bw, (long)Math.Round(cursor), n, w, o, ww, y, rowB * w); cursor += n;
 
       Array.Copy(cr, rowA * w, cr, rowB * w, w);             // one chroma pair serves both rows
       Array.Copy(cb, rowA * w, cb, rowB * w, w);
@@ -372,9 +393,10 @@ namespace VE3NEA.SkySSTV
     /// <summary>Matched integrator: average the brightness over the centered fraction of each pixel's sample
     /// span, map Hz→value, store into <paramref name="dst"/> at <paramref name="rowOffset"/>. Samples outside
     /// the window (fallen off the streaming ring, or past the current stream end) are skipped, exactly like
-    /// the batch out-of-array guard.</summary>
+    /// the batch out-of-array guard. Both Stage-3 branches are integrated and mixed at
+    /// <paramref name="wideWeight"/> (§6.3) — 0 is the narrow branch alone, 1 the wide one.</summary>
     private static void ReadScan(in BrightnessWindow bw, long segStart, int n, int w, SstvDecodeOptions o,
-      double[] dst, int rowOffset)
+      double wideWeight, double[] dst, int rowOffset)
     {
       if (n <= 0) return;
       double frac = Math.Clamp(o.PixelWindowFraction, 0.05, 1.0);
@@ -388,12 +410,55 @@ namespace VE3NEA.SkySSTV
         long a = iLo + trim, b = iHi - trim;
         if (b <= a) { a = iLo; b = iHi; }
 
-        double sum = 0; int cnt = 0;
+        double sum = 0, sumWide = 0; int cnt = 0;
         for (long i = a; i < b; i++)
-          if (bw.TryGet(segStart + i, out double s)) { sum += s; cnt++; }
-        double f = cnt > 0 ? sum / cnt : SstvTones.Center;
+          if (bw.TryGet(segStart + i, out double s, out double sWide)) { sum += s; sumWide += sWide; cnt++; }
+        // the branches are sample-aligned, so blending their integrals equals integrating the blend
+        double f = cnt > 0 ? (sum + wideWeight * (sumWide - sum)) / cnt : SstvTones.Center;
         dst[rowOffset + p] = SstvTones.FreqToValue(f);
       }
+    }
+
+
+    /// <summary>Weight of the wide Stage-3 branch for one transmitted line (§6.3): 1 where the line is
+    /// clean enough that the extra video bandwidth costs nothing visible, 0 where it is noise-dominated
+    /// and the narrow branch's rejection is worth the resolution, ramped linearly between
+    /// <see cref="SstvDecodeOptions.AdaptiveSigmaLow"/> and <see cref="SstvDecodeOptions.AdaptiveSigmaHigh"/>.
+    ///
+    /// The noise σ is the Wiener's row estimator (<see cref="SstvWienerFilter"/>) taken BEFORE pixel
+    /// integration: the median absolute difference between this line's samples and the previous line's at
+    /// the same intra-line phase, over the whole line period, / 0.6745 / √2. Scan lines are independent
+    /// time slices, so their difference carries the full noise power even where the post-LPF FM noise is
+    /// horizontally correlated, and the median across the line rejects the picture's own vertical detail.
+    /// Measuring it on the WIDE branch prices the bandwidth actually being decided on. Being a pure
+    /// function of the brightness window and the line grid, it needs no rendered rows and survives the
+    /// §1.13 dirty re-render unchanged.</summary>
+    internal static double WideWeight(in BrightnessWindow bw, SstvModeSpec spec, SstvDecodeOptions o,
+      double corr, double onset, double prevOnset)
+    {
+      if (o.BrightnessWideBwHz <= o.BrightnessBwHz || double.IsNaN(prevOnset)) return 0.0;
+
+      const int Probes = 128;                                // enough for a ~10 % σ estimate, ~1 % of a line
+      double period = spec.LinePeriodMs / 1000.0 * o.SampleRate * corr;
+      double step = period / Probes;
+      Span<double> absd = stackalloc double[Probes];
+      int cnt = 0;
+      for (int k = 0; k < Probes; k++)
+      {
+        long at = (long)Math.Round(onset + k * step);
+        long atPrev = (long)Math.Round(prevOnset + k * step);
+        if (bw.TryGetWide(at, out double a) && bw.TryGetWide(atPrev, out double b))
+          absd[cnt++] = Math.Abs(a - b);
+      }
+      if (cnt < Probes / 2) return 0.0;                      // too little of the pair survived the ring
+
+      absd = absd[..cnt];
+      absd.Sort();
+      double sigmaHz = absd[cnt / 2] / 0.6745 / Math.Sqrt(2.0);
+      double sigma = sigmaHz * 255.0 / SstvTones.Span;       // Hz → 0..255 luma units
+
+      double lo = o.AdaptiveSigmaLow, hi = Math.Max(o.AdaptiveSigmaHigh, lo + 1e-9);
+      return Math.Clamp((hi - sigma) / (hi - lo), 0.0, 1.0);
     }
 
     /// <summary>Mean brightness frequency (Hz) over the central half of a segment — used to read the

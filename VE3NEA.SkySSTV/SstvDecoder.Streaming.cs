@@ -48,8 +48,10 @@ namespace VE3NEA.SkySSTV
     private readonly int visHeader;
     private readonly int visBit;
 
-    // rolling brightness buffer (absolute-indexed), sized for the comb's back-dated span
+    // rolling brightness buffers (absolute-indexed), sized for the comb's back-dated span — the §6.3
+    // narrow and wide Stage-3 branches share one base/length, being sample-aligned by construction
     private double[] brightBuf;
+    private double[]? brightWideBuf;
     private long brightBase;
     private int brightLen;
     private readonly int brightKeep;
@@ -92,13 +94,14 @@ namespace VE3NEA.SkySSTV
       foreach (var spec in SstvModes.All) maxPeriodMs = Math.Max(maxPeriodMs, spec.LinePeriodMs);
       brightKeep = (int)(maxPeriodMs / 1000.0 * fs) * (SstvSoftComb.MemoryPeriods + 60);
       brightBuf = new double[1 << 18];
+      if (o.BrightnessWideBwHz > o.BrightnessBwHz) brightWideBuf = new double[1 << 18];
     }
 
     /// <summary>Feed the next contiguous IQ block (any size); raises image events for what settled.</summary>
     public void Process(ReadOnlySpan<Complex32> iq)
     {
       AppendSync(syncBand.Process(detDisc.Process(iq)));
-      AppendBright(brightness.Process(vidDisc.Process(iq)));
+      AppendBright(brightness.Process(vidDisc.Process(iq)), brightness.Wide);
       Advance(endOfStream: false);
     }
 
@@ -114,8 +117,8 @@ namespace VE3NEA.SkySSTV
       flushed = true;
       AppendSync(syncBand.Process(detDisc.Flush()));
       AppendSync(syncBand.Flush());
-      AppendBright(brightness.Process(vidDisc.Flush()));
-      AppendBright(brightness.Flush());
+      AppendBright(brightness.Process(vidDisc.Flush()), brightness.Wide);
+      AppendBright(brightness.Flush(), brightness.Wide);
       Advance(endOfStream: true);
 
       chain.Finish();
@@ -197,7 +200,7 @@ namespace VE3NEA.SkySSTV
     {
       var lines = chain.Extractor.Lines;
       int from = Math.Min(chain.Extractor.TakeLineRewind(), renderFrom);
-      var bw = new BrightnessWindow(brightBuf, brightBase, brightLen);
+      var bw = new BrightnessWindow(brightBuf, brightWideBuf, brightBase, brightLen);
 
       for (int i = from; i < lines.Count; i++)
       {
@@ -276,10 +279,15 @@ namespace VE3NEA.SkySSTV
       syncLen += samples.Length;
     }
 
-    private void AppendBright(ReadOnlySpan<double> samples)
+    private void AppendBright(ReadOnlySpan<double> samples, ReadOnlySpan<double> wide)
     {
       EnsureCapacity(ref brightBuf, brightLen + samples.Length);
       samples.CopyTo(brightBuf.AsSpan(brightLen));
+      if (brightWideBuf != null)
+      {
+        EnsureCapacity(ref brightWideBuf, brightLen + samples.Length);
+        wide.CopyTo(brightWideBuf.AsSpan(brightLen));
+      }
       brightLen += samples.Length;
     }
 
@@ -310,6 +318,7 @@ namespace VE3NEA.SkySSTV
       int drop = (int)(keepFrom - brightBase);
       if (drop <= 0) return;
       Array.Copy(brightBuf, drop, brightBuf, 0, brightLen - drop);
+      if (brightWideBuf != null) Array.Copy(brightWideBuf, drop, brightWideBuf, 0, brightLen - drop);
       brightLen -= drop;
       brightBase += drop;
     }

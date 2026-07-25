@@ -57,16 +57,21 @@ namespace VE3NEA.SkySSTV
     {
       double onset = Train.GetLineOnset(pulseNo);
       double corr = Train.Regr.CorrFactor;
+      // the §6.3 branch weight reads the previous line straight from the ring, so a re-render reproduces
+      // it exactly — nothing about it depends on what has already been rendered
+      double prevOnset = pulseNo > 0 ? Train.GetLineOnset(pulseNo - 1) : double.NaN;
+      double weight = SstvDecoder.WideWeight(bw, spec, o, corr, onset, prevOnset);
+
       if (spec.Layout == SstvColorLayout.Pd)
       {
         if (pulseNo < 0 || pulseNo >= spec.LineCount || 2 * pulseNo + 1 >= spec.Height) return;
-        SstvDecoder.RenderPdLine(bw, spec, o, onset, corr, pulseNo, y, cr, cb);
+        SstvDecoder.RenderPdLine(bw, spec, o, onset, corr, pulseNo, weight, y, cr, cb);
         ValidRows = Math.Max(ValidRows, 2 * pulseNo + 2);
       }
       else
       {
         if (pulseNo < 0 || pulseNo >= Math.Min(spec.LineCount, spec.Height)) return;
-        SstvDecoder.RenderRobotLine(bw, spec, o, onset, corr, pulseNo, y, cr, cb, hasCr, hasCb);
+        SstvDecoder.RenderRobotLine(bw, spec, o, onset, corr, pulseNo, weight, y, cr, cb, hasCr, hasCb);
         ValidRows = Math.Max(ValidRows, pulseNo + 1);
       }
       Dirty = true;

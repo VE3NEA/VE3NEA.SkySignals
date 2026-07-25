@@ -61,11 +61,53 @@ namespace VE3NEA.SkySSTV
     public int StartSample { get; init; } = 0;
 
     /// <summary>Half-bandwidth (Hz) of the Stage-3 complex low-pass that isolates the video subcarrier after
-    /// the mix-to-baseband, i.e. the streaming analytic/brightness filter (plan §1.4/§6.1). Wider = sharper
-    /// pixel edges + more noise, narrower = smoother + less noise. The real filter sweep (2026-07-02, vs the
+    /// the mix-to-baseband, i.e. the streaming analytic/brightness filter (plan §1.4/§6.1) — the NARROW
+    /// branch of the §6.3 adaptive pair, used at full weight on noise-dominated lines. Wider = sharper pixel
+    /// edges + more noise, narrower = smoother + less noise. The real filter sweep (2026-07-02, vs the
     /// RXSSTV reference) put the sweet spot at 500–650 Hz — Hopper's ±500 Hz choice confirmed; 350 Hz
-    /// over-smooths, 1800 Hz leaves heavy speckle on real signals.</summary>
+    /// over-smooths, 1800 Hz leaves heavy speckle on real signals. That sweep was judged on a NOISY capture,
+    /// which is why it is the narrow end of the pair and not a global default: see
+    /// <see cref="BrightnessWideBwHz"/>.</summary>
     public double BrightnessBwHz { get; init; } = 600.0;
+
+    /// <summary>Half-bandwidth (Hz) of the WIDE Stage-3 branch (plan §6.3), used at full weight on
+    /// noise-free lines; the reconstruction blends the two branches per line against the measured noise
+    /// (<see cref="AdaptiveSigmaLow"/>/<see cref="AdaptiveSigmaHigh"/>). Set ≤ <see cref="BrightnessBwHz"/>
+    /// to disable the second branch entirely (the pre-2026-07-25 fixed-narrow behavior).
+    ///
+    /// Rationale (2026-07-25, <c>SstvSmoothingProbe</c>): Robot36 carries 320 pixels in 88 ms → 3636 px/s,
+    /// pixel Nyquist 1818 Hz, and at ±400 Hz deviation the subcarrier's Carson half-width is ≈2.2 kHz — so
+    /// ±600 Hz keeps about a quarter of the video band and smears 1-pixel strokes UNCONDITIONALLY, at any
+    /// SNR. The noise-free closed loop proves it is the filter and not the Wiener post-filter: a rendered
+    /// text card decodes illegibly at 600 Hz (PSNR 11.4 dB) and cleanly at 1200–1600 Hz (13.4/14.1 dB) with
+    /// zero noise present. Ceiling: the 1900 Hz mix puts the spectral mirror at −3800 Hz, whose upper edge
+    /// sits near −1580 Hz, so a cutoff above ~1500 Hz folds the mirror in as diagonal cross-hatch (visible
+    /// at 2400 Hz in the same probe). 1200 rather than 1600 because the caption line is already fully
+    /// legible there while the decoded row noise is nearly half (7.1 vs 12.9 luma units on the 286 s
+    /// burst) — the last 400 Hz buys sharpness that the extra speckle immediately spends.</summary>
+    public double BrightnessWideBwHz { get; init; } = 1200.0;
+
+    /// <summary>Per-line noise σ (in 0..255 luma units, measured on the wide branch by
+    /// <see cref="SstvDecoder.WideWeight"/>) at or below which the wide branch is used alone. Below this the
+    /// line is clean enough that the extra bandwidth costs nothing visible and buys back the small text.
+    /// Note this σ is taken BEFORE pixel integration, so it runs several times the post-integration row
+    /// noise the Wiener filter sees.</summary>
+    public double AdaptiveSigmaLow { get; init; } = 35.0;
+
+    /// <summary>Per-line noise σ (0..255 luma units) at or above which the narrow branch is used alone —
+    /// the line is noise-dominated and the resolution is unrecoverable, so take the noise rejection. The
+    /// blend ramps linearly between <see cref="AdaptiveSigmaLow"/> and this value.
+    ///
+    /// The 35/65 pair is anchored on the corpus (2026-07-25, <c>SstvSmoothingProbe.SigmaCalibration</c>,
+    /// per-burst median σ) against the visual before/after: the 07-23 21:42 burst at 286 s reads 34 and is
+    /// the case that must go fully wide (its caption line is illegible at 600 Hz and clean at 1200); the
+    /// Monitor-3 285 s text card reads 62 and gains nothing legible from the extra bandwidth (its text is
+    /// large) while picking up speckle, so it sits at ≈0.1; the 566 s burst (78), the Monitor-3 135 s burst
+    /// (208) and the below-threshold 04-18 capture (224) stay fully narrow, i.e. bit-identical to the
+    /// pre-adaptive decoder. The estimator is content-robust as measured — replacing the across-line median
+    /// with the 25th percentile moves every burst by under 5 %, so the p10..p90 spread WITHIN a burst
+    /// (22..58 on the 286 s case) is real fading, and the per-line ramp tracks it deliberately.</summary>
+    public double AdaptiveSigmaHigh { get; init; } = 65.0;
 
     /// <summary>Low edge (Hz) of the Stage-2 audio bandpass applied to the discriminated audio before ALL
     /// sync / VIS / mode statistics (plan §3, retro item J). The coherence statistic divides by total window

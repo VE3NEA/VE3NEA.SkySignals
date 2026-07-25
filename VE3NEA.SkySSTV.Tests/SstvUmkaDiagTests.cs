@@ -273,7 +273,7 @@ namespace VE3NEA.SkySSTV.Tests
           double d = Math.Abs(p.Time - predicted);
           if (d < bestD) { bestD = d; onset = p.Time; }
         }
-        SstvDecoder.RenderRobotLine(bw, spec, o, onset, corr, line, y, cr, cb, hasCr, hasCb);
+        SstvDecoder.RenderRobotLine(bw, spec, o, onset, corr, line, 0.0, y, cr, cb, hasCr, hasCb);
       }
       SstvDecoder.FillMissingChroma(cr, hasCr, w, h);
       SstvDecoder.FillMissingChroma(cb, hasCb, w, h);
