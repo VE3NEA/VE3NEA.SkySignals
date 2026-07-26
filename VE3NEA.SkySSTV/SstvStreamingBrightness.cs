@@ -129,10 +129,15 @@ namespace VE3NEA.SkySSTV
       public int GroupDelay => fir.GroupDelay;
       public ReadOnlySpan<double> Out => new(outBuf, 0, outLen);
 
+      /// <summary>The click-deposit templates for this branch (declick plan 2a). Built here because the
+      /// shape a phase slip deposits on this branch's baseband pair IS this branch's own kernel.</summary>
+      public SstvClickTemplates Templates { get; }
+
       public Branch(double cutoffHz, double fs, int taps)
       {
         this.fs = fs;
         fir = new StreamingFirComplex(global::VE3NEA.Dsp.BlackmanSincKernel(cutoffHz / fs, taps));
+        Templates = new SstvClickTemplates(cutoffHz / fs, taps);
       }
 
       public void Reset() => outLen = 0;

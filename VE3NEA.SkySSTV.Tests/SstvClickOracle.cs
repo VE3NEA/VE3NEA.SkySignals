@@ -227,6 +227,27 @@ namespace VE3NEA.SkySSTV.Tests
       return template;
     }
 
+    /// <summary>The complex baseband pair one brightness branch works on: the production mix by the 1900 Hz
+    /// center followed by that branch's low-pass, whole-array and 'same'-aligned, stopping short of
+    /// <c>InstFreq</c>. This is the domain Phase 2 detects and subtracts in, and the domain in which a click
+    /// deposit is ADDITIVE — instantaneous frequency is not, which is why the stage cannot be judged on
+    /// brightness samples alone. Index-aligned with <paramref name="disc"/>, hence with the oracle's clicks.
+    /// </summary>
+    /// <param name="taps">Kernel length. Both brightness branches share the NARROW branch's tap count so
+    /// their group delays match, so pass that, not the count implied by <paramref name="bwHz"/>.</param>
+    public static Complex32[] BrightnessBaseband(double[] disc, double fs, double bwHz, int taps)
+    {
+      double w = 2 * Math.PI * SstvTones.Center / fs;
+      var mix = new Complex32[disc.Length];
+      for (int i = 0; i < disc.Length; i++)
+      {
+        double ph = -w * i;
+        mix[i] = new Complex32((float)(disc[i] * Math.Cos(ph)), (float)(disc[i] * Math.Sin(ph)));
+      }
+      return global::VE3NEA.LiquidFir.ConvolveSame(mix,
+        global::VE3NEA.Dsp.BlackmanSincKernel(bwHz / fs, taps));
+    }
+
     /// <summary>Re-applies the production blanker's decisions to a repaired stream. The blanker gates on the
     /// IQ ENVELOPE, which disc-domain repair cannot change, so its mask is identical either way — and the
     /// mask is recoverable exactly, as the samples where the production blanked output differs from the raw

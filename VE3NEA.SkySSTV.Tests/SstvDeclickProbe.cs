@@ -492,6 +492,159 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                     2b — detector discriminability
+    // ----------------------------------------------------------------------------------------------------
+
+
+    /// <summary>
+    /// Step 2b, first question: at the brightness stage a click's deposit is band-limited to exactly the
+    /// branch passband, so NO linear filter can separate it from the wanted video — matched filtering can
+    /// only estimate a flagged event, never find one. What makes an event findable is the nonlinearity: the
+    /// wanted signal has near-constant baseband magnitude and an in-band instantaneous frequency, and
+    /// signal-plus-deposit has neither. This probe measures how well each of the plan's two candidates
+    /// ((i) out-of-band instantaneous frequency, (ii) magnitude deviation from the running level) actually
+    /// separates oracle-known clicks from everything else, so 2b can pick one instead of shipping "and/or".
+    ///
+    /// <para>Scored at EVENT level against <see cref="SstvClickOracle"/> truth, because a deposit is ~320
+    /// samples wide and a per-sample confusion matrix would count its own tails as false alarms. Run on the
+    /// wide branch (the plan's detection branch) and on the disc stream the declicker will really see — the
+    /// production chain's, blanker included — with the unblanked stream beside it to show how much of the
+    /// problem Phase 1 has already taken away.</para>
+    /// </summary>
+    [ManualFact("2026-07-25 (blanked arm, best operating point per rung; the deposit is 6.7 ms wide, so " +
+      "clicks/s × 0.0067 is how many overlap): -4 dB 1522 clicks/s (10.2 deep) freq>2.5 recall 0.345 " +
+      "precision 0.559, 419 false/s | 0 dB 868/s (5.8 deep) freq>4.0 recall 0.254 precision 0.532, 197 " +
+      "false/s | +4 dB 265/s (1.8 deep) freq>1.5 recall 0.528 precision 0.366, 258 false/s | +8 dB 18/s " +
+      "(0.12 deep) |mag|>0.5 recall 0.792 precision 0.358, 26 false/s or |mag|>0.7 recall 0.433 precision " +
+      "0.654, 4 false/s. Timing error is censored at 8 samples by the matcher and reads 3.3-6.9 " +
+      "EVERYWHERE, i.e. saturated: the coarse arrival is never better than ±4 samples, so the sub-sample " +
+      "refinement 2b specified has nothing to refine. Frequency dominates at and below +4 dB, magnitude " +
+      "only at +8 dB. See the plan's 2b entry: this measurement, plus the linearity equivalence, moves the " +
+      "subtraction upstream.")]
+    public void BrightnessDetectorRoc()
+    {
+      int taps = SstvDecoder.KernelTaps(new SstvDecodeOptions().BrightnessBwHz, Fs);
+      double wideBw = new SstvDecodeOptions().BrightnessWideBwHz;
+      double videoBand = (SstvTones.White - SstvTones.Black) / 2 + 100;   // ±400 Hz of subcarrier swing
+
+      output.WriteLine($"wide branch {wideBw} Hz, {taps} taps; video band ±{videoBand:0} Hz; " +
+        "match tolerance ±4 samples");
+
+      foreach (double cnr in new[] { -4.0, 0.0, 4.0, 8.0 })
+      {
+        var spec = SstvModes.Get(SstvMode.Robot36);
+        var noisy = Encode(GrayscaleGradient(spec.Width, spec.Height), cnr);
+        var clicks = Oracle(noisy);
+        var o = DecodeOptions();
+
+        foreach (var (arm, opts) in new[]
+        {
+          ("blanked", o),
+          ("raw", o with { BlankerThreshold = 0.0 })
+        })
+        {
+          double[] disc = SstvDecoder.Discriminator(noisy, opts);
+          var bb = SstvClickOracle.BrightnessBaseband(disc, Fs, wideBw, taps);
+          double seconds = disc.Length / Fs;
+
+          var mag = new double[bb.Length];
+          var freq = new double[bb.Length];
+          double level = MedianMagnitude(bb);
+          for (int i = 0; i < bb.Length; i++)
+          {
+            double m = Math.Sqrt((double)bb[i].Real * bb[i].Real +
+              (double)bb[i].Imaginary * bb[i].Imaginary);
+            mag[i] = level <= 0 ? 0 : Math.Abs(m - level) / level;
+            freq[i] = i == 0 ? 0 : Math.Abs(BasebandFreq(bb[i], bb[i - 1])) / videoBand;
+          }
+
+          output.WriteLine($"CNR {cnr,5:+0;-0;0} dB {arm,-8} {clicks.Count} oracle clicks in " +
+            $"{seconds:0.0} s ({clicks.Count / seconds:0} /s), baseband level {level:0}");
+          Score("  |mag|", mag, new[] { 0.3, 0.5, 0.7, 0.9 }, clicks, seconds);
+          Score("  freq ", freq, new[] { 1.5, 2.5, 4.0, 6.0 }, clicks, seconds);
+        }
+      }
+    }
+
+    /// <summary>Threshold a detection statistic, group the crossings into events, and match them to the
+    /// oracle's clicks — recall over clicks, precision over events, and the timing error the sub-sample
+    /// estimate of 2b would start from.</summary>
+    private void Score(string name, double[] stat, double[] thresholds,
+      IReadOnlyList<SstvClickOracle.OracleClick> clicks, double seconds)
+    {
+      const int MatchTol = 4;
+      var truth = new int[stat.Length];
+      foreach (var click in clicks)
+        for (int k = Math.Max(0, click.Index - MatchTol);
+             k <= Math.Min(stat.Length - 1, click.Index + MatchTol); k++)
+          truth[k] = click.Index + 1;                          // 0 = no click, else index+1
+
+      foreach (double threshold in thresholds)
+      {
+        int events = 0, matchedEvents = 0;
+        var hit = new HashSet<int>();
+        double timingError = 0;
+
+        int i = 0;
+        while (i < stat.Length)
+        {
+          if (stat[i] < threshold) { i++; continue; }
+
+          int end = i, peak = i;
+          while (end < stat.Length && stat[end] >= threshold)
+          {
+            if (stat[end] > stat[peak]) peak = end;
+            end++;
+          }
+          events++;
+
+          // the event owns whichever oracle click its peak lands nearest, within tolerance
+          int owner = truth[peak];
+          for (int k = 1; owner == 0 && k <= MatchTol; k++)
+          {
+            if (peak - k >= 0 && truth[peak - k] != 0) owner = truth[peak - k];
+            else if (peak + k < stat.Length && truth[peak + k] != 0) owner = truth[peak + k];
+          }
+          if (owner != 0)
+          {
+            matchedEvents++;
+            hit.Add(owner - 1);
+            timingError += Math.Abs(peak - (owner - 1));
+          }
+          i = end;
+        }
+
+        double recall = clicks.Count == 0 ? 0 : (double)hit.Count / clicks.Count;
+        double precision = events == 0 ? 0 : (double)matchedEvents / events;
+        output.WriteLine($"{name} >{threshold,4:0.0}: events {events,6} " +
+          $"recall {recall,5:0.000} precision {precision,5:0.000} " +
+          $"false {(events - matchedEvents) / seconds,6:0} /s " +
+          $"timing {(matchedEvents == 0 ? 0 : timingError / matchedEvents),4:0.0} samples");
+      }
+    }
+
+    /// <summary>Instantaneous frequency of the baseband pair, Hz (0 = the 1900 Hz subcarrier center).</summary>
+    private static double BasebandFreq(Complex32 now, Complex32 prev)
+    {
+      double re = (double)now.Real * prev.Real + (double)now.Imaginary * prev.Imaginary;
+      double im = (double)now.Imaginary * prev.Real - (double)now.Real * prev.Imaginary;
+      return Math.Atan2(im, re) * Fs / (2 * Math.PI);
+    }
+
+    /// <summary>Median |bb| — the magnitude level a deposit is judged against. Robust to the clicks
+    /// themselves, unlike a mean, which is the whole reason the plan named a median.</summary>
+    private static double MedianMagnitude(Complex32[] bb)
+    {
+      if (bb.Length == 0) return 0;
+      var mags = new double[bb.Length];
+      for (int i = 0; i < bb.Length; i++)
+        mags[i] = Math.Sqrt((double)bb[i].Real * bb[i].Real + (double)bb[i].Imaginary * bb[i].Imaginary);
+      Array.Sort(mags);
+      return mags[mags.Length / 2];
+    }
+
     /// <summary>Coefficient of variation of the channel-filtered envelope — σ(|z|)/mean(|z|). Monotone in
     /// CNR by construction and bounded at both ends: an unmodulated-amplitude FM carrier makes it 0, and as
     /// the carrier vanishes the envelope becomes Rayleigh and it approaches √(4/π − 1) = 0.523. The floor is
