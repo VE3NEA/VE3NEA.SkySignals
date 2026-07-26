@@ -516,9 +516,11 @@ namespace VE3NEA.SkySSTV.Tests
       "rungs, subtract the ends). PSNR within 0.2 dB everywhere; mean WideWeight identical to 0.01; " +
       "gated% identical by construction, which is what makes this a pure repair A/B. Residual area favours " +
       "interpolation throughout (0.08-0.13 vs 0.09-0.17) because it removes the window the statistic reads. " +
-      "The 3a stage stacked on top moves nothing (<=1 luma either way) and gates only 0.1% more. " +
       "§3.2 item 1's 'subtract, do not gate' does not hold for SSTV: only the removed AREA survives the " +
-      "±600 Hz brightness filter, and both methods remove the same area.")]
+      "±600 Hz brightness filter, and both methods remove the same area. " +
+      "This run also carried 'interp+3a' and 'subtract+3a' arms, which stacked the ported 3a detector on " +
+      "top: they moved nothing (<=1 luma either way) and gated only 0.1% more. Those arms were deleted with " +
+      "the 3a stage on 2026-07-26 and cannot be reproduced from this probe.")]
     public void SubtractVsInterpolateLadder()
     {
       var spec = SstvModes.Get(SstvMode.Robot36);
@@ -538,21 +540,15 @@ namespace VE3NEA.SkySSTV.Tests
         ReportGate("interpolate", SstvDecoder.Discriminator(iq, o), raw, clicks, src, o, cleanDisc);
         ReportGate("subtract", SstvDecoder.Discriminator(iq,
           o with { BlankerRepair = BlankerRepairMode.SubtractArea }), raw, clicks, src, o, cleanDisc);
-
-        // the 3a stage on top of each, to price the ported detector on the real ladder rather than on the
-        // synthetic subcarrier its own tests use
-        ReportGate("interp+3a", SstvDecoder.Discriminator(iq, o with { ClickRepair = true }),
-          raw, clicks, src, o, cleanDisc);
-        ReportGate("subtract+3a", SstvDecoder.Discriminator(iq,
-            o with { BlankerRepair = BlankerRepairMode.SubtractArea, ClickRepair = true }),
-          raw, clicks, src, o, cleanDisc);
       }
     }
 
     /// <summary>Step 3d on the real corpus: the same A/B where the P6(c) defaults were locked, including the
     /// below-threshold 04-18 capture whose acquisition is the guardrail every arm in this plan has had to
     /// clear.</summary>
-    [ManualFact("2026-07-26 (raw / interpolate / subtract / subtract+3a). rowNoise: utmn2236 " +
+    [ManualFact("2026-07-26 (raw / interpolate / subtract / subtract+3a — the last arm was deleted with the " +
+      "3a stage on 2026-07-26 and no longer runs; its figures are kept because they show it changed " +
+      "nothing). rowNoise: utmn2236 " +
       "20.1/16.8/17.4/17.4, m3_1102 18.5/17.0/17.1/17.2, umka0418 15.8/15.7/15.7/16.0, m3_1237 " +
       "23.7/23.2/24.1/24.0, m3_1102b 24.6/20.7/21.0/21.1 — interpolation is smoother by 0.1-0.7 on every " +
       "case, as a flattening operation must be, and rowNoise rewards exactly that. maxScore tells the " +
@@ -583,9 +579,7 @@ namespace VE3NEA.SkySSTV.Tests
         {
           ("raw", baseOpts with { BlankerThreshold = 0.0 }),
           ("interpolate", baseOpts),
-          ("subtract", baseOpts with { BlankerRepair = BlankerRepairMode.SubtractArea }),
-          ("subtract+3a", baseOpts with
-            { BlankerRepair = BlankerRepairMode.SubtractArea, ClickRepair = true })
+          ("subtract", baseOpts with { BlankerRepair = BlankerRepairMode.SubtractArea })
         })
         {
           double[] disc = SstvDecoder.Discriminator(seg, o);

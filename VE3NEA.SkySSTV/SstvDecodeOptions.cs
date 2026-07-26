@@ -134,38 +134,22 @@ namespace VE3NEA.SkySSTV
     /// <para>This pairs §3.2 item 1's repair with the one detector measured to work on SSTV — the envelope
     /// gate. 1a and 3a both found that no short-window statistic on the disc stream separates slips from the
     /// 1500–2300 Hz subcarrier; the envelope has no such problem, being constant-amplitude by
-    /// construction.</para></summary>
+    /// construction.</para>
+    ///
+    /// <para>Measured a wash (3b) and therefore not the default: ≤2.0 luma of brightness error either way at
+    /// every CNR rung, with no consistent winner, and interpolation smoother on all five corpus captures.
+    /// Only the removed AREA survives the ±600 Hz brightness filter, and both modes remove the same
+    /// area.</para></summary>
     public BlankerRepairMode BlankerRepair { get; init; } = BlankerRepairMode.Interpolate;
 
 
-    /// <summary>Enables the Phase-3a click repair stage (<see cref="SstvClickRepair"/>): matched-area
-    /// subtraction of the phase slips left in the discriminator output, between the impulse blanker and the
-    /// de-emphasis. Default off until scored on the ladder and the corpus (declick plan 3d).
-    ///
-    /// <para>Independent of the blanker and complementary to it: the blanker gates the samples whose
-    /// ENVELOPE faded, this removes the ±1-cycle steps that survive — including the ones the gate declined,
-    /// since an origin encirclement does not require a deep fade. Where the blanker interpolated, the step
-    /// is already gone and this stage finds nothing to do.</para></summary>
-    public bool ClickRepair { get; init; } = false;
-
-
-    /// <summary>Detection threshold for <see cref="ClickRepair"/>: the phase step across the ±3-sample
-    /// window, in cycles, measured against a guard-median baseline. A slip carries one whole cycle, of which
-    /// roughly half falls inside the window, so this sits below 1 by construction. 0.7 is the FM-speech
-    /// experiment's measured best separation from ordinary noise — lower admits false detections whose
-    /// repair injects a whole cycle of error apiece, and at 0.5 with a loose envelope gate that cost it 7 dB
-    /// of SNR.</summary>
-    public double ClickAreaThresholdCycles { get; init; } = 0.7;
-
-
-    /// <summary>Envelope rejection for <see cref="ClickRepair"/>: a detected step is discarded if the
-    /// envelope there is above this fraction of its tracked mean. Deliberately loose, and a confirmation
-    /// rather than a precondition — an encirclement of the origin needs the resultant to pass <i>around</i>
-    /// the origin, not especially close to it, so tightening it to 0.25 dropped the FM-speech experiment's
-    /// recall on audible clicks to a third. Set it to 0 or above 1 to disable the test; it is skipped
-    /// automatically when no envelope is available (the audio-input entry point, or a bypassed blanker,
-    /// whose envelope tracker never ran).</summary>
-    public double ClickEnvelopeFraction { get; init; } = 0.75;
+    // NOTE (declick plan 3a, removed 2026-07-26): a `ClickRepair` option and its two thresholds used to sit
+    // here, driving a disc-domain area detector ported from the FM-speech experiment. It was measured and
+    // deleted, not merely defaulted off: the 1500-2300 Hz subcarrier is only 21-32 samples per period against
+    // a ~6-sample slip, so the modulation ate 37-73 % of the detection threshold and REVERSED the sign of
+    // real slips (of 24 arrivals: 12 repaired, 5 missed, 7 made worse). It barely triggered on real captures,
+    // so it was dead weight that looked like a feature. The finding is kept in the plan and findings docs;
+    // do not re-add a short-window robust statistic on this stream without reading them first.
 
 
     /// <summary>De-emphasis time constant (µs) applied to the discriminated audio; 0 (the default) disables
