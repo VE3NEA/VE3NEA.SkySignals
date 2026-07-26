@@ -31,6 +31,7 @@ namespace VE3NEA.SkySSTV
 
     private readonly double fs;
     private readonly BlankerGateMode gate;
+    private readonly BlankerRepairMode repairMode;
     private readonly double blankerThreshold;
     private readonly double deEmphasisUs;
 
@@ -79,7 +80,11 @@ namespace VE3NEA.SkySSTV
     private double lastGoodDisc;
     private bool haveGood;
     private double[] run = new double[1024];   // held-back bad run awaiting its right neighbor
+    private double[] runRatio = new double[1024];   // its envelope ratios, which travel with the samples
     private int runLen;
+
+    // Phase-3a click repair (null = disabled), between the blanker and the de-emphasis
+    private readonly SstvClickRepair? repair;
 
     // de-emphasis state
     private double deEmphY;
@@ -97,6 +102,7 @@ namespace VE3NEA.SkySSTV
     {
       fs = o.SampleRate;
       gate = o.BlankerGate;
+      repairMode = o.BlankerRepair;
       blankerThreshold = o.BlankerThreshold;
       strongThreshold = o.BlankerStrongThreshold;
       cvStrong = o.BlankerCvStrong;
@@ -125,7 +131,12 @@ namespace VE3NEA.SkySSTV
       medSort = new double[BaselineMedianLength];
       skirtDisc = new double[2 * SkirtSamples + 1];
       skirtBad = new bool[2 * SkirtSamples + 1];
+
+      if (o.ClickRepair) repair = new SstvClickRepair(fs, o);
     }
+
+    /// <summary>Slips subtracted by the Phase-3a stage, 0 when it is disabled.</summary>
+    public long RepairCount => repair?.RepairCount ?? 0;
 
     /// <summary>Whether the selected gate is armed; either threshold at 0 bypasses the blanker.</summary>
     private bool GateEnabled
@@ -182,10 +193,19 @@ namespace VE3NEA.SkySSTV
       if (runLen > 0)
       {
         if (runLen <= maxGap && haveGood)
-          for (int j = 0; j < runLen; j++) run[j] = lastGoodDisc;
-        for (int j = 0; j < runLen; j++) Emit(run[j]);
+        {
+          if (repairMode == BlankerRepairMode.SubtractArea) SubtractRunArea(lastGoodDisc, lastGoodDisc);
+          else
+            for (int j = 0; j < runLen; j++) run[j] = lastGoodDisc;
+        }
+        for (int j = 0; j < runLen; j++) Emit(run[j], runRatio[j]);
         runLen = 0;
       }
+
+      // and the repair stage's own lookahead, whose tail goes out unexamined
+      if (repair != null)
+        foreach (double d in repair.Flush()) EmitFinal(d);
+
       return new ReadOnlySpan<double>(outBuf, 0, outLen);
     }
 
@@ -233,7 +253,9 @@ namespace VE3NEA.SkySSTV
     /// bound (leave raw) — the bounded max-gap latency of plan §1.13.</summary>
     private void Blank(double mag, double disc)
     {
-      if (!GateEnabled) { Emit(disc); return; }
+      // with the gate bypassed the envelope tracker never runs, so there is no ratio to confirm against —
+      // the repair stage treats NaN as "no envelope" and skips its rejection test
+      if (!GateEnabled) { Emit(disc, double.NaN); return; }
 
       if (!primed)
       {
@@ -291,9 +313,10 @@ namespace VE3NEA.SkySSTV
       bool bad = pendingBadNext;
       if (mag < EnvelopeThreshold * envMean) { bad = true; pendingBadNext = true; }
       else pendingBadNext = false;
+      double ratio = envMean > 0 ? mag / envMean : double.NaN;
       envMean += (mag - envMean) * alpha;
       envMeanSq += (mag * mag - envMeanSq) * alpha;
-      Decide(bad, disc);
+      Decide(bad, disc, ratio);
     }
 
     /// <summary>The envelope-gate threshold for the current sample: the §6 item-1b ramp from
@@ -405,16 +428,24 @@ namespace VE3NEA.SkySSTV
 
       double value = skirtDisc[skirtCenter - skirtBase];
       skirtCenter++;
-      Decide(bad, value);
+      // the amplitude gate carries no envelope statistic, so the repair stage gets no ratio from this path
+      Decide(bad, value, double.NaN);
     }
 
     /// <summary>The run state machine shared by both gates: a bad run is held back until its right neighbor
-    /// arrives (interpolate) or it outgrows the gap bound (leave raw).</summary>
-    private void Decide(bool bad, double disc)
+    /// arrives (interpolate) or it outgrows the gap bound (leave raw). The envelope ratio travels with each
+    /// sample for the Phase-3a stage downstream; where the run is interpolated the step is already gone, so
+    /// what that stage makes of the ratio there does not matter.</summary>
+    private void Decide(bool bad, double disc, double ratio)
     {
       if (bad)
       {
-        if (runLen == run.Length) Array.Resize(ref run, run.Length * 2);
+        if (runLen == run.Length)
+        {
+          Array.Resize(ref run, run.Length * 2);
+          Array.Resize(ref runRatio, runRatio.Length * 2);
+        }
+        runRatio[runLen] = ratio;
         run[runLen++] = disc;
         return;
       }
@@ -423,18 +454,38 @@ namespace VE3NEA.SkySSTV
       {
         if (runLen <= maxGap)
         {
-          // interpolate across the fade: left = the last good sample (or the right neighbor at stream
-          // start, the batch a == 0 case), right = this sample
+          // left = the last good sample (or the right neighbor at stream start, the batch a == 0 case),
+          // right = this sample; the line between them is the modulation the run would have carried
           double left = haveGood ? lastGoodDisc : disc;
-          for (int j = 0; j < runLen; j++)
-            run[j] = left + (disc - left) * (j + 1) / (runLen + 1);
+          if (repairMode == BlankerRepairMode.SubtractArea) SubtractRunArea(left, disc);
+          else
+            for (int j = 0; j < runLen; j++)
+              run[j] = left + (disc - left) * (j + 1) / (runLen + 1);
         }
-        for (int j = 0; j < runLen; j++) Emit(run[j]);
+        for (int j = 0; j < runLen; j++) Emit(run[j], runRatio[j]);
         runLen = 0;
       }
       lastGoodDisc = disc;
       haveGood = true;
-      Emit(disc);
+      Emit(disc, ratio);
+    }
+
+    /// <summary>The §3.2 item-1 alternative to interpolating a condemned run: measure its area above the
+    /// line its neighbours imply, and take exactly that much back out, spread evenly. The run's samples keep
+    /// their noise and their shape — only the offending area goes, which is the only part of a slip that
+    /// survives the video low-pass (0d). Self-limiting by construction: a fade that carried no slip has
+    /// little excess area, so little is removed, where interpolation would have flattened it regardless.
+    /// <para><paramref name="right"/> is the good sample that closed the run, or — at
+    /// <see cref="Flush"/>, where there is no right neighbour — the left one again, which makes the baseline
+    /// the constant the interpolating path uses there.</para></summary>
+    private void SubtractRunArea(double left, double right)
+    {
+      double excess = 0;
+      for (int j = 0; j < runLen; j++)
+        excess += run[j] - (left + (right - left) * (j + 1) / (runLen + 1));
+
+      double step = excess / runLen;
+      for (int j = 0; j < runLen; j++) run[j] -= step;
     }
 
     /// <summary>Final emission, through the optional classic FM de-emphasis (plan §1.3, P6(c)
@@ -443,7 +494,16 @@ namespace VE3NEA.SkySSTV
     /// flattens the noise floor across the subcarrier band. Brightness is the instantaneous frequency of
     /// the dominant subcarrier tone, so the LTI amplitude tilt itself is invisible to the video; only the
     /// noise reshaping (and the pole's small, sub-pixel group delay) can matter.</summary>
-    private void Emit(double disc)
+    private void Emit(double disc, double ratio)
+    {
+      if (repair == null) { EmitFinal(disc); return; }
+      foreach (double d in repair.Push(disc, ratio)) EmitFinal(d);
+    }
+
+    /// <summary>The last link: de-emphasis, then out. Separate from <see cref="Emit"/> because the repair
+    /// stage sits between them — it must see the raw steps, not de-emphasized ones, and it reorders nothing
+    /// but does delay.</summary>
+    private void EmitFinal(double disc)
     {
       if (deEmphasisUs > 0)
       {

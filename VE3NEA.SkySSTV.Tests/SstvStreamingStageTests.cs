@@ -98,6 +98,142 @@ namespace VE3NEA.SkySSTV.Tests
       diffs.Should().Be(0, "the amplitude gate must be independent of the block boundaries");
     }
 
+    /// <summary>The declick-plan 3a click repair adds a second held-back window inside the discriminator —
+    /// a 25-sample lookahead with a rescan that can walk the cursor backwards — so its output must still be
+    /// independent of how the stream is cut into blocks, and must still be exactly one sample per input.
+    /// </summary>
+    [Theory]
+    [InlineData(997)]
+    [InlineData(12000)]
+    [InlineData(int.MaxValue)]
+    public void StreamingDiscriminator_ClickRepair_MatchesBatch(int block)
+    {
+      int n = (int)(3 * Fs);
+      var iq = FadedIq(n, 5);
+      // gate bypassed on purpose: with the blanker on, it interpolates every fade in this fixture and the
+      // repair stage has nothing left to find, so the test would only prove a no-op is block-invariant.
+      // Bypassing it also exercises the NaN-ratio path, where the envelope confirmation is skipped.
+      var o = new SstvDecodeOptions { ClickRepair = true, BlankerThreshold = 0.0 };
+      double[] expected = SstvDecoder.Discriminator(iq, o);
+
+      var got = new List<double>(n);
+      using var sd = new SstvStreamingDiscriminator(o, o.ChannelBwHz);
+      for (int at = 0; at < n; at += Math.Min(block, n))
+      {
+        int len = Math.Min(Math.Min(block, n), n - at);
+        foreach (double v in sd.Process(iq.AsSpan(at, len))) got.Add(v);
+      }
+      foreach (double v in sd.Flush()) got.Add(v);
+
+      got.Count.Should().Be(expected.Length, "the repair stage delays samples, it does not add or drop them");
+      int diffs = 0;
+      for (int i = 0; i < n; i++)
+        if (Math.Abs(got[i] - expected[i]) > 1e-9) diffs++;
+      output.WriteLine($"block={block}: {diffs} samples differ beyond 1e-9, {sd.RepairCount} slips removed");
+      diffs.Should().Be(0, "the repair stage must be independent of the block boundaries");
+      sd.RepairCount.Should().BeGreaterThan(0, "the faded stream must give it something to do");
+    }
+
+    /// <summary>Declick plan 3b: the blanker's area-subtracting repair mode lives inside the run state
+    /// machine, whose whole job is to hold a run back until its right neighbour decides it — so the mode
+    /// must not make that decision depend on where the blocks fall.</summary>
+    [Theory]
+    [InlineData(997)]
+    [InlineData(12000)]
+    [InlineData(int.MaxValue)]
+    public void StreamingDiscriminator_SubtractArea_MatchesBatch(int block)
+    {
+      int n = (int)(3 * Fs);
+      var iq = FadedIq(n, 5);
+      var o = new SstvDecodeOptions { BlankerRepair = BlankerRepairMode.SubtractArea };
+      double[] expected = SstvDecoder.Discriminator(iq, o);
+
+      var got = new List<double>(n);
+      using var sd = new SstvStreamingDiscriminator(o, o.ChannelBwHz);
+      for (int at = 0; at < n; at += Math.Min(block, n))
+      {
+        int len = Math.Min(Math.Min(block, n), n - at);
+        foreach (double v in sd.Process(iq.AsSpan(at, len))) got.Add(v);
+      }
+      foreach (double v in sd.Flush()) got.Add(v);
+
+      got.Count.Should().Be(expected.Length);
+      int diffs = 0;
+      for (int i = 0; i < n; i++)
+        if (Math.Abs(got[i] - expected[i]) > 1e-9) diffs++;
+      output.WriteLine($"block={block}: {diffs} samples differ beyond 1e-9");
+      diffs.Should().Be(0, "the repair mode must be independent of the block boundaries");
+    }
+
+    /// <summary>
+    /// What the mode actually does, against the mode it replaces. Both see the same gate decisions — the
+    /// envelope is untouched by either — so the difference is purely in what the condemned runs carry:
+    /// interpolation leaves a straight line, subtraction leaves the run's own noise with its excess area
+    /// removed. Both must remove essentially all of that area; only one keeps the signal's texture.
+    /// </summary>
+    [Fact]
+    public void SubtractArea_RemovesTheAreaButKeepsTheTexture()
+    {
+      int n = (int)(2 * Fs);
+      var iq = FadedIq(n, 5);
+      var o = new SstvDecodeOptions();
+
+      double[] raw = SstvDecoder.Discriminator(iq, o with { BlankerThreshold = 0.0 });
+      double[] interpolated = SstvDecoder.Discriminator(iq, o);
+      double[] subtracted = SstvDecoder.Discriminator(iq,
+        o with { BlankerRepair = BlankerRepairMode.SubtractArea });
+
+      // the gated samples are exactly those either mode altered; both modes must alter the same ones
+      int gatedI = 0, gatedS = 0, both = 0;
+      for (int i = 0; i < n; i++)
+      {
+        bool a = raw[i] != interpolated[i], b = raw[i] != subtracted[i];
+        if (a) gatedI++;
+        if (b) gatedS++;
+        if (a && b) both++;
+      }
+
+      // area removed from the gated samples, in cycles, and how flat each mode left them
+      double areaI = 0, areaS = 0, roughI = 0, roughS = 0;
+      for (int i = 1; i < n; i++)
+        if (raw[i] != interpolated[i] || raw[i] != subtracted[i])
+        {
+          areaI += (raw[i] - interpolated[i]) / Fs;
+          areaS += (raw[i] - subtracted[i]) / Fs;
+          roughI += Math.Abs(interpolated[i] - interpolated[i - 1]);
+          roughS += Math.Abs(subtracted[i] - subtracted[i - 1]);
+        }
+
+      output.WriteLine($"gated: {gatedI} interpolate, {gatedS} subtract, {both} common " +
+        $"({100.0 * gatedI / n:0.0}% of the stream)");
+      output.WriteLine($"area removed: {areaI:0.0} cycles interpolate, {areaS:0.0} subtract");
+      output.WriteLine($"roughness left in the gated samples: {roughI / gatedI:0} Hz/sample interpolate, " +
+        $"{roughS / gatedS:0} subtract");
+
+      gatedS.Should().BeGreaterThan(0, "the fixture must fade enough to condemn runs");
+      both.Should().BeGreaterThan((int)(0.95 * Math.Min(gatedI, gatedS)),
+        "the gate decides the same samples either way — only the repair differs");
+      (roughS / gatedS).Should().BeGreaterThan(2.0 * (roughI / gatedI),
+        "interpolation flattens the run; subtraction leaves its texture, which is the point");
+    }
+
+    /// <summary>The stage is off by default, and off must mean untouched — not "nearly untouched".</summary>
+    [Fact]
+    public void StreamingDiscriminator_ClickRepairDisabled_IsBitIdenticalToToday()
+    {
+      int n = (int)(2 * Fs);
+      var iq = FadedIq(n, 11);
+      var o = new SstvDecodeOptions();
+      o.ClickRepair.Should().BeFalse("the 3a stage stays off until it is scored");
+
+      o.BlankerRepair.Should().Be(BlankerRepairMode.Interpolate, "3b's mode is opt-in too");
+
+      double[] plain = SstvDecoder.Discriminator(iq, o);
+      double[] explicitlyOff = SstvDecoder.Discriminator(iq,
+        o with { ClickRepair = false, BlankerRepair = BlankerRepairMode.Interpolate });
+      for (int i = 0; i < n; i++) explicitlyOff[i].Should().Be(plain[i]);
+    }
+
     [Theory]
     [InlineData(997)]
     [InlineData(48000)]

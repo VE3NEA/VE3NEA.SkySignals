@@ -494,6 +494,184 @@ namespace VE3NEA.SkySSTV.Tests
 
 
     // ----------------------------------------------------------------------------------------------------
+    //                                  3b/3d — subtract vs interpolate
+    // ----------------------------------------------------------------------------------------------------
+
+
+    /// <summary>
+    /// Step 3b/3d: the A/B §3.2 item 1 exists for, on the one detector measured to work on SSTV. Both arms
+    /// use the same envelope gate with the same 1b adaptive threshold, so they condemn exactly the same
+    /// samples — the only difference is what the condemned runs are left carrying. Interpolation replaces
+    /// them with a straight line; <see cref="BlankerRepairMode.SubtractArea"/> removes the run's excess area
+    /// and leaves its noise, which is what §3.2(1) argues for on the grounds that replacing samples
+    /// amplitude-modulates everything else in the passband.
+    ///
+    /// <para>Read brightness error first (§4's trust order), and the raw arm as the reference both are
+    /// trying to beat. The 0d oracle ceiling is what a perfect version of this repair would reach.</para>
+    /// </summary>
+    [ManualFact("2026-07-26 — A WASH, and that is the finding. Brightness error, interpolate vs subtract by " +
+      "rung: -10 226.1/226.4, -8 225.2/225.2, -6 219.9/219.3, -4 207.9/209.3, -2 187.6/188.7, " +
+      "0 155.6/157.6, +2 114.5/115.7, +4 81.6/80.8, +6 58.9/59.3, +8 37.0/36.9, +10 22.7/22.5, " +
+      "+12 15.3/15.3 — never more than 2.0 luma apart, no consistent winner (interpolate edges the mid " +
+      "rungs, subtract the ends). PSNR within 0.2 dB everywhere; mean WideWeight identical to 0.01; " +
+      "gated% identical by construction, which is what makes this a pure repair A/B. Residual area favours " +
+      "interpolation throughout (0.08-0.13 vs 0.09-0.17) because it removes the window the statistic reads. " +
+      "The 3a stage stacked on top moves nothing (<=1 luma either way) and gates only 0.1% more. " +
+      "§3.2 item 1's 'subtract, do not gate' does not hold for SSTV: only the removed AREA survives the " +
+      "±600 Hz brightness filter, and both methods remove the same area.")]
+    public void SubtractVsInterpolateLadder()
+    {
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = GrayscaleGradient(spec.Width, spec.Height);
+      var o = DecodeOptions();
+      double[] cleanDisc = SstvDecoder.Discriminator(CleanIq, o);
+
+      output.WriteLine("arm              PSNR   wide  brerr  resid  gated%");
+      foreach (double cnrDb in Ladder)
+      {
+        var iq = Encode(src, cnrDb);
+        double[] raw = SstvDecoder.Discriminator(iq, o with { BlankerThreshold = 0.0 });
+        var clicks = Oracle(iq);
+
+        output.WriteLine($"--- cnr {cnrDb:0} dB: {clicks.Count * Fs / raw.Length:0} clicks/s");
+        ReportGate("raw", raw, raw, clicks, src, o, cleanDisc);
+        ReportGate("interpolate", SstvDecoder.Discriminator(iq, o), raw, clicks, src, o, cleanDisc);
+        ReportGate("subtract", SstvDecoder.Discriminator(iq,
+          o with { BlankerRepair = BlankerRepairMode.SubtractArea }), raw, clicks, src, o, cleanDisc);
+
+        // the 3a stage on top of each, to price the ported detector on the real ladder rather than on the
+        // synthetic subcarrier its own tests use
+        ReportGate("interp+3a", SstvDecoder.Discriminator(iq, o with { ClickRepair = true }),
+          raw, clicks, src, o, cleanDisc);
+        ReportGate("subtract+3a", SstvDecoder.Discriminator(iq,
+            o with { BlankerRepair = BlankerRepairMode.SubtractArea, ClickRepair = true }),
+          raw, clicks, src, o, cleanDisc);
+      }
+    }
+
+    /// <summary>Step 3d on the real corpus: the same A/B where the P6(c) defaults were locked, including the
+    /// below-threshold 04-18 capture whose acquisition is the guardrail every arm in this plan has had to
+    /// clear.</summary>
+    [ManualFact("2026-07-26 (raw / interpolate / subtract / subtract+3a). rowNoise: utmn2236 " +
+      "20.1/16.8/17.4/17.4, m3_1102 18.5/17.0/17.1/17.2, umka0418 15.8/15.7/15.7/16.0, m3_1237 " +
+      "23.7/23.2/24.1/24.0, m3_1102b 24.6/20.7/21.0/21.1 — interpolation is smoother by 0.1-0.7 on every " +
+      "case, as a flattening operation must be, and rowNoise rewards exactly that. maxScore tells the " +
+      "opposite story on the two MARGINAL captures: umka0418 0.286/0.324/0.328/0.328 and m3_1237 " +
+      "0.225/0.200/0.225/0.205 — interpolation LOSES acquisition on m3_1237 (0.225 -> 0.200) and " +
+      "subtraction preserves it exactly. wide and gated% identical across arms everywhere. Verdict: no " +
+      "default change (§4's trust order puts brightness error and residual area ahead of maxScore, and both " +
+      "favour interpolation), but the m3_1237 acquisition observation is the one thing worth following up, " +
+      "since 3d weights acquisition equally on marginal captures.")]
+    public void SubtractVsInterpolateCorpus()
+    {
+      Directory.CreateDirectory(OutDir);
+      foreach (var (tag, file, t0, t1) in CorpusCases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+
+        var baseOpts = LocateTrain(seg, sr, out SstvMode format, out string note);
+        output.WriteLine($"--- {tag}: {note}");
+        if (baseOpts == null) continue;
+
+        var spec = SstvModes.Get(format);
+        double[] rawDisc = SstvDecoder.Discriminator(seg, baseOpts with { BlankerThreshold = 0.0 });
+
+        foreach (var (arm, o) in new[]
+        {
+          ("raw", baseOpts with { BlankerThreshold = 0.0 }),
+          ("interpolate", baseOpts),
+          ("subtract", baseOpts with { BlankerRepair = BlankerRepairMode.SubtractArea }),
+          ("subtract+3a", baseOpts with
+            { BlankerRepair = BlankerRepairMode.SubtractArea, ClickRepair = true })
+        })
+        {
+          double[] disc = SstvDecoder.Discriminator(seg, o);
+          var det = new SstvPulseDetector(sr, spec.SyncMs);
+          det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
+
+          var img = SstvDecoder.Decode(disc, format, o);
+          string path = Path.Combine(OutDir, $"sub_{tag}_{arm.Replace("+", "")}.png");
+          img.SavePng(path);
+          output.WriteLine($"  {arm,-12} maxScore={det.MaxScore:0.000} rowNoise={RowNoise(img):0.0} " +
+            $"wide={MeanWideWeight(disc, o, sr, format),4:0.00} " +
+            $"gated={100.0 * AlteredShare(disc, rawDisc):0.00}% -> {Path.GetFileName(path)}");
+        }
+      }
+    }
+
+
+    /// <summary>
+    /// Step 3c: the detection chain is a different receiver from the video chain — wider (±6 kHz vs ±4), and
+    /// judged on whether it finds a train at all rather than on how the picture looks — so it may want a
+    /// different repair mode, exactly as it already wants a different <see cref="SstvDecodeOptions.ChannelBwHz"/>.
+    /// 3b found the one place subtraction beat interpolation was the acquisition channel, including a case
+    /// where interpolation LOST a train's score against the raw chain; that was measured through the video
+    /// filter, so this re-asks it where acquisition actually happens.
+    ///
+    /// <para>Reported on the acquisition metrics of §4 and nothing else: the pulse detector's peak score, how
+    /// many trains were promoted, and the pulse count of the best image train. A default change here would
+    /// need a second option (a video/detection pair like <c>ChannelBwHz</c>/<c>VideoChannelBwHz</c>), which is
+    /// why this is measured before any such option is added.</para>
+    /// </summary>
+    [ManualFact("2026-07-26 — NO, the detection chain wants the same mode (interpolate). maxScore / " +
+      "bestImagePulses / lines, raw|interpolate|subtract: utmn2236 0.420,228 | 0.413,229 | 0.413,229; " +
+      "m3_1102 0.383,72 | 0.378,80 | 0.378,81; umka0418 0.221,16 | 0.278,19 | 0.269,20; m3_1237 0.189,7,165 " +
+      "| 0.206,21,247 | 0.210,15,192; m3_1102b 0.418,241 | 0.420,241 | 0.420,239. Subtraction's wins are +1 " +
+      "pulse twice; interpolation's win on m3_1237 is 21 pulses and 247 lines against 15 and 192 — so 3b's " +
+      "one pro-subtraction observation REVERSES where acquisition actually happens, and no video/detection " +
+      "option pair is needed. Both repairs beat raw handsomely on the two marginal captures (umka0418 " +
+      "maxScore 0.221 -> 0.27+, pulses 16 -> 19/20; m3_1237 pulses 7 -> 21/15), which reconfirms 1a/1b's " +
+      "deciding acquisition result on the detection chain rather than through the video filter.")]
+    public void DetectionChainRepairMode()
+    {
+      foreach (var (tag, file, t0, t1) in CorpusCases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+        output.WriteLine($"--- {tag}");
+
+        foreach (var (arm, mode, threshold) in new[]
+        {
+          ("raw", BlankerRepairMode.Interpolate, 0.0),
+          ("interpolate", BlankerRepairMode.Interpolate, new SstvDecodeOptions().BlankerThreshold),
+          ("subtract", BlankerRepairMode.SubtractArea, new SstvDecodeOptions().BlankerThreshold)
+        })
+        {
+          // the DETECTION chain: full ±6 kHz, acquisition on — the receiver whose job is finding the train
+          var o = new SstvDecodeOptions
+          {
+            SampleRate = sr,
+            BlankerRepair = mode,
+            BlankerThreshold = threshold
+          };
+          double[] disc = SstvDecoder.Discriminator(seg, o);
+          double[] sync = SstvDecoder.SyncAudio(disc, sr, o);
+
+          var det = new SstvPulseDetector(sr, SstvModes.Get(SstvMode.Robot36).SyncMs);
+          det.Detect(sync);
+          var extractor = SstvDecoder.ExtractTrains(sync, sr, SstvVisDetector.DetectAll(sync, sr));
+
+          int promoted = 0, bestPulses = 0;
+          foreach (var train in extractor.Trains)
+          {
+            if (train.State != SstvTrainState.Active && train.State != SstvTrainState.Retired) continue;
+            promoted++;
+            if (extractor.IsImageTrain(train) && train.PulseCnt > bestPulses) bestPulses = train.PulseCnt;
+          }
+
+          output.WriteLine($"  {arm,-12} maxScore={det.MaxScore:0.000} trains={promoted,2} " +
+            $"bestImagePulses={bestPulses,4} lines={extractor.Lines.Count,4}");
+        }
+      }
+    }
+
+
+    // ----------------------------------------------------------------------------------------------------
     //                                     2b — detector discriminability
     // ----------------------------------------------------------------------------------------------------
 

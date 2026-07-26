@@ -574,8 +574,11 @@ namespace VE3NEA.SkySSTV.Tests
         var o = new SstvDecodeOptions { SampleRate = sr, ChannelBwHz = chanBw };
         double[] disc = SstvDecoder.Discriminator(burst, o);
 
-        int clicks = 0;
-        for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) clicks++;
+        // declick plan 1c: the out-of-band excursion share, named for what it measures. This arm has no
+        // blanker (it sweeps the channel only), so there is nothing circular about it here — but it is still
+        // not a click count, because a real capture has no noise-free reference to count against.
+        int loud = 0;
+        for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) loud++;
 
         double[] sync = SstvDecoder.SyncAudio(disc, sr, o);
         double sum = 0;
@@ -593,7 +596,7 @@ namespace VE3NEA.SkySSTV.Tests
           if (Math.Abs(frac - Math.Round(frac)) * period < 0.005 * sr && frac < 20) onGrid++;
         }
 
-        output.WriteLine($"chan ±{chanBw:0}: clicks={100.0 * clicks / disc.Length:0.0}% " +
+        output.WriteLine($"chan ±{chanBw:0}: loud={100.0 * loud / disc.Length:0.0}% " +
           $"maxScore={detector.MaxScore:0.000} pulses={pulses.Count} onGrid={onGrid} devEst={dev:0} Hz");
 
         // per-pulse threshold sweep at this bandwidth: pulse yield + grid consistency + extractor lock
@@ -690,7 +693,16 @@ namespace VE3NEA.SkySSTV.Tests
       "cost; rowNoise bottoms at blank 0.3 (25.9 @ ±4000/±4500) with 0.5 within 0.1–0.3 of it; 0.7 " +
       "over-blanks (rowNoise up ~1.4–2.1 everywhere) — do not raise the default. chan ±4000 ≈ ±4500 " +
       "beat ±6000; chan4000+blank0.5 reads 26.0 vs the 25.9 grid optimum: no regression on the " +
-      "cleanest burst.")]
+      "cleanest burst. " +
+      "1c NOTE 2026-07-26 — every 'clicks' figure above is the |disc| > 15000 amplitude proxy, now printed " +
+      "as 'loud%' beside the blanker's actual appetite, and the pair shows how self-fulfilling the old " +
+      "headline was. utmn2236 ±6000, blank 0/0.3/0.5/0.7: loud 0.67/0.10/0.02/0.01 % while gated is " +
+      "0/3.83/8.87/15.38 %. m3_1102 ±6000: loud 2.07/0.40/0.03/0.00 % while gated is 0/10.01/23.25/38.90 %. " +
+      "So 'clicks 2.4 -> 0.0 %' was the blanker FLATTENING a quarter to two fifths of the stream to drive a " +
+      "2 % amplitude statistic to zero — a 10-20x gap between what was gated and what the proxy credited " +
+      "as removed. The rowNoise and maxScore conclusions above are unaffected (they never used the proxy), " +
+      "and this retro-explains 1b: the cost really is appetite. Note m3_1102's maxScore falling with " +
+      "appetite too — 0.383/0.387/0.378/0.362.")]
     public void Real_P6cDecodeGridProbe()
     {
       // P6(c): the decode-stage front end (detection stays at the ±6000 default). Grid: Stage-1 channel BW ×
@@ -728,25 +740,55 @@ namespace VE3NEA.SkySSTV.Tests
         output.WriteLine($"--- {tag}: {best.Format} train @{firstSync / sr:0.0}s p={best.PulseCnt}");
 
         foreach (double chanBw in new[] { 6000.0, 4500.0, 4000.0 })
+        {
+          double[]? rawDisc = null;               // the blank = 0.0 row IS the ungated stream, so 1c's gated
+                                                  // share costs no extra discriminator pass
           foreach (double blank in new[] { 0.0, 0.3, 0.5, 0.7 })
           {
             var o = new SstvDecodeOptions
             { SampleRate = sr, ChannelBwHz = chanBw, BlankerThreshold = blank,
               Acquire = false, StartSample = firstSync };
             double[] disc = SstvDecoder.Discriminator(seg, o);
+            rawDisc ??= disc;
 
-            int clicks = 0;
-            for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) clicks++;
+            // declick plan 1c: 'loud%', not 'clicks%'. Without a noise-free reference there is no honest click
+            // count — see the note on GatedShare — so the out-of-band excursion share is reported under its
+            // own name, beside the blanker's gated share, which is the non-circular half of the pair.
+            int loud = 0;
+            for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) loud++;
             var det = new SstvPulseDetector(sr, spec.SyncMs);
             det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
 
             var img = SstvDecoder.Decode(disc, best.Format, o);
             string path = Path.Combine(OutDir, $"p6c_{tag}_chan{chanBw:0}_blk{blank * 10:0}.png");
             img.SavePng(path);
-            output.WriteLine($"  chan ±{chanBw:0} blank {blank:0.0}: clicks={100.0 * clicks / disc.Length:0.00}% " +
+            output.WriteLine($"  chan ±{chanBw:0} blank {blank:0.0}: loud={100.0 * loud / disc.Length:0.00}% " +
+              $"gated={100.0 * GatedShare(disc, rawDisc):0.00}% " +
               $"maxScore={det.MaxScore:0.000} rowNoise={RowNoise(img):0.0} -> {Path.GetFileName(path)}");
           }
+        }
       }
+    }
+
+    /// <summary>
+    /// Share of samples the blanker altered — the declick plan's 1c companion to <c>loud%</c>. On a real
+    /// capture this is the honest half of the pair: it is exactly defined, it needs no reference, and it is
+    /// what the blanker's cost is actually made of (1b: the best threshold falls with CNR because the cost is
+    /// set by appetite, not by gating as such).
+    /// <para>The amplitude proxy it sits beside cannot be turned into a click count here. A residual-area
+    /// statistic (§4, <c>SstvClickOracle.ResidualAreaCycles</c>) needs the click POSITIONS, which come from
+    /// the noise-free reference, which a real capture does not have — and the blind alternative was measured
+    /// in 3a to be dominated by the subcarrier. So <c>loud%</c> keeps its number and loses its name, and the
+    /// pre-1c annotations on these probes that say "clicks" mean this proxy.</para>
+    /// </summary>
+    private static double GatedShare(double[] disc, double[] raw)
+    {
+      int n = Math.Min(disc.Length, raw.Length);
+      if (n == 0) return 0;
+
+      int changed = 0;
+      for (int i = 0; i < n; i++) if (disc[i] != raw[i]) changed++;
+      return (double)changed / n;
     }
 
     /// <summary>Mean absolute luma difference between vertically adjacent pixels — a reference-free

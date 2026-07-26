@@ -12,6 +12,20 @@ namespace VE3NEA.SkySSTV
     Amplitude
   }
 
+  /// <summary>What the impulse blanker does with a run it has condemned (declick plan §3.2 item 1).</summary>
+  public enum BlankerRepairMode
+  {
+    /// <summary>Replace the run by a straight line between its neighbours — the P6(c)-locked behavior.
+    /// Removes the slip along with everything else the run carried.</summary>
+    Interpolate,
+
+    /// <summary>Subtract the run's excess AREA, leaving its samples otherwise intact. §3.2 item 1's
+    /// prescription: replacing samples is a multiplicative operation that amplitude-modulates everything
+    /// else in the passband and manufactures its own artifacts, whereas removing the offending area takes
+    /// the slip out — including the part below the noise floor — without touching the wanted signal.</summary>
+    SubtractArea
+  }
+
   /// <summary>
   /// Tunables for the P1 fixed-timing decoder front-end. Defaults target the 48 kHz FM-on-FM chain
   /// the synthetic encoder produces. Filter bandwidths are provisional — the P6 experiment sweeps them
@@ -106,6 +120,52 @@ namespace VE3NEA.SkySSTV
     /// distribution's whole point is that it is heavy-tailed, so its MAD sits far below its rms and a
     /// "3 sigma" threshold built that way lands near 1 rms and blanks 40 % of the signal.</summary>
     public double BlankerRmsMultiple { get; init; } = 4.0;
+
+
+    /// <summary>What the blanker does with a condemned run (declick plan 3b). Default
+    /// <see cref="BlankerRepairMode.Interpolate"/> — the P6(c)-locked behavior.
+    ///
+    /// <para><see cref="BlankerRepairMode.SubtractArea"/> instead removes the run's area above the line
+    /// interpolation would have drawn, leaving the samples otherwise untouched. The area is the only part of
+    /// a slip that survives downstream (0d), so this removes the whole of what matters while keeping the
+    /// run's noise — and it is self-limiting in a way interpolation is not: a fade that carried no slip has
+    /// little excess area, so little is subtracted, whereas interpolation flattens the run either way.</para>
+    ///
+    /// <para>This pairs §3.2 item 1's repair with the one detector measured to work on SSTV — the envelope
+    /// gate. 1a and 3a both found that no short-window statistic on the disc stream separates slips from the
+    /// 1500–2300 Hz subcarrier; the envelope has no such problem, being constant-amplitude by
+    /// construction.</para></summary>
+    public BlankerRepairMode BlankerRepair { get; init; } = BlankerRepairMode.Interpolate;
+
+
+    /// <summary>Enables the Phase-3a click repair stage (<see cref="SstvClickRepair"/>): matched-area
+    /// subtraction of the phase slips left in the discriminator output, between the impulse blanker and the
+    /// de-emphasis. Default off until scored on the ladder and the corpus (declick plan 3d).
+    ///
+    /// <para>Independent of the blanker and complementary to it: the blanker gates the samples whose
+    /// ENVELOPE faded, this removes the ±1-cycle steps that survive — including the ones the gate declined,
+    /// since an origin encirclement does not require a deep fade. Where the blanker interpolated, the step
+    /// is already gone and this stage finds nothing to do.</para></summary>
+    public bool ClickRepair { get; init; } = false;
+
+
+    /// <summary>Detection threshold for <see cref="ClickRepair"/>: the phase step across the ±3-sample
+    /// window, in cycles, measured against a guard-median baseline. A slip carries one whole cycle, of which
+    /// roughly half falls inside the window, so this sits below 1 by construction. 0.7 is the FM-speech
+    /// experiment's measured best separation from ordinary noise — lower admits false detections whose
+    /// repair injects a whole cycle of error apiece, and at 0.5 with a loose envelope gate that cost it 7 dB
+    /// of SNR.</summary>
+    public double ClickAreaThresholdCycles { get; init; } = 0.7;
+
+
+    /// <summary>Envelope rejection for <see cref="ClickRepair"/>: a detected step is discarded if the
+    /// envelope there is above this fraction of its tracked mean. Deliberately loose, and a confirmation
+    /// rather than a precondition — an encirclement of the origin needs the resultant to pass <i>around</i>
+    /// the origin, not especially close to it, so tightening it to 0.25 dropped the FM-speech experiment's
+    /// recall on audible clicks to a third. Set it to 0 or above 1 to disable the test; it is skipped
+    /// automatically when no envelope is available (the audio-input entry point, or a bypassed blanker,
+    /// whose envelope tracker never ran).</summary>
+    public double ClickEnvelopeFraction { get; init; } = 0.75;
 
 
     /// <summary>De-emphasis time constant (µs) applied to the discriminated audio; 0 (the default) disables

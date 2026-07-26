@@ -72,29 +72,44 @@ namespace VE3NEA.SkySSTV.Tests
       var spec = SstvModes.Get(SstvMode.Robot36);
       var src = GrayscaleGradient(spec.Width, spec.Height);
 
+      // declick plan 1c: the click figures here are the ORACLE's, not the |disc| > 15000 amplitude proxy the
+      // pre-2026-07-26 version of this sweep printed. Simulation owns the noise-free reference — the encoder
+      // is deterministic and the noise is added last — so the true encirclement count and the residual area
+      // left at those known positions are both available, and neither is self-fulfilling the way the proxy is
+      // (the blanker's interpolation flattens amplitude whether or not the 2π area went with it).
       foreach (double dev in new[] { 3300.0, 1500.0 })
+      {
+        var clean = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
+        { IncludeVis = false, DeviationHz = dev });
+
         foreach (double chanBw in dev > 2000 ? new[] { 6000.0, 4500.0 } : new[] { 6000.0, 3900.0 })
         {
+          double fs = new SstvDecodeOptions().SampleRate;
+          var cleanChan = SstvClickOracle.ChannelFilter(clean, chanBw, fs);
           output.WriteLine($"--- dev={dev:0} chan=±{chanBw:0}");
+
           foreach (double sigma in new[] { 0.3, 0.4, 0.5, 0.6 })
           {
             var iq = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
             { IncludeVis = false, DeviationHz = dev, NoiseStdDev = sigma, NoiseSeed = 7 });
+            var clicks = SstvClickOracle.Detect(cleanChan,
+              SstvClickOracle.ChannelFilter(iq, chanBw, fs));
 
-            var line = $"sigma={sigma:0.0}:";
+            var line = $"sigma={sigma:0.0}: {clicks.Count,4} clicks " +
+              $"({clicks.Count * fs / iq.Length,4:0.0}/s)";
             foreach (double blank in new[] { 0.0, 0.5 })
             {
               var o = new SstvDecodeOptions
               { Acquire = false, Track = false, ChannelBwHz = chanBw, BlankerThreshold = blank };
               double[] disc = SstvDecoder.Discriminator(iq, o);
-              int clicks = 0;
-              for (int i = 0; i < disc.Length; i++) if (Math.Abs(disc[i]) > 15000) clicks++;
               var dec = SstvDecoder.Decode(disc, SstvMode.Robot36, o);
-              line += $"  blank={blank:0.0}: PSNR={Psnr(src, dec):0.0} dB clicks={100.0 * clicks / disc.Length:0.00}%";
+              line += $"  blank={blank:0.0}: PSNR={Psnr(src, dec):0.0} dB " +
+                $"resid={SstvClickOracle.ResidualAreaCycles(disc, clicks, fs):0.00}";
             }
             output.WriteLine(line);
           }
         }
+      }
     }
 
 
