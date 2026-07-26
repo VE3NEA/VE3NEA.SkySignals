@@ -171,8 +171,19 @@ namespace VE3NEA.SkySSTV
         phase += dcStep + rateStep * i + devStep * audio[i];
         iq[i] = new Complex32((float)Math.Cos(phase), (float)Math.Sin(phase));
       }
-      if (o.NoiseStdDev > 0) AddNoise(iq, o.NoiseStdDev, o.NoiseSeed);
+      double sigma = NoiseSigma(o);
+      if (sigma > 0) AddNoise(iq, sigma, o.NoiseSeed);
       return iq;
+    }
+
+    /// <summary>Per-component noise std dev: the in-channel <see cref="SstvEncoderOptions.ChannelCnrDb"/>
+    /// when set, else the full-band <see cref="SstvEncoderOptions.NoiseStdDev"/>. See the option's docs for
+    /// the σ² = fs / (4·B·cnr) derivation.</summary>
+    internal static double NoiseSigma(SstvEncoderOptions o)
+    {
+      if (o.ChannelCnrDb is not double cnrDb) return o.NoiseStdDev;
+      double cnr = Math.Pow(10.0, cnrDb / 10.0);
+      return Math.Sqrt(o.SampleRate / (4.0 * o.CnrRefBwHz * cnr));
     }
 
     private static void AddNoise(Complex32[] iq, double sigma, int seed)

@@ -1,5 +1,17 @@
 namespace VE3NEA.SkySSTV
 {
+  /// <summary>Which signal the impulse blanker gates on (declick plan §6, item 1a).</summary>
+  public enum BlankerGateMode
+  {
+    /// <summary>The envelope of the channel-filtered signal, i.e. the fade proxy. FM clicks live in
+    /// envelope fades, so a fade marks the discriminator samples that are unreliable.</summary>
+    Envelope,
+
+    /// <summary>The discriminator output itself, with the modulation removed by a short running median.
+    /// Gates on the quantity actually being removed rather than on a proxy for it.</summary>
+    Amplitude
+  }
+
   /// <summary>
   /// Tunables for the P1 fixed-timing decoder front-end. Defaults target the 48 kHz FM-on-FM chain
   /// the synthetic encoder produces. Filter bandwidths are provisional — the P6 experiment sweeps them
@@ -35,6 +47,26 @@ namespace VE3NEA.SkySSTV
     /// (2026-07-03): wins or is neutral on every real burst in both chains (clicks 2.4→0 %, 04-18 sync
     /// maxScore 0.221→0.324); a no-op on clean signals (constant envelope ⇒ nothing gated).</summary>
     public double BlankerThreshold { get; init; } = 0.5;
+
+
+    /// <summary>Which signal the blanker gates on (declick plan §6 item 1a). Default
+    /// <see cref="BlankerGateMode.Envelope"/> — the P6(c)-locked behavior. The alternative gates on the
+    /// discriminator output itself, because the envelope is only a proxy and the two decorrelate exactly
+    /// where it matters: the FM-speech experiment measured the mean envelope at the centre of a pulse at
+    /// 0.89 of its running mean (above any usable fade threshold) while dipping to 0.43 on the flanks, so
+    /// an envelope gate blanks the shoulders of each pulse and leaves its peak. Selecting
+    /// <see cref="BlankerGateMode.Amplitude"/> makes <see cref="BlankerRmsMultiple"/> the threshold and
+    /// leaves <see cref="BlankerThreshold"/> unused.</summary>
+    public BlankerGateMode BlankerGate { get; init; } = BlankerGateMode.Envelope;
+
+
+    /// <summary>Impulse-blanker threshold for <see cref="BlankerGateMode.Amplitude"/>, in multiples of the
+    /// running rms of the detrended discriminator output; 0 disables the blanker. The magnitude
+    /// distribution is bimodal — a Gaussian core out to about 2 rms, then a separate impulse population —
+    /// and 4 sits in the valley between them. Deliberately the rms and not a robust (MAD-based) sigma: the
+    /// distribution's whole point is that it is heavy-tailed, so its MAD sits far below its rms and a
+    /// "3 sigma" threshold built that way lands near 1 rms and blanks 40 % of the signal.</summary>
+    public double BlankerRmsMultiple { get; init; } = 4.0;
 
 
     /// <summary>De-emphasis time constant (µs) applied to the discriminated audio; 0 (the default) disables

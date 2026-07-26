@@ -11,12 +11,21 @@ namespace VE3NEA.SkySSTV
   /// batch chain's disc[k]) and <see cref="Flush"/> drains the delay lines at end-of-stream.
   ///
   /// <para>Bounded latency, not zero latency: emission lags the input by the FIR group delay plus the
-  /// blanker's envelope-priming window (100 ms, start-up only) plus its max-gap lookahead (20 ms — a
-  /// faded run's disposition is known only when it ends or exceeds the gap bound, §1.13).</para>
+  /// blanker's priming window (100 ms, start-up only) plus its max-gap lookahead (20 ms — a
+  /// faded run's disposition is known only when it ends or exceeds the gap bound, §1.13). The amplitude gate
+  /// adds 12 samples (0.25 ms) of centered-window lookahead, which the 20 ms bound already dominates.</para>
   /// </summary>
   internal sealed class SstvStreamingDiscriminator : IDisposable
   {
+    // the running-median window of the amplitude gate, and the samples added at each end of an impulse run
+    // before interpolating, for the pulse skirts. Both from the FM-speech experiment's ImpulseBlanker: the
+    // median window is long enough that a pulse (1 sample at 8 dB CNR, 8 at 4 dB) stays a minority of it and
+    // short enough to follow the subcarrier, and 2 is the best all-round skirt.
+    private const int BaselineMedianLength = 21;
+    private const int SkirtSamples = 2;
+
     private readonly double fs;
+    private readonly BlankerGateMode gate;
     private readonly double blankerThreshold;
     private readonly double deEmphasisUs;
 
@@ -31,7 +40,7 @@ namespace VE3NEA.SkySSTV
     private bool havePrev;      // prevChan holds chan[j−1]
     private bool emittedFirst;  // disc[0] (= disc[1], the batch edge case) has been staged
 
-    // blanker state: envelope prime buffer, then the run state machine
+    // blanker state: prime buffer, then the gate, then the run state machine
     private readonly int primeLen;
     private readonly int maxGap;
     private readonly double alpha;
@@ -41,6 +50,23 @@ namespace VE3NEA.SkySSTV
     private readonly double[] primeMag;
     private readonly double[] primeDisc;
     private bool pendingBadNext;   // a faded chan sample poisons two discriminator outputs
+
+    // amplitude-gate state. Both stages are centered windows over the disc stream, so each holds its samples
+    // by absolute index: medWin[i] is sample medBase+i, and medCenter/skirtCenter are the next sample each
+    // stage can decide. Together they add BaselineMedianLength/2 + SkirtSamples samples of lookahead.
+    private readonly double rmsMultiple;
+    private readonly int medianHalf;
+    private readonly double[] medWin;
+    private readonly double[] medSort;
+    private int medCount;
+    private long medBase;
+    private long medCenter;
+    private double msq;            // running mean square of the detrended output (same τ as envMean)
+    private readonly double[] skirtDisc;
+    private readonly bool[] skirtBad;
+    private int skirtCount;
+    private long skirtBase;
+    private long skirtCenter;
     private double lastGoodDisc;
     private bool haveGood;
     private double[] run = new double[1024];   // held-back bad run awaiting its right neighbor
@@ -61,7 +87,9 @@ namespace VE3NEA.SkySSTV
     public SstvStreamingDiscriminator(SstvDecodeOptions o, double bwHz)
     {
       fs = o.SampleRate;
+      gate = o.BlankerGate;
       blankerThreshold = o.BlankerThreshold;
+      rmsMultiple = o.BlankerRmsMultiple;
       deEmphasisUs = o.DeEmphasisUs;
 
       double fc = bwHz / fs;
@@ -79,7 +107,17 @@ namespace VE3NEA.SkySSTV
       alpha = 1.0 / (0.1 * fs);
       primeMag = new double[primeLen];
       primeDisc = new double[primeLen];
+
+      medianHalf = BaselineMedianLength / 2;
+      medWin = new double[BaselineMedianLength];
+      medSort = new double[BaselineMedianLength];
+      skirtDisc = new double[2 * SkirtSamples + 1];
+      skirtBad = new bool[2 * SkirtSamples + 1];
     }
+
+    /// <summary>Whether the selected gate is armed; either threshold at 0 bypasses the blanker.</summary>
+    private bool GateEnabled
+      => gate == BlankerGateMode.Amplitude ? rmsMultiple > 0 : blankerThreshold > 0;
 
     /// <summary>Feed the next IQ block; returns the disc samples finalized by it (batch-timeline order).
     /// The span is valid until the next call.</summary>
@@ -118,7 +156,15 @@ namespace VE3NEA.SkySSTV
       }
 
       // a stream shorter than the prime window: the batch primes over what exists (min(n, 0.1·fs))
-      if (!primed && blankerThreshold > 0) Prime(primeCount);
+      if (!primed && GateEnabled) Prime(primeCount);
+
+      // the amplitude gate's centered windows still owe their last few samples a decision, taken with the
+      // right half of each window truncated
+      if (gate == BlankerGateMode.Amplitude && GateEnabled)
+      {
+        while (medCount > 0 && medCenter <= medBase + medCount - 1) MedianDecide();
+        while (skirtCount > 0 && skirtCenter <= skirtBase + skirtCount - 1) SkirtDecide();
+      }
 
       // an open bad run at end-of-stream: the batch interpolates toward left (right = left)
       if (runLen > 0)
@@ -162,7 +208,9 @@ namespace VE3NEA.SkySSTV
     private static double Mag(Complex32 c)
       => Math.Sqrt((double)c.Real * c.Real + (double)c.Imaginary * c.Imaginary);
 
-    /// <summary>Envelope-gated impulse blanker (P6(c), mined from Hopper's FmNoise experiment §6.1):
+    /// <summary>Impulse blanker: buffer the prime window, gate, then interpolate across the bad runs. Which
+    /// signal the gate looks at is <see cref="SstvDecodeOptions.BlankerGate"/>; the default is the
+    /// envelope (P6(c), mined from Hopper's FmNoise experiment §6.1):
     /// FM clicks happen where the instantaneous envelope fades — DevVsMag.txt measured the discriminator
     /// error std ~6× larger at zero envelope than at the mean. Discriminator samples whose envelope is
     /// below threshold·(running mean envelope, single-pole tracker τ = 100 ms primed on the first window)
@@ -172,7 +220,7 @@ namespace VE3NEA.SkySSTV
     /// bound (leave raw) — the bounded max-gap latency of plan §1.13.</summary>
     private void Blank(double mag, double disc)
     {
-      if (blankerThreshold <= 0) { Emit(disc); return; }
+      if (!GateEnabled) { Emit(disc); return; }
 
       if (!primed)
       {
@@ -185,25 +233,145 @@ namespace VE3NEA.SkySSTV
       BlankPrimed(mag, disc);
     }
 
-    /// <summary>Set the initial envelope mean over the buffered prime window, then run the state machine
-    /// over the samples the priming held back.</summary>
+    /// <summary>Set the selected gate's initial scale over the buffered prime window — the mean envelope, or
+    /// the mean square of the detrended output — then run the state machine over the samples the priming
+    /// held back. The scale starts at the window statistic rather than at zero, so there is no ramp-in
+    /// bias.</summary>
     private void Prime(int count)
     {
       if (count == 0) { primed = true; return; }
-      double mean = 0;
-      for (int i = 0; i < count; i++) mean += primeMag[i];
-      envMean = mean / count;
+
+      if (gate == BlankerGateMode.Amplitude)
+      {
+        double sumSquares = 0;
+        for (int i = 0; i < count; i++)
+        {
+          int lo = Math.Max(0, i - medianHalf), hi = Math.Min(count - 1, i + medianHalf);
+          int len = hi - lo + 1;
+          Array.Copy(primeDisc, lo, medSort, 0, len);
+          Array.Sort(medSort, 0, len);
+          double d = primeDisc[i] - medSort[len / 2];
+          sumSquares += d * d;
+        }
+        msq = sumSquares / count;
+      }
+      else
+      {
+        double mean = 0;
+        for (int i = 0; i < count; i++) mean += primeMag[i];
+        envMean = mean / count;
+      }
+
       primed = true;
       for (int i = 0; i < count; i++) BlankPrimed(primeMag[i], primeDisc[i]);
     }
 
     private void BlankPrimed(double mag, double disc)
     {
+      if (gate == BlankerGateMode.Amplitude) { MedianPush(disc); return; }
+
       bool bad = pendingBadNext;
       if (mag < blankerThreshold * envMean) { bad = true; pendingBadNext = true; }
       else pendingBadNext = false;
       envMean += (mag - envMean) * alpha;
+      Decide(bad, disc);
+    }
 
+    /// <summary>
+    /// Amplitude gate, stage 1 (the streaming port of <c>ImpulseBlanker.MarkImpulsive</c>): marks the
+    /// impulses by their own magnitude rather than by the envelope. The modulation is estimated by a short
+    /// centered running median — robust to the impulses, which are a minority of the window — and what is
+    /// left is measured against a running rms.
+    ///
+    /// <para>The batch original takes that rms over the whole signal; here it is a single-pole tracker on the
+    /// same τ = 100 ms as <see cref="envMean"/>, primed on the first window. Local rather than global is the
+    /// better statistic for a faded capture (the threshold follows the noise level down a fade instead of
+    /// being set by the burst's loudest stretch), and it is what a streaming stage can compute. The rms and
+    /// not a MAD-based sigma: the distribution is heavy-tailed by construction, so its MAD sits far below its
+    /// rms and a "3 sigma" threshold built that way lands near 1 rms and blanks 40 % of the signal.</para>
+    /// </summary>
+    private void MedianPush(double disc)
+    {
+      if (medCount == medWin.Length)
+      {
+        Array.Copy(medWin, 1, medWin, 0, medCount - 1);
+        medCount--;
+        medBase++;
+      }
+      medWin[medCount++] = disc;
+
+      // decide every sample whose right half-window has now arrived
+      while (medCenter <= medBase + medCount - 1 - medianHalf) MedianDecide();
+    }
+
+    /// <summary>Decide <see cref="medCenter"/>, whose window is <c>[medCenter − medianHalf, newest]</c> —
+    /// the full 21 samples in steady state, truncated on the left at stream start and on the right at
+    /// <see cref="Flush"/>.</summary>
+    private void MedianDecide()
+    {
+      int drop = (int)(medCenter - medianHalf - medBase);
+      if (drop > 0)
+      {
+        Array.Copy(medWin, drop, medWin, 0, medCount - drop);
+        medCount -= drop;
+        medBase += drop;
+      }
+
+      double value = medWin[medCenter - medBase];
+      Array.Copy(medWin, medSort, medCount);
+      Array.Sort(medSort, 0, medCount);
+      double d = value - medSort[medCount / 2];
+      bool impulsive = Math.Abs(d) > rmsMultiple * Math.Sqrt(msq);
+      msq += (d * d - msq) * alpha;
+
+      medCenter++;
+      SkirtPush(value, impulsive);
+    }
+
+    /// <summary>Amplitude gate, stage 2: widen each impulse run by the pulse skirts, which sit below the
+    /// threshold but still carry energy. The pulse is really CNR-dependent (1 sample wide at 8 dB CNR, 8 at
+    /// 4 dB), so a width that tracked the CNR would do better than this constant.</summary>
+    private void SkirtPush(double disc, bool impulsive)
+    {
+      if (skirtCount == skirtDisc.Length)
+      {
+        Array.Copy(skirtDisc, 1, skirtDisc, 0, skirtCount - 1);
+        Array.Copy(skirtBad, 1, skirtBad, 0, skirtCount - 1);
+        skirtCount--;
+        skirtBase++;
+      }
+      skirtDisc[skirtCount] = disc;
+      skirtBad[skirtCount] = impulsive;
+      skirtCount++;
+
+      while (skirtCenter <= skirtBase + skirtCount - 1 - SkirtSamples) SkirtDecide();
+    }
+
+    private void SkirtDecide()
+    {
+      int drop = (int)(skirtCenter - SkirtSamples - skirtBase);
+      if (drop > 0)
+      {
+        Array.Copy(skirtDisc, drop, skirtDisc, 0, skirtCount - drop);
+        Array.Copy(skirtBad, drop, skirtBad, 0, skirtCount - drop);
+        skirtCount -= drop;
+        skirtBase += drop;
+      }
+
+      // the buffer now holds exactly the skirt window, so any flag in it condemns the center
+      bool bad = false;
+      for (int i = 0; i < skirtCount; i++)
+        if (skirtBad[i]) { bad = true; break; }
+
+      double value = skirtDisc[skirtCenter - skirtBase];
+      skirtCenter++;
+      Decide(bad, value);
+    }
+
+    /// <summary>The run state machine shared by both gates: a bad run is held back until its right neighbor
+    /// arrives (interpolate) or it outgrows the gap bound (leave raw).</summary>
+    private void Decide(bool bad, double disc)
+    {
       if (bad)
       {
         if (runLen == run.Length) Array.Resize(ref run, run.Length * 2);
