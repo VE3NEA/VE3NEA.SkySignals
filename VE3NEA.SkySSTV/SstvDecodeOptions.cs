@@ -49,6 +49,45 @@ namespace VE3NEA.SkySSTV
     public double BlankerThreshold { get; init; } = 0.5;
 
 
+    /// <summary>The envelope-gate threshold used on STRONG signals, i.e. the far end of the ramp described
+    /// under <see cref="BlankerCvStrong"/>; <see cref="BlankerThreshold"/> is the weak-signal end. Locked by
+    /// the declick plan's 1b sweep (2026-07-25) — see that item for the table. Ignored when
+    /// <see cref="BlankerThreshold"/> is 0, which disables the whole stage, ramp included.</summary>
+    public double BlankerStrongThreshold { get; init; } = 0.2;
+
+
+    /// <summary>Measured envelope coefficient of variation at or below which <see
+    /// cref="BlankerStrongThreshold"/> is used alone; the threshold ramps linearly up to
+    /// <see cref="BlankerThreshold"/> at <see cref="BlankerCvWeak"/>. Set <see cref="BlankerCvWeak"/> ≤ this
+    /// to disable the ramp and gate at the fixed <see cref="BlankerThreshold"/> (the pre-2026-07-25
+    /// behavior).
+    ///
+    /// <para>Rationale (declick plan 1b, <c>SstvDeclickProbe.BlankerThresholdLadder</c>): the best fixed
+    /// threshold falls monotonically with CNR, and no constant is close to right at both ends — brightness
+    /// error at 0.5 vs 0.2 reads 155.6 / 164.9 luma at 0 dB in-channel CNR but 45.5 / 37.0 at +8, and at
+    /// +6 dB the smaller threshold takes mean <c>WideWeight</c> from 0.33 to 0.54 while ALSO lowering the
+    /// brightness error. The gate is not the thing to switch off above the crossover: at +10 dB, 0.2 gates
+    /// 0.14 % of samples for +1.6 dB PSNR over the bypass with the resolution channel already saturated at
+    /// 1.00, and at +12 dB with zero clicks present it is a no-op (0.02 % gated). So the policy is a smaller
+    /// threshold, not no threshold.</para></summary>
+    public double BlankerCvStrong { get; init; } = 0.34;
+
+
+    /// <summary>Envelope coefficient of variation at or above which <see cref="BlankerThreshold"/> is used
+    /// alone (see <see cref="BlankerCvStrong"/>). σ(|z|)/mean(|z|) of the channel-filtered signal, tracked on
+    /// the same τ = 100 ms single pole as the gate's mean envelope, so it costs one extra accumulator and
+    /// adapts about once per line.
+    ///
+    /// <para>The pair brackets the 1b crossover (≈+5 dB in-channel CNR) on the measured curve: the ladder
+    /// reads 0.443 at +2 dB, 0.402 at +4, 0.355 at +6, 0.310 at +8. The statistic is bounded at both ends and
+    /// so cannot run away — as the carrier vanishes the envelope becomes Rayleigh and it saturates at
+    /// √(4/π − 1) = 0.523 (measured 0.522 at −10 dB), and the floor is the transmitted signal's own ripple,
+    /// 0.168 noise-free, since the ±4 kHz channel clips the FM's Carson tails. Deliberately NOT the per-line
+    /// σ that drives <see cref="AdaptiveSigmaLow"/>: that one is estimated two stages downstream of the gate,
+    /// so feeding it back would couple the blanker to the reconstruction.</para></summary>
+    public double BlankerCvWeak { get; init; } = 0.42;
+
+
     /// <summary>Which signal the blanker gates on (declick plan §6 item 1a). Default
     /// <see cref="BlankerGateMode.Envelope"/> — the P6(c)-locked behavior. The alternative gates on the
     /// discriminator output itself, because the envelope is only a proxy and the two decorrelate exactly

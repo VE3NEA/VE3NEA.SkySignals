@@ -49,7 +49,11 @@ namespace VE3NEA.SkySSTV
     private readonly int primeLen;
     private readonly int maxGap;
     private readonly double alpha;
+    private readonly double strongThreshold;
+    private readonly double cvStrong;
+    private readonly double cvWeak;
     private double envMean;
+    private double envMeanSq;      // running mean square of the envelope, for the CV that sets the threshold
     private bool primed;
     private int primeCount;
     private readonly double[] primeMag;
@@ -94,6 +98,9 @@ namespace VE3NEA.SkySSTV
       fs = o.SampleRate;
       gate = o.BlankerGate;
       blankerThreshold = o.BlankerThreshold;
+      strongThreshold = o.BlankerStrongThreshold;
+      cvStrong = o.BlankerCvStrong;
+      cvWeak = o.BlankerCvWeak;
       rmsMultiple = o.BlankerRmsMultiple;
       deEmphasisUs = o.DeEmphasisUs;
 
@@ -219,7 +226,8 @@ namespace VE3NEA.SkySSTV
     /// FM clicks happen where the instantaneous envelope fades — DevVsMag.txt measured the discriminator
     /// error std ~6× larger at zero envelope than at the mean. Discriminator samples whose envelope is
     /// below threshold·(running mean envelope, single-pole tracker τ = 100 ms primed on the first window)
-    /// are unreliable and are replaced by linear interpolation across the fade; fades longer than the
+    /// are unreliable and are replaced by linear interpolation across the fade — the threshold itself moving
+    /// with the tracked CNR, see <see cref="EnvelopeThreshold"/>; fades longer than the
     /// 20 ms gap bound are dropouts, left to the pulse-train coasting. Realized as a run state machine:
     /// a faded run is held back until its right neighbor arrives (interpolate) or it outgrows the gap
     /// bound (leave raw) — the bounded max-gap latency of plan §1.13.</summary>
@@ -262,9 +270,14 @@ namespace VE3NEA.SkySSTV
       }
       else
       {
-        double mean = 0;
-        for (int i = 0; i < count; i++) mean += primeMag[i];
+        double mean = 0, meanSq = 0;
+        for (int i = 0; i < count; i++)
+        {
+          mean += primeMag[i];
+          meanSq += primeMag[i] * primeMag[i];
+        }
         envMean = mean / count;
+        envMeanSq = meanSq / count;
       }
 
       primed = true;
@@ -276,10 +289,32 @@ namespace VE3NEA.SkySSTV
       if (gate == BlankerGateMode.Amplitude) { MedianPush(disc); return; }
 
       bool bad = pendingBadNext;
-      if (mag < blankerThreshold * envMean) { bad = true; pendingBadNext = true; }
+      if (mag < EnvelopeThreshold * envMean) { bad = true; pendingBadNext = true; }
       else pendingBadNext = false;
       envMean += (mag - envMean) * alpha;
+      envMeanSq += (mag * mag - envMeanSq) * alpha;
       Decide(bad, disc);
+    }
+
+    /// <summary>The envelope-gate threshold for the current sample: the §6 item-1b ramp from
+    /// <see cref="SstvDecodeOptions.BlankerStrongThreshold"/> to
+    /// <see cref="SstvDecodeOptions.BlankerThreshold"/> over the tracked envelope coefficient of variation,
+    /// which stands in for the in-channel CNR. The best fixed threshold falls with CNR because the gate's
+    /// cost and its benefit scale differently: what it buys is bounded by the clicks actually present, which
+    /// vanish as the CNR rises, while what it costs — interpolation over samples it was wrong about — is set
+    /// by its appetite, which does not. A degenerate or inverted CV pair means "no ramp", i.e. the fixed
+    /// threshold.</summary>
+    private double EnvelopeThreshold
+    {
+      get
+      {
+        if (cvWeak <= cvStrong) return blankerThreshold;
+        double variance = envMeanSq - envMean * envMean;
+        if (envMean <= 0 || variance <= 0) return strongThreshold;
+        double w = (Math.Sqrt(variance) / envMean - cvStrong) / (cvWeak - cvStrong);
+        w = Math.Clamp(w, 0.0, 1.0);
+        return strongThreshold + (blankerThreshold - strongThreshold) * w;
+      }
     }
 
     /// <summary>

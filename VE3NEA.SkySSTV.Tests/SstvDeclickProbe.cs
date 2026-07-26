@@ -42,6 +42,10 @@ namespace VE3NEA.SkySSTV.Tests
     // at/below threshold and fading, so their instantaneous CNR dips under their average.
     private static readonly double[] Ladder = { -10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12 };
 
+    // the envelope-gate thresholds swept in 1b. 0 is the bypass arm and 0.5 the production default; the rest
+    // bracket it widely enough to show whether the optimum is interior at any rung
+    private static readonly double[] Thresholds = { 0.0, 0.2, 0.35, 0.5, 0.65, 0.8 };
+
     // the real corpus, for the arms that have to survive contact with it
     private static readonly string RecordingsDir =
       @"C:\Users\alsho\AppData\Roaming\Afreet\Products\SkyRoof\Recordings\SSTV";
@@ -170,7 +174,8 @@ namespace VE3NEA.SkySSTV.Tests
       {
         var iq = Encode(src, cnrDb);
         double[] raw = SstvDecoder.Discriminator(iq, o with { BlankerThreshold = 0.0 });
-        double[] blanked = SstvDecoder.Discriminator(iq, o);
+        // the fixed 0.5 this table was measured at (1b later made the production threshold CNR-adaptive)
+        double[] blanked = SstvDecoder.Discriminator(iq, o with { BlankerCvWeak = 0.0 });
         var clicks = Oracle(iq);
         double[] matched = SstvClickOracle.RepairMatched(raw, clicks, template);
 
@@ -247,7 +252,10 @@ namespace VE3NEA.SkySSTV.Tests
 
         output.WriteLine($"--- cnr {cnrDb:0} dB: {clicks.Count * Fs / raw.Length:0} clicks/s");
         ReportGate("raw", raw, raw, clicks, src, o, cleanDisc);
-        ReportGate("envelope", SstvDecoder.Discriminator(iq, o), raw, clicks, src, o, cleanDisc);
+        // pinned to the fixed threshold this table was measured at, so 1a stays reproducible after 1b made
+        // the production threshold CNR-adaptive
+        ReportGate("envelope", SstvDecoder.Discriminator(iq, o with { BlankerCvWeak = 0.0 }),
+          raw, clicks, src, o, cleanDisc);
         ReportGate("amplitude",
           SstvDecoder.Discriminator(iq, o with { BlankerGate = BlankerGateMode.Amplitude }),
           raw, clicks, src, o, cleanDisc);
@@ -278,49 +286,24 @@ namespace VE3NEA.SkySSTV.Tests
       + "Phase 1b's job, not a reason for a second gate. Appetite raw/env/amp: 0 / 11–24 % / 2.6–7.1 %.")]
     public void AmplitudeGateCorpus()
     {
-      (string tag, string file, double t0, double t1)[] cases =
-      {
-        ("utmn2236", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0),
-        ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0),
-        ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0),
-        ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0),
-        ("m3_1102b", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0),
-      };
-
       Directory.CreateDirectory(OutDir);
-      foreach (var (tag, file, t0, t1) in cases)
+      foreach (var (tag, file, t0, t1) in CorpusCases)
       {
         string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
         if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
         var (iq, sr) = WavIqReader.Read(wav);
         var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
 
-        // locate the train once, at the detection defaults, so every arm decodes the same slice
-        var oDet = new SstvDecodeOptions { SampleRate = sr };
-        double[] discDet = SstvDecoder.Discriminator(seg, oDet);
-        var extractor = SstvDecoder.ExtractTrains(SstvDecoder.SyncAudio(discDet, sr, oDet), sr,
-          SstvVisDetector.DetectAll(SstvDecoder.SyncAudio(discDet, sr, oDet), sr));
-        SstvPulseTrain? best = null;
-        foreach (var train in extractor.Trains)
-          if (extractor.IsImageTrain(train) && (best == null || train.PulseCnt > best.PulseCnt)) best = train;
-        if (best == null) { output.WriteLine($"{tag}: no image train at detection defaults"); continue; }
-
-        int firstSync = (int)Math.Round(best.Regr.GetPulseTime(0));
-        var spec = SstvModes.Get(best.Format);
-        var baseOpts = new SstvDecodeOptions
-        {
-          SampleRate = sr,
-          ChannelBwHz = new SstvDecodeOptions().VideoChannelBwHz,
-          Acquire = false,
-          StartSample = firstSync
-        };
+        var baseOpts = LocateTrain(seg, sr, out SstvMode format, out string note);
+        output.WriteLine($"--- {tag}: {note}");
+        if (baseOpts == null) continue;
+        var spec = SstvModes.Get(format);
         double[] rawDisc = SstvDecoder.Discriminator(seg, baseOpts with { BlankerThreshold = 0.0 });
-        output.WriteLine($"--- {tag}: {best.Format} train @{firstSync / (double)sr:0.0}s p={best.PulseCnt}");
 
         foreach (var (arm, o) in new[]
         {
           ("raw", baseOpts with { BlankerThreshold = 0.0 }),
-          ("envelope", baseOpts),
+          ("envelope", baseOpts with { BlankerCvWeak = 0.0 }),
           ("amplitude", baseOpts with { BlankerGate = BlankerGateMode.Amplitude })
         })
         {
@@ -328,14 +311,206 @@ namespace VE3NEA.SkySSTV.Tests
           var det = new SstvPulseDetector(sr, spec.SyncMs);
           det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
 
-          var img = SstvDecoder.Decode(disc, best.Format, o);
+          var img = SstvDecoder.Decode(disc, format, o);
           string path = Path.Combine(OutDir, $"gate_{tag}_{arm}.png");
           img.SavePng(path);
           output.WriteLine($"  {arm,-9} maxScore={det.MaxScore:0.000} rowNoise={RowNoise(img):0.0} " +
-            $"wide={MeanWideWeight(disc, o, sr, best.Format),4:0.00} " +
+            $"wide={MeanWideWeight(disc, o, sr, format),4:0.00} " +
             $"gated={100.0 * AlteredShare(disc, rawDisc):0.00}% -> {Path.GetFileName(path)}");
         }
       }
+    }
+
+    // ----------------------------------------------------------------------------------------------------
+    //                                    1b — threshold vs CNR
+    // ----------------------------------------------------------------------------------------------------
+
+
+    /// <summary>
+    /// Step 1b, part 1: the shape of the threshold curve at each rung. 0d already established that the
+    /// production 0.5 helps below ≈5 dB in-channel CNR and hurts above it; the open question is whether a
+    /// single better constant exists, or whether the threshold has to move with the CNR.
+    ///
+    /// <para>Carried alongside each rung is <see cref="EnvelopeCv"/>, the coefficient of variation of the
+    /// channel envelope — a candidate in-stage CNR estimator, measured here only to see whether it is
+    /// monotone and how it maps onto the crossover. It needs nothing the blanker does not already track
+    /// (<c>envMean</c> plus a second moment on the same τ), unlike the per-line σ, which is estimated two
+    /// stages downstream of the gate and so cannot reach it without a feedback path.</para>
+    /// </summary>
+    [ManualFact("Result 2026-07-25 — THE OPTIMUM IS INTERIOR AND IT MOVES: the best fixed threshold falls "
+      + "monotonically with CNR, and no constant is close to right at both ends. Brightness error by "
+      + "threshold (0 / 0.2 / 0.35 / 0.5 / 0.65 / 0.8): at −4 dB 213.6/213.8/212.3/207.9/206.4/208.6, at 0 dB "
+      + "175.3/164.9/157.8/155.6/156.4/161.1, at +2 138.5/127.1/117.8/114.5/117.6/128.3, at +4 "
+      + "97.7/86.8/82.5/81.8/86.4/95.7, at +6 59.9/58.3/59.4/63.6/66.9/74.8, at +8 "
+      + "36.1/37.0/41.3/45.5/51.6/60.2, at +12 15.1/15.3/15.7/16.7/20.3/29.2. So the argmin walks 0.65 → 0.5 "
+      + "→ 0.2 → 0 as the CNR rises, crossing between 0.5 and 0.2 at +5 dB — exactly 0d's crossover, now with "
+      + "a shape instead of a single verdict. Below −6 dB the whole curve is flat (±1 luma on a 226-luma "
+      + "error): under the FM threshold nothing the gate does matters, so the weak end needs no third knob.\n"
+      + "THE ANSWER IS NOT 'SWITCH IT OFF' ABOVE THE CROSSOVER, WHICH IS THE FINDING 0d COULD NOT SEE. At "
+      + "+6 dB t=0.2 beats the BYPASS on both channels at once — brightness error 58.3 vs 59.9 AND mean "
+      + "WideWeight 0.54 vs 0.51 — while gating only 1.43 % of samples; at +10 dB it gates 0.14 % for "
+      + "+1.6 dB PSNR (26.4→28.0) with the resolution channel already saturated at 1.00 and the residual click "
+      + "area cut 0.38→0.08; at +12 dB with zero clicks present it is a no-op (0.02 % gated, PSNR unchanged). "
+      + "The cost of the 0.5 default up there was never the gating, it was the APPETITE: 0.5 gates 11.0 % at "
+      + "+6 dB and 4.35 % at +10 to catch 91 and 2 clicks/s.\n"
+      + "ESTIMATOR: the channel-envelope CV is monotone across the whole ladder and well-resolved where it "
+      + "matters — 0.522 at −10 dB, 0.510 at −4, 0.476 at 0, 0.443 at +2, 0.402 at +4, 0.355 at +6, 0.310 at "
+      + "+8, 0.272 at +10, 0.241 at +12 — saturating at Rayleigh's √(4/π−1)=0.523 below the FM threshold, "
+      + "exactly as predicted, and with a noise-free floor of 0.168 (the ±4 kHz channel clipping the Carson "
+      + "tails). The +5 dB crossover sits at CV ≈ 0.38, which sets the 0.34/0.42 ramp.")]
+    public void BlankerThresholdLadder()
+    {
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = GrayscaleGradient(spec.Width, spec.Height);
+      var o = DecodeOptions();
+      double[] cleanDisc = SstvDecoder.Discriminator(CleanIq, o);
+
+      output.WriteLine($"clean envelope cv={EnvelopeCv(CleanChannel):0.000}");
+      output.WriteLine("thresh          PSNR   wide  brerr  resid  gated%");
+      foreach (double cnrDb in Ladder)
+      {
+        var iq = Encode(src, cnrDb);
+        double[] raw = SstvDecoder.Discriminator(iq, o with { BlankerThreshold = 0.0 });
+        var clicks = Oracle(iq);
+
+        output.WriteLine($"--- cnr {cnrDb:0} dB: {clicks.Count * Fs / raw.Length:0} clicks/s, " +
+          $"env cv={EnvelopeCv(SstvClickOracle.ChannelFilter(iq, VideoBw, Fs)):0.000}");
+        foreach (double t in Thresholds)
+          ReportGate($"t={t:0.00}", SstvDecoder.Discriminator(iq, o with { BlankerThreshold = t }),
+            raw, clicks, src, o, cleanDisc);
+      }
+    }
+
+    /// <summary>
+    /// Step 1b, part 2: the CV ramp against the two constants it replaces, on the same ladder. The claim it
+    /// has to support is that the ramp is at or near the better of the two at EVERY rung — a policy that
+    /// merely averages them would be worse than either where each is right.
+    /// </summary>
+    [ManualFact("Result 2026-07-25 — the ramp takes the better constant at every rung, which is the whole "
+      + "requirement. It is BIT-IDENTICAL to fixed 0.50 at every rung ≤ +2 dB (the CV pins at 1) and to fixed "
+      + "0.20 at every rung ≥ +8 dB (the CV pins at 0), so it inherits both regimes rather than averaging "
+      + "them, and it only interpolates in the +4..+6 dB transition band where the two curves cross. There it "
+      + "does not split the difference either: at +4 dB brightness error 81.6 beats BOTH constants "
+      + "(81.8 / 86.8) while gating 11.0 % instead of 14.8 %, and at +6 dB it reads 58.9 against 63.6 / 58.3 "
+      + "with mean WideWeight 0.51 against 0.33 / 0.54. Worst case anywhere on the ladder is 0.6 luma behind "
+      + "the best constant of that rung.\n"
+      + "Gains over the shipped fixed 0.50, all at the upper half where the corpus's strong bursts live: "
+      + "brightness error −4.7 luma at +6 dB, −8.5 at +8, −5.1 at +10, −1.4 at +12; mean WideWeight +0.18 at "
+      + "+6 and +0.09 at +8, i.e. the resolution channel is handed back. Nothing is given up below +4 dB "
+      + "because nothing changes there.\n"
+      + "Read PSNR last here, per §4: it prefers fixed 0.50 at +6 dB (22.1 vs 20.9) purely because that arm's "
+      + "WideWeight 0.33 pushes lines onto the narrow branch and the source is a smooth gradient — the same "
+      + "artifact 0d flagged.")]
+    public void AdaptiveThresholdLadder()
+    {
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = GrayscaleGradient(spec.Width, spec.Height);
+      var o = DecodeOptions();
+      double[] cleanDisc = SstvDecoder.Discriminator(CleanIq, o);
+      var fixedOpts = o with { BlankerCvWeak = 0.0 };     // ramp off: the pre-1b behavior
+
+      output.WriteLine("arm             PSNR   wide  brerr  resid  gated%");
+      foreach (double cnrDb in Ladder)
+      {
+        var iq = Encode(src, cnrDb);
+        double[] raw = SstvDecoder.Discriminator(iq, o with { BlankerThreshold = 0.0 });
+        var clicks = Oracle(iq);
+
+        output.WriteLine($"--- cnr {cnrDb:0} dB: {clicks.Count * Fs / raw.Length:0} clicks/s");
+        ReportGate("off", raw, raw, clicks, src, o, cleanDisc);
+        ReportGate("fixed 0.50", SstvDecoder.Discriminator(iq, fixedOpts), raw, clicks, src, o, cleanDisc);
+        ReportGate("fixed 0.20", SstvDecoder.Discriminator(iq, fixedOpts with { BlankerThreshold = 0.2 }),
+          raw, clicks, src, o, cleanDisc);
+        ReportGate("adaptive", SstvDecoder.Discriminator(iq, o), raw, clicks, src, o, cleanDisc);
+      }
+    }
+
+    /// <summary>
+    /// Step 1b on the corpus — the run that decides whether the ramp may become the default. Two things can
+    /// go wrong here that the synthetic ladder cannot see. The CV floor is the transmitted signal's own
+    /// envelope ripple, which depends on the real deviation and on how hard the ±4 kHz channel clips the
+    /// Carson tails, so the real bursts may not land where the ladder says; and the strong bursts are where
+    /// the ramp changes behavior, so they are where a regression would appear. Cases and protocol are
+    /// <see cref="AmplitudeGateCorpus"/>'s, so the numbers line up with the 1a and P6(c) tables.
+    /// </summary>
+    [ManualFact("Result 2026-07-25 — the corpus clears the ramp for the DEFAULT, and by the strongest pattern "
+      + "available: it is a no-op exactly where the P6(c) defaults were locked, and it only moves where they "
+      + "were costing something. Whole-segment envelope CV runs 0.475–0.554 on all five bursts, i.e. above the "
+      + "0.42 weak end, so the ramp cannot engage on a burst-average basis at all — but the tracker is a "
+      + "100 ms pole, so it engages WITHIN a burst wherever the signal is momentarily strong, and the gated "
+      + "share is what shows it: fixed 0.50 vs adaptive is 22.74/22.74 % on umka0418, 23.83/23.83 on m3_1237, "
+      + "20.84/20.62 on m3_1102, then 11.41/8.18 on utmn2236 and 12.00/6.69 on m3_1102b.\n"
+      + "THE DECIDING CHANNEL FROM 1a IS UNTOUCHED: on the below-threshold 04-18 capture every figure is "
+      + "identical to fixed 0.50, maxScore 0.324 included — the discrete acquire/don't-acquire win that ruled "
+      + "the 1a gate out survives here because the ramp never engages on a signal that weak. Same on m3_1237.\n"
+      + "WHERE IT MOVES IT WINS. utmn2236 is a strict improvement on every figure: rowNoise 17.0→16.8, mean "
+      + "WideWeight 0.49→0.51 (recovering the bypass's 0.50), maxScore 0.417→0.413 = the bypass value. "
+      + "m3_1102b is the resolution-for-speckle trade the plan said the PNGs must settle: rowNoise 20.0→20.7 "
+      + "against WideWeight 0.49→0.55 (bypass 0.54) and maxScore 0.413→0.419 (bypass 0.419). The PNGs settle "
+      + "it for the ramp — the caption's small type is visibly crisper and the bottom label's dark text is "
+      + "legible where fixed 0.50 blurs it into a plain white bar, for a slight speckle increase in the sky. "
+      + "For scale the bypass costs rowNoise 24.6 there, so the ramp keeps ~85 % of the speckle reduction "
+      + "while recovering ~90 % of the resolution.\n"
+      + "PRE-EXISTING, NOT A REGRESSION: on m3_1237 the bypass acquires better than any gated arm "
+      + "(maxScore 0.225 vs 0.200) — that is the shipped 0.50 default's behavior and the ramp reproduces it "
+      + "exactly, since the burst is too weak to engage.")]
+    public void AdaptiveThresholdCorpus()
+    {
+      Directory.CreateDirectory(OutDir);
+      foreach (var (tag, file, t0, t1) in CorpusCases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+
+        var baseOpts = LocateTrain(seg, sr, out SstvMode format, out string note);
+        output.WriteLine($"--- {tag}: {note} env cv={EnvelopeCv(SstvClickOracle.ChannelFilter(seg, VideoBw, sr)):0.000}");
+        if (baseOpts == null) continue;
+        var spec = SstvModes.Get(format);
+        double[] rawDisc = SstvDecoder.Discriminator(seg, baseOpts with { BlankerThreshold = 0.0 });
+
+        foreach (var (arm, o) in new[]
+        {
+          ("off", baseOpts with { BlankerThreshold = 0.0 }),
+          ("fixed 0.50", baseOpts with { BlankerCvWeak = 0.0 }),
+          ("fixed 0.20", baseOpts with { BlankerCvWeak = 0.0, BlankerThreshold = 0.2 }),
+          ("adaptive", baseOpts)
+        })
+        {
+          double[] disc = SstvDecoder.Discriminator(seg, o);
+          var det = new SstvPulseDetector(sr, spec.SyncMs);
+          det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
+
+          var img = SstvDecoder.Decode(disc, format, o);
+          string path = Path.Combine(OutDir, $"thr_{tag}_{arm.Replace(" ", "")}.png");
+          img.SavePng(path);
+          output.WriteLine($"  {arm,-10} maxScore={det.MaxScore:0.000} rowNoise={RowNoise(img):0.0} " +
+            $"wide={MeanWideWeight(disc, o, sr, format),4:0.00} " +
+            $"gated={100.0 * AlteredShare(disc, rawDisc):0.00}% -> {Path.GetFileName(path)}");
+        }
+      }
+    }
+
+    /// <summary>Coefficient of variation of the channel-filtered envelope — σ(|z|)/mean(|z|). Monotone in
+    /// CNR by construction and bounded at both ends: an unmodulated-amplitude FM carrier makes it 0, and as
+    /// the carrier vanishes the envelope becomes Rayleigh and it approaches √(4/π − 1) = 0.523. The floor is
+    /// not exactly 0 here because the ±4 kHz channel clips the FM's Carson tails, so the transmitted signal
+    /// carries envelope ripple of its own (the clean value is reported by the probe).</summary>
+    private static double EnvelopeCv(Complex32[] chan)
+    {
+      double sum = 0, sumSquares = 0;
+      for (int i = 0; i < chan.Length; i++)
+      {
+        double mag = Math.Sqrt((double)chan[i].Real * chan[i].Real +
+          (double)chan[i].Imaginary * chan[i].Imaginary);
+        sum += mag;
+        sumSquares += mag * mag;
+      }
+      if (chan.Length == 0) return 0;
+      double mean = sum / chan.Length;
+      double variance = sumSquares / chan.Length - mean * mean;
+      return mean <= 0 ? 0 : Math.Sqrt(Math.Max(0, variance)) / mean;
     }
 
     /// <summary>Mean absolute luma difference between vertically adjacent pixels — a reference-free
@@ -481,6 +656,44 @@ namespace VE3NEA.SkySSTV.Tests
       Track = false,
       ChannelBwHz = VideoBw
     };
+
+    // the real corpus cases every arm that has to survive contact with it is run on. Same set and time
+    // windows as SstvImageHarness.Real_P6cDecodeGridProbe, so the numbers line up with the P6(c) table.
+    private static readonly (string tag, string file, double t0, double t1)[] CorpusCases =
+    {
+      ("utmn2236", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0),
+      ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0),
+      ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0),
+      ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0),
+      ("m3_1102b", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0),
+    };
+
+    /// <summary>Locate the image train once, at the detection defaults, so every arm decodes the same slice,
+    /// and return the fixed-timing video options that decode it (null when there is no train to decode).</summary>
+    private static SstvDecodeOptions? LocateTrain(Complex32[] seg, double sr, out SstvMode format,
+      out string note)
+    {
+      format = SstvMode.Robot36;
+      var oDet = new SstvDecodeOptions { SampleRate = sr };
+      double[] discDet = SstvDecoder.Discriminator(seg, oDet);
+      var extractor = SstvDecoder.ExtractTrains(SstvDecoder.SyncAudio(discDet, sr, oDet), sr,
+        SstvVisDetector.DetectAll(SstvDecoder.SyncAudio(discDet, sr, oDet), sr));
+      SstvPulseTrain? best = null;
+      foreach (var train in extractor.Trains)
+        if (extractor.IsImageTrain(train) && (best == null || train.PulseCnt > best.PulseCnt)) best = train;
+      if (best == null) { note = "no image train at detection defaults"; return null; }
+
+      int firstSync = (int)Math.Round(best.Regr.GetPulseTime(0));
+      format = best.Format;
+      note = $"{best.Format} train @{firstSync / sr:0.0}s p={best.PulseCnt}";
+      return new SstvDecodeOptions
+      {
+        SampleRate = sr,
+        ChannelBwHz = new SstvDecodeOptions().VideoChannelBwHz,
+        Acquire = false,
+        StartSample = firstSync
+      };
+    }
 
     private static Complex32[] Encode(RgbImage src, double cnrDb) =>
       SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
