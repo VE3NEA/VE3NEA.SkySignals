@@ -6,8 +6,12 @@ using Xunit.Abstractions;
 
 namespace VE3NEA.SkySSTV.Tests
 {
-  // temporary diagnostic harness for the 2026-07-25 "high-SNR images are over-smoothed, small text
-  // unreadable" report (example image 20260723_215206_UmKA-1_Robot36_4.png)
+  /// <summary>
+  /// The §6.3 adaptive-bandwidth work-off (2026-07-25): the probes that isolated the over-smoothing to the
+  /// Stage-3 low-pass rather than the §6.2 Wiener post-filter, calibrated the AdaptiveSigmaLow/High
+  /// defaults, and hold the before/after corpus render. Reported as "high-SNR images are over-smoothed,
+  /// small text unreadable" on 20260723_215206_UmKA-1_Robot36_4.png.
+  /// </summary>
   public class SstvSmoothingProbe
   {
     private static readonly string RecordingsDir =
@@ -18,7 +22,14 @@ namespace VE3NEA.SkySSTV.Tests
     private readonly ITestOutputHelper output;
     public SstvSmoothingProbe(ITestOutputHelper o) => output = o;
 
-    [ManualFact("smoothing probe")]
+    [ManualFact("Result 2026-07-25 — the DIAGNOSIS. Bandwidth × Wiener grid on the 07-23 21:42 capture's two "
+      + "bursts (286 s strong, 566 s weak). The Wiener is NOT the cause: at 600 Hz the strong burst's caption "
+      + "line is equally illegible with it on and off (its mean luma gain over that text is 0.82 — it is not "
+      + "collapsing text to the local mean), while widening to 900/1200/1600 Hz makes the caption readable "
+      + "with the Wiener left on. Decoded row noise, strong burst: 0.81 @600 (essentially noiseless, and STILL "
+      + "smeared — the smoking gun) / 3.8 @900 / 7.1 @1200 / 12.9 @1600; weak burst 12.5 / — / 27.0 / 33.1, "
+      + "where the narrow branch genuinely earns its keep. PixelWindowFraction 0.5→1.0 buys only ~13 % noise "
+      + "(the brightness noise is already correlated over ~1 pixel), so it was left alone.")]
     public void BwWienerGrid()
     {
       Directory.CreateDirectory(OutDir);
@@ -83,7 +94,13 @@ namespace VE3NEA.SkySSTV.Tests
 
     // before/after on every decodable real burst: the locked adaptive defaults vs the fixed-narrow
     // decoder (BrightnessWideBwHz = 0 disables the second branch)
-    [ManualFact("adaptive before/after")]
+    [ManualFact("Result 2026-07-25 — the LOCK. Before/after over all 45 corpus bursts at the locked defaults "
+      + "(wide 1200, ramp 35→65). Clear wins where σ is low: 07-23 286 s (caption 'MOON 2024/11/08 UMKA-1 "
+      + "RS40S' smear → legible, spaceTV logo and lunar terminator crisp), UTMN2 182 s (SPUTNIX logo, face, "
+      + "background stars), SAKHACUBE 184 s ('RS18S', figures, road markings). Unchanged where σ is high: the "
+      + "07-23 566 s burst, Monitor-3 135 s and the below-FM-threshold 04-18 capture are pixel-identical to "
+      + "the fixed-narrow decoder; the Monitor-3 285 s text card sits at ≈0.1 weight and is a wash (its text "
+      + "is large enough that 600 Hz never hurt it).")]
     public void AdaptiveBeforeAfter()
     {
       Directory.CreateDirectory(OutDir);
@@ -126,7 +143,11 @@ namespace VE3NEA.SkySSTV.Tests
 
     // the production path: push the capture through the streaming decoder in odd blocks (dual brightness
     // ring, re-renders and all) and save what SkyRoof would have shown
-    [ManualFact("streaming adaptive")]
+    [ManualFact("Result 2026-07-25: the production streaming path (dual brightness rings, odd 7919-sample "
+      + "pushes, live re-renders) reproduces the batch improvement on the 07-23 286 s burst. Streaming vs "
+      + "batch differs by mean 2.4 / max 248 counts, against a pre-adaptive baseline of mean 1.2 / max 209 — "
+      + "the two paths never matched exactly (segment-vs-stream FIR warm-up and a slightly different train "
+      + "grid), and more video bandwidth turns the same timing difference into a larger pixel difference.")]
     public void StreamingAdaptive()
     {
       Directory.CreateDirectory(OutDir);
@@ -146,7 +167,11 @@ namespace VE3NEA.SkySSTV.Tests
 
     // per-line σ of the wide branch, as SstvDecoder.WideWeight measures it — calibrates the
     // AdaptiveSigmaLow/High defaults against real bursts of known quality
-    [ManualFact("sigma calibration")]
+    [ManualFact("Result 2026-07-25 — the CALIBRATION behind AdaptiveSigmaLow/High. Per-burst σ (pre-integration, "
+      + "0..255 luma units), median across x / p10..med..p90 across lines: 07-23 286 s 22/34/58, 07-23 566 s "
+      + "41/78/136, Monitor-3 285 s 38/62/104, Monitor-3 135 s 114/208/262, 04-18 184/224/257. The 25th-"
+      + "percentile variant tracks the median within 5 % on every burst, so the within-burst spread is real "
+      + "fading and not the picture's own vertical detail — the estimator needs no content guard.")]
     public void SigmaCalibration()
     {
       foreach (string file in new[]
