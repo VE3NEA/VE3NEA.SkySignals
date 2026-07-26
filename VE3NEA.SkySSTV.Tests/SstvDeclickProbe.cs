@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using FluentAssertions;
 using MathNet.Numerics;
+using VE3NEA.SkyTlm.IO;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -39,6 +41,12 @@ namespace VE3NEA.SkySSTV.Tests
     // is where the real captures' click rates live (measured 0b, 2026-07-25): the reported bursts are
     // at/below threshold and fading, so their instantaneous CNR dips under their average.
     private static readonly double[] Ladder = { -10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12 };
+
+    // the real corpus, for the arms that have to survive contact with it
+    private static readonly string RecordingsDir =
+      @"C:\Users\alsho\AppData\Roaming\Afreet\Products\SkyRoof\Recordings\SSTV";
+    private static readonly string OutDir =
+      @"C:\Users\alsho\AppData\Local\Temp\claude\C--Proj-DSP-VE3NEA-SkySignals\2133a453-2405-4e22-aafc-f4a15544f883\scratchpad\probe";
 
     private readonly ITestOutputHelper output;
     public SstvDeclickProbe(ITestOutputHelper o) => output = o;
@@ -204,7 +212,25 @@ namespace VE3NEA.SkySSTV.Tests
     /// actually damages the picture. Judged per §4 on the brightness error first (the metric the smooth
     /// gradient cannot game) and on mean <c>WideWeight</c> second, with PSNR read last.</para>
     /// </summary>
-    [ManualFact("not yet run")]
+    [ManualFact("Result 2026-07-25 — NULL, and structurally so: the amplitude gate is DOMINATED at every "
+      + "rung. Brightness error, raw / envelope / amplitude(41 taps): −10 dB 227/226/229, −4 214/208/214, "
+      + "0 175/156/168, +2 138/114/132, +4 98/82/93, then above the crossover +6 60/64/62, +8 36/45/40, "
+      + "+10 22/28/24, +12 15.1/16.7/15.6. So the envelope gate wins everywhere below ≈+5 dB and 'no gate at "
+      + "all' wins everywhere above it — the amplitude gate is second in both regimes and first in neither. "
+      + "Same ordering on the resolution channel (+6 dB mean WideWeight raw 0.51 / env 0.33 / amp 0.47).\n"
+      + "WHY, and it is not a tuning failure: for SSTV the median-detrended discriminator output is dominated "
+      + "by the MODULATION, not by the noise. The subcarrier steps every ~13 samples at 3636 px/s, so no "
+      + "window both follows the modulation and outlasts a pulse, and a 4×rms threshold ends up set by "
+      + "pixel-step residual. Sweeping the window only trades sensitivity against false alarms — samples "
+      + "gated at +12 dB CNR with ZERO clicks present: 4.19 % at 9 taps, 0.63 % at 21 (the FM-speech value), "
+      + "0.06 % at 41 — and no length beats the envelope gate below the crossover or 'off' above it. 41 is "
+      + "kept because it is the one that is nearly a no-op on a clean signal.\n"
+      + "APPETITE is the one real difference: at −10 dB the envelope gate alters 23.4 % of samples and the "
+      + "amplitude gate 7.6 %, against the oracle's 29.1 % — and at +6 dB, 11.0 % vs 4.3 % against the "
+      + "oracle's 1.3 %. Both gates are wildly over-eager where it hurts; the amplitude gate is merely less "
+      + "so, which is exactly why it is the milder loss above the crossover.\n"
+      + "Neither gate is close to the 0d ceiling: at 0 dB CNR the 91-luma budget (175→84) buys 20 luma with "
+      + "the envelope gate and 7 with the amplitude gate. Phase 2 remains the lever.")]
     public void AmplitudeGateLadder()
     {
       var spec = SstvModes.Get(SstvMode.Robot36);
@@ -227,6 +253,105 @@ namespace VE3NEA.SkySSTV.Tests
           raw, clicks, src, o, cleanDisc);
         ReportGate("oracle-rect", SstvClickOracle.RepairSteps(raw, clicks, Fs), raw, clicks, src, o, cleanDisc);
       }
+    }
+
+    /// <summary>
+    /// Step 1a on the corpus. No ground truth here, so the ladder's two best metrics are unavailable and the
+    /// judgment runs on what the real captures can supply: the resolution channel (mean <c>WideWeight</c>),
+    /// the acquisition channel (sync <c>maxScore</c>), the reference-free row-noise proxy, the gate's
+    /// appetite — and the PNGs, which are the verdict. Cases and the train-location protocol are
+    /// <c>SstvImageHarness.Real_P6cDecodeGridProbe</c>'s, so the numbers line up with the P6(c) table that
+    /// locked the envelope default.
+    /// </summary>
+    [ManualFact("Result 2026-07-25 — the corpus agrees with the ladder; the envelope default stands. "
+      + "rowNoise raw / envelope / amplitude: utmn2236 20.1/17.0/18.6, m3_1102 18.5/17.1/18.6, umka0418 "
+      + "15.8/15.7/16.6, m3_1237 23.7/23.2/23.6, m3_1102b 24.6/20.0/22.8 — the envelope gate is quietest on "
+      + "all five, the amplitude gate is between raw and envelope (and slightly WORSE than raw on m3_1102 and "
+      + "umka0418). Visually confirmed on m3_1102b: the amplitude arm carries clear residual speckle across "
+      + "the sky and the caption block where the envelope arm is clean.\n"
+      + "THE DECIDING CHANNEL IS ACQUISITION: on the below-threshold 04-18 capture the envelope gate's known "
+      + "P6(c) win holds (maxScore 0.286→0.324) and the amplitude gate LOSES it — 0.281, below raw. That win "
+      + "is discrete (acquire / don't acquire), so it alone rules the amplitude gate out as a replacement.\n"
+      + "Its only edge is the resolution channel on the strong bursts (mean WideWeight m3_1102b raw 0.54 / "
+      + "amp 0.53 / env 0.49, utmn2236 0.50/0.50/0.49) — i.e. it is less destructive than the envelope gate "
+      + "where the envelope gate should not be running at all. Bypassing the stage beats it there, which is "
+      + "Phase 1b's job, not a reason for a second gate. Appetite raw/env/amp: 0 / 11–24 % / 2.6–7.1 %.")]
+    public void AmplitudeGateCorpus()
+    {
+      (string tag, string file, double t0, double t1)[] cases =
+      {
+        ("utmn2236", "2026-06-30_22_36_37_UTMN2_Robot36", 183.0, 218.0),
+        ("m3_1102",  "2026-07-01_11_02_25_Monitor-3",     140.0, 167.0),
+        ("umka0418", "2026-04-18_12_36_09_UmKA-1",          0.0,  24.0),
+        ("m3_1237",  "2026-07-01_12_37_50_Monitor-3",       1.0,  38.0),
+        ("m3_1102b", "2026-07-01_11_02_25_Monitor-3",     285.0, 325.0),
+      };
+
+      Directory.CreateDirectory(OutDir);
+      foreach (var (tag, file, t0, t1) in cases)
+      {
+        string wav = Path.Combine(RecordingsDir, file + ".iq.wav");
+        if (!File.Exists(wav)) { output.WriteLine($"{tag}: capture absent"); continue; }
+        var (iq, sr) = WavIqReader.Read(wav);
+        var seg = iq[(int)(Math.Max(0, t0 - 1) * sr)..Math.Min(iq.Length, (int)((t1 + 1) * sr))];
+
+        // locate the train once, at the detection defaults, so every arm decodes the same slice
+        var oDet = new SstvDecodeOptions { SampleRate = sr };
+        double[] discDet = SstvDecoder.Discriminator(seg, oDet);
+        var extractor = SstvDecoder.ExtractTrains(SstvDecoder.SyncAudio(discDet, sr, oDet), sr,
+          SstvVisDetector.DetectAll(SstvDecoder.SyncAudio(discDet, sr, oDet), sr));
+        SstvPulseTrain? best = null;
+        foreach (var train in extractor.Trains)
+          if (extractor.IsImageTrain(train) && (best == null || train.PulseCnt > best.PulseCnt)) best = train;
+        if (best == null) { output.WriteLine($"{tag}: no image train at detection defaults"); continue; }
+
+        int firstSync = (int)Math.Round(best.Regr.GetPulseTime(0));
+        var spec = SstvModes.Get(best.Format);
+        var baseOpts = new SstvDecodeOptions
+        {
+          SampleRate = sr,
+          ChannelBwHz = new SstvDecodeOptions().VideoChannelBwHz,
+          Acquire = false,
+          StartSample = firstSync
+        };
+        double[] rawDisc = SstvDecoder.Discriminator(seg, baseOpts with { BlankerThreshold = 0.0 });
+        output.WriteLine($"--- {tag}: {best.Format} train @{firstSync / (double)sr:0.0}s p={best.PulseCnt}");
+
+        foreach (var (arm, o) in new[]
+        {
+          ("raw", baseOpts with { BlankerThreshold = 0.0 }),
+          ("envelope", baseOpts),
+          ("amplitude", baseOpts with { BlankerGate = BlankerGateMode.Amplitude })
+        })
+        {
+          double[] disc = SstvDecoder.Discriminator(seg, o);
+          var det = new SstvPulseDetector(sr, spec.SyncMs);
+          det.Detect(SstvDecoder.SyncAudio(disc, sr, o));
+
+          var img = SstvDecoder.Decode(disc, best.Format, o);
+          string path = Path.Combine(OutDir, $"gate_{tag}_{arm}.png");
+          img.SavePng(path);
+          output.WriteLine($"  {arm,-9} maxScore={det.MaxScore:0.000} rowNoise={RowNoise(img):0.0} " +
+            $"wide={MeanWideWeight(disc, o, sr, best.Format),4:0.00} " +
+            $"gated={100.0 * AlteredShare(disc, rawDisc):0.00}% -> {Path.GetFileName(path)}");
+        }
+      }
+    }
+
+    /// <summary>Mean absolute luma difference between vertically adjacent pixels — a reference-free
+    /// speckle proxy (image content correlates line-to-line; noise does not). Over-smoothing lowers it too,
+    /// so read it beside the PNGs. Same statistic as <c>SstvImageHarness.RowNoise</c>.</summary>
+    private static double RowNoise(RgbImage img)
+    {
+      double sum = 0;
+      int n = 0;
+      for (int y = 1; y < img.Height; y++)
+        for (int x = 0; x < img.Width; x++)
+        {
+          sum += Math.Abs(img.R[y * img.Width + x] - img.R[(y - 1) * img.Width + x]);
+          n++;
+        }
+      return n == 0 ? 0 : sum / n;
     }
 
     /// <summary>As <see cref="Report"/>, plus the share of samples the arm actually altered — the gate's
@@ -263,11 +388,14 @@ namespace VE3NEA.SkySSTV.Tests
     /// <summary>Mean of the §6.3 wide-branch weight over the image's lines — the resolution channel. The
     /// production statistic itself (<see cref="SstvDecoder.WideWeight"/>), on the fixed-timing line grid.</summary>
     private static double MeanWideWeight(double[] disc, SstvDecodeOptions o)
+      => MeanWideWeight(disc, o, Fs, SstvMode.Robot36);
+
+    private static double MeanWideWeight(double[] disc, SstvDecodeOptions o, double fs, SstvMode mode)
     {
-      var spec = SstvModes.Get(SstvMode.Robot36);
-      double[] narrow = SstvDecoder.Brightness(disc, Fs, o, out double[]? wide);
+      var spec = SstvModes.Get(mode);
+      double[] narrow = SstvDecoder.Brightness(disc, fs, o, out double[]? wide);
       var bw = new BrightnessWindow(narrow, wide, 0, narrow.Length);
-      double period = spec.LinePeriodMs / 1000.0 * Fs;
+      double period = spec.LinePeriodMs / 1000.0 * fs;
 
       double sum = 0;
       int count = 0;

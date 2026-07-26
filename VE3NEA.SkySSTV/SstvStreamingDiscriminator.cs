@@ -18,10 +18,15 @@ namespace VE3NEA.SkySSTV
   internal sealed class SstvStreamingDiscriminator : IDisposable
   {
     // the running-median window of the amplitude gate, and the samples added at each end of an impulse run
-    // before interpolating, for the pulse skirts. Both from the FM-speech experiment's ImpulseBlanker: the
-    // median window is long enough that a pulse (1 sample at 8 dB CNR, 8 at 4 dB) stays a minority of it and
-    // short enough to follow the subcarrier, and 2 is the best all-round skirt.
-    private const int BaselineMedianLength = 21;
+    // before interpolating, for the pulse skirts. The skirt is the FM-speech experiment's value (2 is its
+    // best all-round setting). The window is NOT: that experiment used 21 samples, chosen so a pulse stays a
+    // minority of the window while the median still follows the modulation. At SSTV's 3636 px/s the
+    // subcarrier steps every ~13 samples, so no window both follows the modulation and outlasts a pulse, and
+    // the tradeoff inverts — a LONGER window is better, because the pixel-step residual it leaves inflates
+    // the rms and it is that inflation which holds the false-alarm rate down. Measured on the declick plan's
+    // §5 ladder (1a, 2026-07-25), samples gated at +12 dB CNR with zero clicks present: 4.19 % at 9 taps,
+    // 0.63 % at 21, 0.06 % at 41.
+    private const int BaselineMedianLength = 41;
     private const int SkirtSamples = 2;
 
     private readonly double fs;

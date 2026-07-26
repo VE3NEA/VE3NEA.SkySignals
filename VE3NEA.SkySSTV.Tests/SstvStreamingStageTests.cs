@@ -67,6 +67,37 @@ namespace VE3NEA.SkySSTV.Tests
       diffs.Should().Be(0, "streaming disc must equal the batch chain sample-for-sample");
     }
 
+    /// <summary>The declick-plan 1a amplitude gate carries two centered windows (the 41-tap median baseline
+    /// and the 2-sample skirt) whose state is the only part of this stage that is not driven by the envelope,
+    /// so it needs its own block-size invariance check: the median window must not see a block boundary.</summary>
+    [Theory]
+    [InlineData(997)]
+    [InlineData(12000)]
+    [InlineData(int.MaxValue)]
+    public void StreamingDiscriminator_AmplitudeGate_MatchesBatch(int block)
+    {
+      int n = (int)(3 * Fs);
+      var iq = FadedIq(n, 5);
+      var o = new SstvDecodeOptions { BlankerGate = BlankerGateMode.Amplitude };
+      double[] expected = SstvDecoder.Discriminator(iq, o);
+
+      var got = new List<double>(n);
+      using var sd = new SstvStreamingDiscriminator(o, o.ChannelBwHz);
+      for (int at = 0; at < n; at += Math.Min(block, n))
+      {
+        int len = Math.Min(Math.Min(block, n), n - at);
+        foreach (double v in sd.Process(iq.AsSpan(at, len))) got.Add(v);
+      }
+      foreach (double v in sd.Flush()) got.Add(v);
+
+      got.Count.Should().Be(expected.Length, "the stream must emit exactly the batch sample count");
+      int diffs = 0;
+      for (int i = 0; i < n; i++)
+        if (Math.Abs(got[i] - expected[i]) > 1e-9) diffs++;
+      output.WriteLine($"block={block}: {diffs} samples differ beyond 1e-9");
+      diffs.Should().Be(0, "the amplitude gate must be independent of the block boundaries");
+    }
+
     [Theory]
     [InlineData(997)]
     [InlineData(48000)]
