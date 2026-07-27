@@ -112,18 +112,22 @@ namespace VE3NEA.SkyTlm.Deframing
       for (int k = nsyms; k < vsyms.Length; k++) vsyms[k] = 128; // erasure
 
       var bits = new int[nbits];
-      IntPtr vp = NativeFec.create_viterbi27(nbits);
-      if (vp == IntPtr.Zero) return null;
-      try
+      // the polynomial table is process-global (see NativeFec.Viterbi27Gate), so the whole sequence is held
+      lock (NativeFec.Viterbi27Gate)
       {
-        NativeFec.set_viterbi27_polynomial(Polys);
-        NativeFec.init_viterbi27(vp, 0);
-        NativeFec.update_viterbi27_blk(vp, vsyms, nbits + 6);
-        var packed = new byte[(nbits + 7) / 8];
-        NativeFec.chainback_viterbi27(vp, packed, (uint)nbits, 0);
-        for (int b = 0; b < nbits; b++) bits[b] = (packed[b >> 3] >> (7 - (b & 7))) & 1; // MSB-first
+        IntPtr vp = NativeFec.create_viterbi27(nbits);
+        if (vp == IntPtr.Zero) return null;
+        try
+        {
+          NativeFec.set_viterbi27_polynomial(Polys);
+          NativeFec.init_viterbi27(vp, 0);
+          NativeFec.update_viterbi27_blk(vp, vsyms, nbits + 6);
+          var packed = new byte[(nbits + 7) / 8];
+          NativeFec.chainback_viterbi27(vp, packed, (uint)nbits, 0);
+          for (int b = 0; b < nbits; b++) bits[b] = (packed[b >> 3] >> (7 - (b & 7))) & 1; // MSB-first
+        }
+        finally { NativeFec.delete_viterbi27(vp); }
       }
-      finally { NativeFec.delete_viterbi27(vp); }
 
       // --- CCSDS descramble + pack to RS codeword bytes ---------------------------------------
       CcsdsScrambler.DescrambleInPlace(bits);

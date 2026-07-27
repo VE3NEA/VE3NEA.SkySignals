@@ -38,8 +38,10 @@ namespace VE3NEA.SkyTlm.Dsp
     /// signal with guard/ramp noise whose discriminator output is broadband junk that dilutes the line.</summary>
     private const double EdgeTrimFraction = 0.05;
 
-    /// <summary>Minimum score (line peak over the expected pure-noise peak) to declare a line at all.</summary>
-    private const double MinLineScore = 2.0;
+    /// <summary>Minimum score (line peak over the expected pure-noise peak) to declare a line at all.
+    /// Public because <see cref="AllLines"/> does not apply it — a caller ranking candidates still needs the
+    /// bar that separates a line from a noise peak.</summary>
+    public const double MinLineScore = 2.0;
 
 
 
@@ -75,10 +77,26 @@ namespace VE3NEA.SkyTlm.Dsp
     public static BaudLineResult? StrongestLine(Complex32[] seg, double sampleRate, double cfoHz,
       double cutoffHz, IReadOnlyList<double> candidateBauds)
     {
+      var lines = AllLines(seg, sampleRate, cfoHz, cutoffHz, candidateBauds);
+      return lines.Count > 0 && lines[0].Score >= MinLineScore ? lines[0] : null;
+    }
+
+    /// <summary>
+    /// Every candidate's line, strongest first — the same single-pass statistic
+    /// <see cref="StrongestLine"/> reads its answer from, with the whole ranking kept instead of only the
+    /// winner. Discovery needs the ranking rather than the winner: verifying a label only asks whether the
+    /// best line sits at the labeled rate, but <i>finding</i> a rate over a wide scan means the top line can
+    /// be an artifact while the true symbol rate sits just below it, and trying the runners-up as extra
+    /// hypotheses costs one demodulation each. Unscored (out-of-range) candidates are omitted; the
+    /// <see cref="MinLineScore"/> bar is <b>not</b> applied here — the caller decides.
+    /// </summary>
+    public static IReadOnlyList<BaudLineResult> AllLines(Complex32[] seg, double sampleRate, double cfoHz,
+      double cutoffHz, IReadOnlyList<double> candidateBauds)
+    {
       // central slice, edges trimmed (see EdgeTrimFraction), capped for bounded cost
       int trim = (int)(seg.Length * EdgeTrimFraction);
       int len = Math.Min(seg.Length - 2 * trim, MaxAnalysisSamples);
-      if (len < 256 || candidateBauds.Count == 0) return null;
+      if (len < 256 || candidateBauds.Count == 0) return Array.Empty<BaudLineResult>();
       int start = trim + (seg.Length - 2 * trim - len) / 2;
       var x = new Complex32[len];
       Array.Copy(seg, start, x, 0, len);
@@ -111,13 +129,11 @@ namespace VE3NEA.SkyTlm.Dsp
       mean = (mean + c[0]) / len;
       for (int i = 0; i < len; i++) c[i] -= mean;
 
-      BaudLineResult? best = null;
+      var lines = new List<BaudLineResult>(candidateBauds.Count);
       foreach (double b in candidateBauds)
-      {
-        var line = LineAt(c, b, sampleRate);
-        if (line != null && (best == null || line.Score > best.Score)) best = line;
-      }
-      return best != null && best.Score >= MinLineScore ? best : null;
+        if (LineAt(c, b, sampleRate) is { } line) lines.Add(line);
+      lines.Sort((a, b) => b.Score.CompareTo(a.Score));
+      return lines;
     }
 
 

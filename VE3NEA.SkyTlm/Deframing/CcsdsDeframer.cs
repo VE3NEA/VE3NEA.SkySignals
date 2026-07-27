@@ -123,17 +123,21 @@ namespace VE3NEA.SkyTlm.Deframing
       for (int k = 0; k < nsyms; k++) vsyms[k] = ToSym(polarity * soft[phase + k]);
       for (int k = nsyms; k < vsyms.Length; k++) vsyms[k] = 128;
 
-      IntPtr vp = NativeFec.create_viterbi27(nbits);
-      if (vp == IntPtr.Zero) return Array.Empty<int>();
       var packed = new byte[(nbits + 7) / 8];
-      try
+      // the polynomial table is process-global (see NativeFec.Viterbi27Gate), so the whole sequence is held
+      lock (NativeFec.Viterbi27Gate)
       {
-        NativeFec.set_viterbi27_polynomial(polys!);
-        NativeFec.init_viterbi27(vp, 0);
-        NativeFec.update_viterbi27_blk(vp, vsyms, nbits + 6);
-        NativeFec.chainback_viterbi27(vp, packed, (uint)nbits, 0);
+        IntPtr vp = NativeFec.create_viterbi27(nbits);
+        if (vp == IntPtr.Zero) return Array.Empty<int>();
+        try
+        {
+          NativeFec.set_viterbi27_polynomial(polys!);
+          NativeFec.init_viterbi27(vp, 0);
+          NativeFec.update_viterbi27_blk(vp, vsyms, nbits + 6);
+          NativeFec.chainback_viterbi27(vp, packed, (uint)nbits, 0);
+        }
+        finally { NativeFec.delete_viterbi27(vp); }
       }
-      finally { NativeFec.delete_viterbi27(vp); }
 
       var bits = new int[nbits];
       for (int b = 0; b < nbits; b++) bits[b] = (packed[b >> 3] >> (7 - (b & 7))) & 1; // MSB-first

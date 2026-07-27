@@ -13,12 +13,18 @@ namespace VE3NEA.SkyTlm.Core
   /// <paramref name="Template"/> is the bank hypothesis the measured spectrum matched best (see
   /// <see cref="CpmTemplate.SynthesizeBank"/>); null on the blind-FSK path, where no shape matching runs.
   /// </summary>
+  /// <param name="Segment">The decode window's samples — the very array the pipeline demodulated, spanning
+  /// <paramref name="StartSample"/> for <paramref name="Length"/> samples (so it includes the lead overlap,
+  /// not just the detected span). Handed over rather than copied, so a subscriber costs nothing until it
+  /// keeps the report alive. This is what lets a re-analysis (parameter discovery) work on exactly the
+  /// samples the decode saw, instead of re-detecting a burst inside a span and losing signal at both ends.</param>
   public sealed record StreamingBurstReport(
     int Index, long StartSample, int Length, double TimeSeconds, bool Validated,
     Burst Burst, SoftSymbols Soft, GmskTrace? Trace, IReadOnlyList<Frame> Frames,
     LearnedShape MeasuredShape, double[] CorrelationLagHz, double[] Correlation,
     double MatchedFraction, double MeanFrameMatch, int ShapedFrames,
-    ShapeHypothesis? Template = null, float[]? AveragedSpectrumRaw = null);
+    ShapeHypothesis? Template = null, float[]? AveragedSpectrumRaw = null,
+    Complex32[]? Segment = null);
 
   /// <summary>
   /// One STFT frame's detection internals, surfaced to the Detection Inspector when a subscriber attaches to
@@ -1740,7 +1746,7 @@ namespace VE3NEA.SkyTlm.Core
             FrameDecoded?.Invoke(frame);
 
         BurstDecoded?.Invoke(new StreamingBurstReport(idx, segStartAbs, seg.Length, timeSeconds, validated,
-          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp, avgQRaw));
+          abs, soft, trace, burstFrames, measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp, avgQRaw, seg));
       }
       catch (Exception ex)
       {
@@ -1782,7 +1788,7 @@ namespace VE3NEA.SkyTlm.Core
 
       var soft = new SoftSymbols { Soft = Array.Empty<float>(), SymbolRate = p.Baud };
       BurstDecoded?.Invoke(new StreamingBurstReport(idx, segStartAbs, seg.Length, timeSeconds, validated,
-        abs, soft, null, Array.Empty<Frame>(), measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp, avgQRaw));
+        abs, soft, null, Array.Empty<Frame>(), measured, lagHz, corr, matchedFrac, meanMatch, shapedFrames, matchedHyp, avgQRaw, seg));
     }
 
     /// <summary>Match the burst's measured averaged spectrum against every bank hypothesis. Returns the best

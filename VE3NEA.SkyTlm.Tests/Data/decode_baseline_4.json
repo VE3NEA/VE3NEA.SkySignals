@@ -1,16 +1,16 @@
 {
   "description": "Frame-decode regression baseline: per recording, the resolved modulation params (mode/baud/deviation/framing), the satellite norad_id and transmitter_uuid that produced the frames, and crc_ok = the count of CRC-valid frames the production (gated) StreamingPipeline recovered. Generate with `FskDemod --gen-baseline <this.json> <dir>`; verify with `FskDemod --check-baseline <this.json> [dir]`.",
-  "generated": "2026-07-27",
-  "generatedAtCommit": "bf0de65",
+  "generated": "2026-06-30",
+  "generatedAtCommit": "76ef099",
   "recordingsDir": "C:\\Users\\alsho\\AppData\\Roaming\\Afreet\\Products\\SkyRoof\\Recordings",
   "recordings": [
     {
       "file": "2026-04-16_10_35_06_SATURN.iq.wav",
       "norad_id": 57174,
       "transmitter_uuid": "4T8D7kLMyV8rF5r4rpBnfd",
-      "mode": "AFSK",
+      "mode": "FSK",
       "baud": 1200,
-      "deviation_hz": 500,
+      "deviation_hz": 2400,
       "framing": "AX25G3RUH",
       "crc_ok": 0
     },
@@ -21,7 +21,7 @@
       "mode": "GFSK",
       "baud": 9600,
       "framing": "AX25G3RUH",
-      "crc_ok": 21
+      "crc_ok": 19
     },
     {
       "file": "2026-04-17_14_54_53_HADES-SA.iq.wav",
@@ -31,7 +31,7 @@
       "baud": 800,
       "deviation_hz": 800,
       "framing": "HADES",
-      "crc_ok": 8
+      "crc_ok": 7
     },
     {
       "file": "2026-04-18_12_36_09_UmKA-1.iq.wav",
@@ -51,7 +51,16 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 6
+      "crc_ok": 5
+    },
+    {
+      "file": "2026-04-28_10_25_34_Eaglet 1.iq.wav",
+      "norad_id": 43790,
+      "transmitter_uuid": "NwAjXMKwWFyQkeSz9Qn9RS",
+      "mode": "BPSK",
+      "baud": 1200,
+      "framing": "AX25G3RUH",
+      "crc_ok": 0
     },
     {
       "file": "2026-04-28_11_39_11_PHI-1.iq.wav",
@@ -61,7 +70,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "AX25G3RUH",
-      "crc_ok": 1
+      "crc_ok": 0
     },
     {
       "file": "2026-04-28_11_40_08_NUSHSat1.iq.wav",
@@ -101,7 +110,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 1
+      "crc_ok": 0
     },
     {
       "file": "2026-06-02_11_19_41_Avion Kaluga 650.iq.wav",
@@ -113,7 +122,7 @@
       "file": "2026-06-02_15_16_21_CUBEBUG-2.iq.wav",
       "norad_id": 39440,
       "transmitter_uuid": "2KinLbk46zccaYCdUY4Lqr",
-      "mode": "AFSK",
+      "mode": "FSK",
       "baud": 1200,
       "deviation_hz": 500,
       "framing": "AX25G3RUH",
@@ -165,7 +174,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 4
+      "crc_ok": 3
     },
     {
       "file": "2026-06-06_23_02_04_SAKHACUBE-CHOLBON.iq.wav",
@@ -175,7 +184,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 10
+      "crc_ok": 9
     },
     {
       "file": "2026-06-06_23_28_44_Luca.iq.wav",
@@ -185,27 +194,27 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 8
+      "crc_ok": 6
     },
     {
       "file": "2026-06-07_13_11_19_CUTE.iq.wav",
       "norad_id": 49263,
       "transmitter_uuid": "a5nA6sjzKTeqPgxoWQ4TyE",
-      "mode": "FSK",
+      "mode": "GFSK",
       "baud": 9600,
       "deviation_hz": 4800,
       "framing": "AX25G3RUH",
-      "crc_ok": 4
+      "crc_ok": 2
     },
     {
       "file": "2026-06-07_14_45_41_CUTE.iq.wav",
       "norad_id": 49263,
       "transmitter_uuid": "a5nA6sjzKTeqPgxoWQ4TyE",
-      "mode": "FSK",
+      "mode": "GFSK",
       "baud": 9600,
       "deviation_hz": 4800,
       "framing": "AX25G3RUH",
-      "crc_ok": 2
+      "crc_ok": 1
     },
     {
       "file": "2026-06-07_14_46_19_AEPEX.iq.wav",
@@ -214,7 +223,7 @@
       "mode": "GFSK",
       "baud": 9600,
       "framing": "AX25G3RUH",
-      "crc_ok": 84
+      "crc_ok": 60
     },
     {
       "file": "2026-06-07_15_19_46_HADES-SA.iq.wav",
@@ -232,7 +241,6 @@
       "transmitter_uuid": "fDywUVLPJc2FMkFoYv7EeV",
       "mode": "FSK",
       "baud": 4800,
-      "deviation_hz": 2400,
       "framing": "AX100ASM",
       "crc_ok": 12
     },
@@ -292,7 +300,7 @@
       "mode": "BPSK",
       "baud": 1200,
       "framing": "AX25G3RUH",
-      "crc_ok": 105
+      "crc_ok": 112
     },
     {
       "file": "2026-06-13_10_21_20_TEVEL2-1.iq.wav",
@@ -338,7 +346,7 @@
       "baud": 4800,
       "deviation_hz": 1200,
       "framing": "AX25G3RUH",
-      "crc_ok": 34
+      "crc_ok": 27
     },
     {
       "file": "2026-06-14_08_33_09_CAS-3H.iq.wav",
@@ -357,7 +365,7 @@
       "mode": "BPSK",
       "baud": 1200,
       "framing": "AX25G3RUH",
-      "crc_ok": 120
+      "crc_ok": 117
     },
     {
       "file": "2026-06-14_11_22_17.iq.wav",
@@ -384,7 +392,7 @@
       "mode": "BPSK",
       "baud": 1200,
       "framing": "AX25G3RUH",
-      "crc_ok": 88
+      "crc_ok": 90
     },
     {
       "file": "2026-06-17_17_04_11_TIGRISAT.iq.wav",
@@ -394,7 +402,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "AX25G3RUH",
-      "crc_ok": 35
+      "crc_ok": 27
     },
     {
       "file": "2026-06-18_10_11_55_RS-66S.iq.wav",
@@ -404,7 +412,7 @@
       "baud": 2400,
       "deviation_hz": 600,
       "framing": "USP",
-      "crc_ok": 8
+      "crc_ok": 6
     },
     {
       "file": "2026-06-18_11_00_02_KuzGTU-1.iq.wav",
@@ -414,7 +422,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 9
+      "crc_ok": 8
     },
     {
       "file": "2026-06-18_11_08_11_UmKA-1.iq.wav",
@@ -424,7 +432,7 @@
       "baud": 9600,
       "deviation_hz": 2400,
       "framing": "USP",
-      "crc_ok": 7
+      "crc_ok": 4
     },
     {
       "file": "2026-06-18_12_11_40_GALAPAGOS-UTE-SWSU.iq.wav",
@@ -432,8 +440,7 @@
       "transmitter_uuid": "ELmEGxaU8aiLrDps6gouPE",
       "mode": "FSK",
       "baud": 2400,
-      "deviation_hz": 1200,
-      "framing": "USP",
+      "framing": "Unknown",
       "crc_ok": 0
     },
     {
@@ -454,17 +461,17 @@
       "baud": 2400,
       "deviation_hz": 600,
       "framing": "USP",
-      "crc_ok": 9
+      "crc_ok": 8
     },
     {
       "file": "2026-06-18_22_42_23_SATURN.iq.wav",
       "norad_id": 57174,
       "transmitter_uuid": "4T8D7kLMyV8rF5r4rpBnfd",
-      "mode": "AFSK",
+      "mode": "FSK",
       "baud": 1200,
-      "deviation_hz": 500,
+      "deviation_hz": 2400,
       "framing": "AX25G3RUH",
-      "crc_ok": 2
+      "crc_ok": 0
     },
     {
       "file": "2026-06-18_23_26_46_AO-123.iq.wav",
@@ -489,11 +496,11 @@
       "file": "2026-06-19_10_12_00_SATURN.iq.wav",
       "norad_id": 57174,
       "transmitter_uuid": "4T8D7kLMyV8rF5r4rpBnfd",
-      "mode": "AFSK",
+      "mode": "FSK",
       "baud": 1200,
-      "deviation_hz": 500,
+      "deviation_hz": 2400,
       "framing": "AX25G3RUH",
-      "crc_ok": 3
+      "crc_ok": 0
     },
     {
       "file": "2026-06-19_15_51_19_RANDEV.iq.wav",
@@ -531,7 +538,7 @@
       "baud": 4800,
       "deviation_hz": 4000,
       "framing": "CCSDS",
-      "crc_ok": 7
+      "crc_ok": 6
     },
     {
       "file": "2026-06-29_09_33_57_RS-66S.iq.wav",
@@ -541,17 +548,17 @@
       "baud": 2400,
       "deviation_hz": 600,
       "framing": "USP",
-      "crc_ok": 3
+      "crc_ok": 2
     },
     {
       "file": "2026-06-29_09_36_17_RS-66S.iq.wav",
       "norad_id": 61772,
       "transmitter_uuid": "hFHR6LwsyKmzG7nPdKMMny",
       "mode": "GMSK",
-      "baud": 4800,
-      "deviation_hz": 1200,
+      "baud": 2400,
+      "deviation_hz": 600,
       "framing": "USP",
-      "crc_ok": 5
+      "crc_ok": 0
     },
     {
       "file": "2026-06-29_09_46_33_Eaglet 1.iq.wav",
@@ -560,7 +567,7 @@
       "mode": "BPSK",
       "baud": 1200,
       "framing": "AX25G3RUH",
-      "crc_ok": 43
+      "crc_ok": 45
     },
     {
       "file": "2026-06-29_15_23_56_HADES-SA.iq.wav",
@@ -570,7 +577,7 @@
       "baud": 200,
       "deviation_hz": 562.5,
       "framing": "HADES",
-      "crc_ok": 4
+      "crc_ok": 3
     },
     {
       "file": "2026-06-29_19_25_39_ROBUSTA-3A.iq.wav",
@@ -580,7 +587,7 @@
       "baud": 38400,
       "deviation_hz": 9600,
       "framing": "AX25G3RUH",
-      "crc_ok": 1
+      "crc_ok": 0
     },
     {
       "file": "2026-06-29_22_18_39_LASARsat.iq.wav",
@@ -589,7 +596,7 @@
       "mode": "GFSK",
       "baud": 9600,
       "framing": "AX25G3RUH",
-      "crc_ok": 6
+      "crc_ok": 4
     },
     {
       "file": "2026-06-29_22_27_52_AISTECHSAT-2.iq.wav",
@@ -599,7 +606,7 @@
       "baud": 4800,
       "deviation_hz": 1600,
       "framing": "AX100ASM",
-      "crc_ok": 31
+      "crc_ok": 30
     },
     {
       "file": "2026-06-30_12_10_55_CUTE.iq.wav",
@@ -608,7 +615,7 @@
       "mode": "FSK",
       "baud": 9600,
       "framing": "AX25G3RUH",
-      "crc_ok": 26
+      "crc_ok": 15
     },
     {
       "file": "2026-06-30_13_24_55_Luca.iq.wav",
@@ -624,11 +631,11 @@
       "file": "2026-06-30_14_06_24_CUTE.iq.wav",
       "norad_id": 49263,
       "transmitter_uuid": "a5nA6sjzKTeqPgxoWQ4TyE",
-      "mode": "FSK",
+      "mode": "GFSK",
       "baud": 9600,
       "deviation_hz": 4800,
       "framing": "AX25G3RUH",
-      "crc_ok": 111
+      "crc_ok": 92
     },
     {
       "file": "2026-06-30_15_11_56_UND ROADS 2.iq.wav",
@@ -637,257 +644,7 @@
       "mode": "GFSK",
       "baud": 4800,
       "framing": "AX100ASM",
-      "crc_ok": 122
-    },
-    {
-      "file": "2026-06-30_20_40_19_AISTECHSAT-2.iq.wav",
-      "norad_id": 43768,
-      "transmitter_uuid": "86Q32FyhEEeBzDYBbipKG4",
-      "mode": "GFSK",
-      "baud": 4800,
-      "deviation_hz": 1600,
-      "framing": "AX100ASM",
-      "crc_ok": 38
-    },
-    {
-      "file": "2026-06-30_20_53_20_ROBUSTA-3A.iq.wav",
-      "norad_id": 60243,
-      "transmitter_uuid": "b87T8grefAjihKP5TovwkJ",
-      "mode": "GMSK",
-      "baud": 38400,
-      "deviation_hz": 9600,
-      "framing": "AX25G3RUH",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-06-30_22_17_56_AISTECHSAT-2.iq.wav",
-      "norad_id": 43768,
-      "transmitter_uuid": "86Q32FyhEEeBzDYBbipKG4",
-      "mode": "GFSK",
-      "baud": 4800,
-      "deviation_hz": 1600,
-      "framing": "AX100ASM",
-      "crc_ok": 5
-    },
-    {
-      "file": "2026-06-30_22_31_37_SNUGLITE.iq.wav",
-      "norad_id": 43784,
-      "transmitter_uuid": "NTAbJCQ75TbkNGqXA4gMYi",
-      "mode": "GMSK",
-      "baud": 9600,
-      "deviation_hz": 2400,
-      "framing": "AX25G3RUH",
-      "crc_ok": 6
-    },
-    {
-      "file": "2026-06-30_22_36_37_UTMN2_Robot36.iq.wav",
-      "norad_id": 57203,
-      "transmitter_uuid": "oSkpmfHTdPWbvQnHn9eNCM",
-      "mode": "GMSK",
-      "baud": 9600,
-      "deviation_hz": 2400,
-      "framing": "USP",
-      "crc_ok": 7
-    },
-    {
-      "file": "2026-06-30_22_51_44_QMR-KWT 2.iq.wav",
-      "norad_id": 67291,
-      "transmitter_uuid": "93CW2HGV4qFhiLLDRCpomn",
-      "mode": "GMSK",
-      "baud": 9600,
-      "deviation_hz": 2400,
-      "framing": "USP",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-01_07_43_13_Skif-D.iq.wav",
-      "baud": 0,
-      "crc_ok": 0,
-      "skip": "Could not resolve baud for satellite 'Skif-D', transmitter 'Mode U - TLM'."
-    },
-    {
-      "file": "2026-07-01_07_50_48_SNIPE B.iq.wav",
-      "norad_id": 56745,
-      "transmitter_uuid": "fDywUVLPJc2FMkFoYv7EeV",
-      "mode": "FSK",
-      "baud": 4800,
-      "deviation_hz": 2400,
-      "framing": "AX100ASM",
-      "crc_ok": 20
-    },
-    {
-      "file": "2026-07-01_08_30_39_CatSat.iq.wav",
-      "norad_id": 60246,
-      "transmitter_uuid": "kHBNYLQGta6dBeHvvUWKmQ",
-      "mode": "GFSK",
-      "baud": 2400,
-      "deviation_hz": 750,
-      "framing": "AX100ASM",
-      "crc_ok": 2
-    },
-    {
-      "file": "2026-07-01_09_38_57_AO-123.iq.wav",
-      "norad_id": 61781,
-      "transmitter_uuid": "8d93PPUBXTaMgcyM6mbuFa",
-      "mode": "BPSK",
-      "baud": 9600,
-      "framing": "CCSDS",
-      "crc_ok": 52
-    },
-    {
-      "file": "2026-07-01_11_16_47_AISTECHSAT-2.iq.wav",
-      "norad_id": 43768,
-      "transmitter_uuid": "86Q32FyhEEeBzDYBbipKG4",
-      "mode": "GFSK",
-      "baud": 4800,
-      "deviation_hz": 1600,
-      "framing": "AX100ASM",
-      "crc_ok": 2
-    },
-    {
-      "file": "2026-07-05_12_56_36_Connecta T1.2.iq.wav",
-      "norad_id": 55012,
-      "transmitter_uuid": "mNZWr65GJbN9Qq6CVv6XR6",
-      "mode": "GFSK",
-      "baud": 4800,
-      "framing": "AX25G3RUH",
-      "crc_ok": 2
-    },
-    {
-      "file": "2026-07-07_14_22_21_CUBEBUG-2.iq.wav",
-      "norad_id": 39440,
-      "transmitter_uuid": "2KinLbk46zccaYCdUY4Lqr",
-      "mode": "AFSK",
-      "baud": 1200,
-      "deviation_hz": 500,
-      "framing": "AX25G3RUH",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-07_14_36_51_HADES-SA.iq.wav",
-      "norad_id": 68446,
-      "transmitter_uuid": "VBQcjiP9kmyGV4YvzweJSS",
-      "mode": "FSK",
-      "baud": 200,
-      "deviation_hz": 562.5,
-      "framing": "HADES",
-      "crc_ok": 1
-    },
-    {
-      "file": "2026-07-08_16_59_40_UND ROADS 2.iq.wav",
-      "norad_id": 64549,
-      "transmitter_uuid": "2cWL58VZEKbVS3AZitiH4H",
-      "mode": "GMSK",
-      "baud": 1200,
-      "deviation_hz": 300,
-      "framing": "AX100ASM",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-08_22_15_35_SNIPE D.iq.wav",
-      "norad_id": 56744,
-      "transmitter_uuid": "HZCY6kQFouqfFPreQUbPUe",
-      "mode": "GFSK",
-      "baud": 4800,
-      "framing": "AX100ASM",
-      "crc_ok": 1
-    },
-    {
-      "file": "2026-07-10_11_38_21_Astrocast 0.1.iq.wav",
-      "norad_id": 43798,
-      "transmitter_uuid": "J38rm6Dj47YkTdpYC6UrvS",
-      "mode": "FSK",
-      "baud": 1200,
-      "deviation_hz": 1200,
-      "framing": "Unknown",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-10_11_48_47_UTMN2.iq.wav",
-      "norad_id": 57203,
-      "transmitter_uuid": "oSkpmfHTdPWbvQnHn9eNCM",
-      "mode": "GMSK",
-      "baud": 9600,
-      "deviation_hz": 2400,
-      "framing": "USP",
-      "crc_ok": 2
-    },
-    {
-      "file": "2026-07-11_22_46_37_GALAPAGOS-UTE-SWSU.iq.wav",
-      "norad_id": 67279,
-      "transmitter_uuid": "4Qhn53gBfoXBKDanf6SYmG",
-      "mode": "FSK",
-      "baud": 1143,
-      "deviation_hz": 3500,
-      "framing": "USP",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-11_23_04_32_KOSTKA.iq.wav",
-      "norad_id": 98395,
-      "transmitter_uuid": "nPPib2bitRKHSXBPwNMfbQ",
-      "mode": "GFSK",
-      "baud": 9600,
-      "framing": "AX25G3RUH",
-      "crc_ok": 3
-    },
-    {
-      "file": "2026-07-11_23_11_41_QMR-KWT 2.iq.wav",
-      "norad_id": 67291,
-      "transmitter_uuid": "93CW2HGV4qFhiLLDRCpomn",
-      "mode": "GMSK",
-      "baud": 9600,
-      "deviation_hz": 2400,
-      "framing": "USP",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-12_10_03_55_KOYO.iq.wav",
-      "norad_id": 98273,
-      "transmitter_uuid": "nqzqtizPoG6xi39PwRes4Z",
-      "mode": "FSK",
-      "baud": 9600,
-      "deviation_hz": 2400,
-      "framing": "AX25G3RUH",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-14_16_05_41_Geoscan-1.iq.wav",
-      "norad_id": 64880,
-      "transmitter_uuid": "34KpBL6uMxZ3rPnLxrbh2S",
-      "mode": "GFSK",
-      "baud": 9600,
-      "framing": "AX25G3RUH",
-      "crc_ok": 2
-    },
-    {
-      "file": "2026-07-15_20_22_37_CANVAS.iq.wav",
-      "norad_id": 68635,
-      "transmitter_uuid": "CeS6GYyFwzkmB3t8Y7SqHe",
-      "mode": "AFSK",
-      "baud": 1200,
-      "deviation_hz": 500,
-      "framing": "AX25G3RUH",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-15_22_30_34.iq.wav",
-      "norad_id": 60535,
-      "transmitter_uuid": "hdxq4LxTwD3moSxZ3wwd8G",
-      "mode": "GMSK",
-      "baud": 4800,
-      "deviation_hz": 1200,
-      "framing": "AX25G3RUH",
-      "crc_ok": 0
-    },
-    {
-      "file": "2026-07-25_10_52_23_Lobachevsky.iq.wav",
-      "norad_id": 98429,
-      "transmitter_uuid": "Uhr9AfCfyaVe3rwNvV6ScS",
-      "mode": "GFSK",
-      "baud": 9600,
-      "framing": "Unknown",
-      "crc_ok": 0
+      "crc_ok": 114
     }
   ]
 }

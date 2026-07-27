@@ -51,26 +51,31 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
       var syms = Encode(data);                    // 2*(n+6) soft symbols
 
-      IntPtr vp = NativeFec.create_viterbi27(n);  // allocates n+6 decisions
-      vp.Should().NotBe(IntPtr.Zero, "fec.dll must allocate the decoder");
-      try
+      // the polynomial table is process-global (see NativeFec.Viterbi27Gate): without this the test can
+      // clobber, and be clobbered by, a deframer decoding concurrently in another xunit collection
+      lock (NativeFec.Viterbi27Gate)
       {
-        NativeFec.set_viterbi27_polynomial(Polys);
-        NativeFec.init_viterbi27(vp, 0);
-        NativeFec.update_viterbi27_blk(vp, syms, n + 6); // feed all encoded bits incl. tail
-        var outBytes = new byte[(n + 7) / 8];
-        NativeFec.chainback_viterbi27(vp, outBytes, (uint)n, 0); // emit n data bits (skips 6 tail)
-
-        int errs = 0;
-        for (int i = 0; i < n; i++)
+        IntPtr vp = NativeFec.create_viterbi27(n);  // allocates n+6 decisions
+        vp.Should().NotBe(IntPtr.Zero, "fec.dll must allocate the decoder");
+        try
         {
-          int bit = (outBytes[i >> 3] >> (7 - (i & 7))) & 1; // libfec packs MSB-first
-          if (bit != data[i]) errs++;
+          NativeFec.set_viterbi27_polynomial(Polys);
+          NativeFec.init_viterbi27(vp, 0);
+          NativeFec.update_viterbi27_blk(vp, syms, n + 6); // feed all encoded bits incl. tail
+          var outBytes = new byte[(n + 7) / 8];
+          NativeFec.chainback_viterbi27(vp, outBytes, (uint)n, 0); // emit n data bits (skips 6 tail)
+
+          int errs = 0;
+          for (int i = 0; i < n; i++)
+          {
+            int bit = (outBytes[i >> 3] >> (7 - (i & 7))) & 1; // libfec packs MSB-first
+            if (bit != data[i]) errs++;
+          }
+          output.WriteLine($"n={n} errors={errs}");
+          errs.Should().Be(0, "a clean convolutional round-trip through libfec must be error-free");
         }
-        output.WriteLine($"n={n} errors={errs}");
-        errs.Should().Be(0, "a clean convolutional round-trip through libfec must be error-free");
+        finally { NativeFec.delete_viterbi27(vp); }
       }
-      finally { NativeFec.delete_viterbi27(vp); }
     }
 
     [Fact]
@@ -84,22 +89,26 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       // flip a handful of well-separated symbols (a few channel errors the code should fix).
       foreach (int k in new[] { 50, 137, 240, 401, 620, 800 }) syms[k] = (byte)(255 - syms[k]);
 
-      IntPtr vp = NativeFec.create_viterbi27(n);
-      try
+      // process-global polynomial table, as above
+      lock (NativeFec.Viterbi27Gate)
       {
-        NativeFec.set_viterbi27_polynomial(Polys);
-        NativeFec.init_viterbi27(vp, 0);
-        NativeFec.update_viterbi27_blk(vp, syms, n + 6);
-        var outBytes = new byte[(n + 7) / 8];
-        NativeFec.chainback_viterbi27(vp, outBytes, (uint)n, 0);
+        IntPtr vp = NativeFec.create_viterbi27(n);
+        try
+        {
+          NativeFec.set_viterbi27_polynomial(Polys);
+          NativeFec.init_viterbi27(vp, 0);
+          NativeFec.update_viterbi27_blk(vp, syms, n + 6);
+          var outBytes = new byte[(n + 7) / 8];
+          NativeFec.chainback_viterbi27(vp, outBytes, (uint)n, 0);
 
-        int errs = 0;
-        for (int i = 0; i < n; i++)
-          if (((outBytes[i >> 3] >> (7 - (i & 7))) & 1) != data[i]) errs++;
-        output.WriteLine($"residual errors after correction = {errs}");
-        errs.Should().Be(0, "the r=1/2 k=7 code corrects a few isolated symbol errors");
+          int errs = 0;
+          for (int i = 0; i < n; i++)
+            if (((outBytes[i >> 3] >> (7 - (i & 7))) & 1) != data[i]) errs++;
+          output.WriteLine($"residual errors after correction = {errs}");
+          errs.Should().Be(0, "the r=1/2 k=7 code corrects a few isolated symbol errors");
+        }
+        finally { NativeFec.delete_viterbi27(vp); }
       }
-      finally { NativeFec.delete_viterbi27(vp); }
     }
   }
 }
