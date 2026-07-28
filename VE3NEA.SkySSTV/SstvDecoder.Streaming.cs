@@ -47,6 +47,7 @@ namespace VE3NEA.SkySSTV
     private readonly int visStep;
     private readonly int visHeader;
     private readonly int visBit;
+    private readonly int syncSlack;            // dead prefix tolerated before a compaction (see TrimSync)
 
     // rolling brightness buffers (absolute-indexed), sized for the comb's back-dated span — the §6.3
     // narrow and wide Stage-3 branches share one base/length, being sample-aligned by construction
@@ -55,6 +56,7 @@ namespace VE3NEA.SkySSTV
     private long brightBase;
     private int brightLen;
     private readonly int brightKeep;
+    private readonly int brightSlack;          // dead prefix tolerated before a compaction (see TrimBright)
 
     // image assembly
     private readonly Dictionary<SstvPulseTrain, SstvImageBuilder> builders = new();
@@ -93,6 +95,13 @@ namespace VE3NEA.SkySSTV
       double maxPeriodMs = 0;
       foreach (var spec in SstvModes.All) maxPeriodMs = Math.Max(maxPeriodMs, spec.LinePeriodMs);
       brightKeep = (int)(maxPeriodMs / 1000.0 * fs) * (SstvSoftComb.MemoryPeriods + 60);
+
+      // a compaction moves the whole retained window, so it must be paid once per slack samples, not once
+      // per push (see TrimBright). The slack is the extra capacity that buys it: a sixteenth of the
+      // brightness window and half a VIS tile both stay inside the buffer sizes the growth already reaches,
+      // so deferring costs no memory at all.
+      brightSlack = brightKeep / 16;
+      syncSlack = visStep / 2;
       brightBuf = new double[1 << 18];
       if (o.BrightnessWideBwHz > o.BrightnessBwHz) brightWideBuf = new double[1 << 18];
     }
@@ -299,24 +308,34 @@ namespace VE3NEA.SkySSTV
       Array.Resize(ref buf, cap);
     }
 
-    /// <summary>Drop sync samples both the chain and the VIS tiling are past.</summary>
+    /// <summary>Drop sync samples both the chain and the VIS tiling are past, once enough of them have
+    /// accumulated to be worth a compaction (the <see cref="TrimBright"/> amortization, applied to the
+    /// ~3.6 s the tiling holds).</summary>
     private void TrimSync()
     {
       long keepFrom = Math.Min(chainFed, visCursor);
       int drop = (int)(keepFrom - syncBase);
-      if (drop <= 0) return;
+      if (drop < syncSlack) return;
       Array.Copy(syncBuf, drop, syncBuf, 0, syncLen - drop);
       syncLen -= drop;
       syncBase += drop;
     }
 
     /// <summary>Keep one comb-memory (+ slack) of brightness for back-dated claims and dirty re-renders;
-    /// lines older than that render from whatever remains (§1.13 bounded re-render).</summary>
+    /// lines older than that render from whatever remains (§1.13 bounded re-render).
+    ///
+    /// <para>The compaction is deferred until the dead prefix reaches <see cref="brightSlack"/>, because it
+    /// moves the whole RETAINED window — 160 s of two branches, ~123 MB — while a push only ever retires
+    /// its own block. Compacting per push made that O(window) memmove the decoder's entire workload: from
+    /// the moment the window first fills (160 s into a pass) it ran 2-4x slower than real time on silence
+    /// alone, and since nothing drops the input backlog, the images fell further behind the transmission
+    /// the longer the pass went on. Deferring makes it O(1) per sample amortized (~950x less copying) and
+    /// retains a superset of the samples it did before, so no reconstruction loses history.</para></summary>
     private void TrimBright()
     {
       long keepFrom = brightBase + brightLen - brightKeep;
       int drop = (int)(keepFrom - brightBase);
-      if (drop <= 0) return;
+      if (drop < brightSlack) return;
       Array.Copy(brightBuf, drop, brightBuf, 0, brightLen - drop);
       if (brightWideBuf != null) Array.Copy(brightWideBuf, drop, brightWideBuf, 0, brightLen - drop);
       brightLen -= drop;
