@@ -154,11 +154,12 @@ namespace VE3NEA.SkyTlm.Discovery
     /// <summary>
     /// The strongest symbol-rate lines this burst's own cyclostationary statistic carries, strongest first.
     ///
-    /// The scan sweeps a <b>continuous</b> range rather than <see cref="BaudVerifier.CandidateBauds"/>'s
-    /// label-relative set: the verifier's job is to check a label, but discovery's is to find a rate the
-    /// label may not be anywhere near. Real transmitters sit off the standard ladder (HADES-SA at 800 and
-    /// 200 Bd, GALAPAGOS-UTE-SWSU at 1143 Bd), and no ladder of doublings from a wrong starting point
-    /// reaches them.
+    /// The scan sweeps <b>continuously</b> up to <see cref="DiscoveryOptions.BaudScanLadderFrom"/> rather
+    /// than taking <see cref="BaudVerifier.CandidateBauds"/>'s label-relative set: the verifier's job is to
+    /// check a label, but discovery's is to find a rate the label may not be anywhere near. Real
+    /// transmitters sit off the standard ladder (HADES-SA at 800 and 200 Bd, GALAPAGOS-UTE-SWSU at
+    /// 1143 Bd), and no ladder of doublings from a wrong starting point reaches them. Above the crossover
+    /// it follows the standard rates only — every off-ladder case in the corpus is a slow one.
     ///
     /// Several lines are kept rather than only the winner because a wide scan is not a clean measurement:
     /// the discriminator statistic carries low-frequency structure that can outscore the true symbol rate
@@ -190,13 +191,20 @@ namespace VE3NEA.SkyTlm.Discovery
       catch { return new List<double>(); }
     }
 
-    /// <summary>Geometrically spaced scan candidates covering <see cref="DiscoveryOptions.BaudScanRange"/>,
-    /// clipped to the rates the sample rate can carry at 2 samples/symbol.</summary>
+    /// <summary>Scan candidates over <see cref="DiscoveryOptions.BaudScanRange"/>, clipped to the rates the
+    /// sample rate can carry at 2 samples/symbol: geometrically spaced below
+    /// <see cref="DiscoveryOptions.BaudScanLadderFrom"/>, then the standard doublings 1200·2^n above it.
+    /// The off-ladder rates the continuous sweep exists for are all slow ones, so above the crossover the
+    /// sweep would only be paying for candidates nothing transmits at.</summary>
     private static List<double> ScanLadder(double sampleRate, DiscoveryOptions o)
     {
       var list = new List<double>();
       double max = Math.Min(o.BaudScanRange.Max, sampleRate / 2);
-      for (double b = o.BaudScanRange.Min; b <= max; b *= 1 + o.BaudScanStep) list.Add(b);
+
+      double continuousMax = Math.Min(o.BaudScanLadderFrom, max);
+      for (double b = o.BaudScanRange.Min; b < continuousMax; b *= 1 + o.BaudScanStep) list.Add(b);
+
+      for (double b = Math.Max(o.BaudScanLadderFrom, o.BaudScanRange.Min); b <= max; b *= 2) list.Add(b);
       return list;
     }
 

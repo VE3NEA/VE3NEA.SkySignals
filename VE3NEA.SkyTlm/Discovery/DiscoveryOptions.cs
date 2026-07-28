@@ -29,16 +29,28 @@ namespace VE3NEA.SkyTlm.Discovery
     public bool GenesisFamily { get; init; }
 
     /// <summary>
-    /// Range of the per-burst symbol-rate line scan, in Bd. The scan is <b>not</b> restricted to the
-    /// standard ladder, because real transmitters sit off it: HADES-SA runs 800 and 200 Bd and
-    /// GALAPAGOS-UTE-SWSU 1143 Bd, none of which the ladder or its {2x, 4x, 1/2} relatives can reach from a
-    /// 1200 Bd starting point. A ladder-only search misses those outright — measured on the corpus, where
-    /// stripping HADES-SA's parameters leaves discovery no reachable hypothesis at all.
+    /// Range of the per-burst symbol-rate line scan, in Bd. Below
+    /// <see cref="BaudScanLadderFrom"/> the scan is <b>not</b> restricted to the standard ladder, because
+    /// that is where real transmitters sit off it: HADES-SA runs 800 and 200 Bd and GALAPAGOS-UTE-SWSU
+    /// 1143 Bd, none of which the ladder or its {2x, 4x, 1/2} relatives can reach from a 1200 Bd starting
+    /// point. A ladder-only search misses those outright — measured on the corpus, where stripping
+    /// HADES-SA's parameters leaves discovery no reachable hypothesis at all.
     /// </summary>
-    public (double Min, double Max) BaudScanRange { get; init; } = (200, 20000);
+    public (double Min, double Max) BaudScanRange { get; init; } = (200, 19200);
 
-    /// <summary>Relative step of the baud scan. <see cref="Dsp.BaudVerifier"/> searches +/-2% around each
-    /// candidate, so a step below 4% covers the range continuously; 3% leaves margin.</summary>
+    /// <summary>
+    /// Where the scan stops sweeping continuously and follows the standard rates instead: from here up it
+    /// visits only 1200·2^n (1200, 2400, 4800, 9600, 19200), the rates fast telemetry actually runs at.
+    /// The off-ladder transmitters that motivate a continuous sweep all live <i>below</i> this point
+    /// (HADES-SA 200/800, GALAPAGOS-UTE-SWSU 1143), so the sweep is spent where it buys something instead
+    /// of on ~90 candidates nothing transmits at — candidates that are not free of risk either, since a
+    /// junk line that decodes one spurious CRC-valid frame is auto-applied (§4.5).
+    /// </summary>
+    public double BaudScanLadderFrom { get; init; } = 1200;
+
+    /// <summary>Relative step of the baud scan below <see cref="BaudScanLadderFrom"/>.
+    /// <see cref="Dsp.BaudVerifier"/> searches +/-2% around each candidate, so a step below 4% covers that
+    /// part of the range continuously; 3% leaves margin.</summary>
     public double BaudScanStep { get; init; } = 0.03;
 
     /// <summary>How many of the scan's strongest lines head the baud order. More than one because a wide
