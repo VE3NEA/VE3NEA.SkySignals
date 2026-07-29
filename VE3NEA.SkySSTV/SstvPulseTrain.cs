@@ -387,8 +387,19 @@ namespace VE3NEA.SkySSTV
   /// (<see cref="TryAddPulses"/>).</summary>
   internal sealed class SstvVisPulseTrain : SstvPulseTrain
   {
-    private const double AnchorWingMs = 7.0;     // first-pulse gate around the predicted grid
-    private const double TripletWingMs = 18.0;   // triplet-adoption gate: grid extrapolated back to the anchor
+    // The anchor is a PRIOR, not a measurement, and this wing must match the accuracy it actually has.
+    // It was 7.0 ms until 2026-07-29, which was tighter than the anchor can be derived: the header ends
+    // with the stop bit running straight into line 1's sync, both at 1200 Hz, so what the detector sees is
+    // one merged 1200 run (measured 35-42 ms against a 30 ms stop) and the located stop-bit window sits
+    // somewhere inside it. On the 11-element transmitter family that put the anchor 11 ms late on the
+    // 2026-07-29 11:32 Monitor-3 second transmission — outside a 7 ms wing, so the VIS train rejected
+    // EVERY pulse of its own transmission, never promoted, and was killed as idle. The plain triplet train
+    // promoted in its place and back-filled 39 line periods of pre-transmission noise (AddOldPulses creeps
+    // up to one retire timeout), so the image began 5.8 s early: 39 rows of noise on top, 39 rows lost off
+    // the bottom. 20 ms covers the observed anchor error (2 ms on the standard family, 11 ms here) and is
+    // still 13 % of the shortest line period, so it cannot associate a wrong line.
+    private const double AnchorWingMs = 20.0;    // first-pulse gate around the predicted grid
+    private const double TripletWingMs = 20.0;   // triplet-adoption gate: grid extrapolated back to the anchor
 
     private readonly int anchorWing;
     private readonly int tripletWing;
