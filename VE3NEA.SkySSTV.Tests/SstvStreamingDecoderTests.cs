@@ -89,5 +89,40 @@ namespace VE3NEA.SkySSTV.Tests
       output.WriteLine($"{mode}: fromVis={final.FromVis} rows={final.ValidRows} PSNR={psnr:0.0} dB");
       psnr.Should().BeGreaterThan(15.0, "the streamed decode must be aligned with the source");
     }
+
+    [Fact]
+    public void DeepFade_YieldsOneImage_NotTwo()
+    {
+      // the fading defect (2026-07-28): a fade deeper than the retire timeout used to end the image and
+      // start a second one from the returning signal. One transmission must stay ONE image whatever the
+      // fade does — the grid coasts through it and the lines after it land on the same reconstruction.
+      // No VIS here: the VIS-seeded train always ran to its predicted image end, the plain train did not.
+      var spec = SstvModes.Get(SstvMode.Robot36);
+      var src = ColorBars(spec.Width, spec.Height);
+      var iq = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions { IncludeVis = false });
+
+      int fadeAt = (int)(0.45 * iq.Length), fadeLen = (int)(9 * Fs);   // 9 s of dead carrier mid-image
+      for (int i = fadeAt; i < Math.Min(fadeAt + fadeLen, iq.Length); i++) iq[i] = Complex32.Zero;
+
+      using var dec = new SstvDecoder(new SstvDecodeOptions());
+      var finals = new List<SstvImageEvent>();
+      dec.ImageCompleted += e => finals.Add(e);
+
+      int block = (int)Fs;
+      for (int at = 0; at < iq.Length; at += block)
+        dec.Process(iq.AsSpan(at, Math.Min(block, iq.Length - at)));
+      dec.Flush();
+
+      foreach (var f in finals)
+        output.WriteLine($"final id={f.ImageId} rows={f.ValidRows} start={f.StartSeconds:0.00}s");
+      finals.Should().HaveCount(1, "a fade must not split one transmission into two images");
+      finals[0].ValidRows.Should().BeGreaterThan((int)(0.9 * spec.Height),
+        "decoding must run on to the last scan line");
+
+      // the rows after the fade must carry the picture again, not just the rows before it
+      double psnr = Psnr(src, finals[0].Image, spec.Height);
+      output.WriteLine($"rows={finals[0].ValidRows} PSNR over the whole image={psnr:0.0} dB");
+      psnr.Should().BeGreaterThan(10.0, "the post-fade lines must render into the same image");
+    }
   }
 }

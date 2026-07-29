@@ -21,7 +21,8 @@ namespace VE3NEA.SkySSTV
   /// train before it could ever seed a Robot72 grid); an unclaimed pulse may <b>spawn</b> a new candidate,
   /// but only as the third point of a period-consistent 3-pulse triplet for some mode of its sync-duration
   /// family — a mini-comb clutter almost never fakes. Candidates promote on N-of-M evidence (back-filling
-  /// the pulses they explain), idle candidates are pruned, idle actives retire (§1.10 T_gap). Per line block
+  /// the pulses they explain), idle candidates are pruned, idle actives retire (§1.10 T_gap) — but never
+  /// mid-image, where the train coasts to its last scan line (<see cref="IsMidImage"/>). Per line block
   /// the <b>best train</b> (smoothed sync power, 1.5× switch hysteresis, incumbent preferred) claims the
   /// block's scan lines; a promotion/revision/retirement marks earlier blocks dirty and their lines are
   /// re-extracted (§1.13 bounded re-render). A valid VIS seeds a high-prior <see cref="SstvVisPulseTrain"/>.
@@ -216,6 +217,25 @@ namespace VE3NEA.SkySSTV
       return true;
     }
 
+    /// <summary>Whether a train is <b>mid-image</b>: it carries an image the decoder is already showing
+    /// (<see cref="IsEmergingImageTrain"/>) and the transmission has not reached its last scan line yet.
+    /// Such a train neither retires nor stops claiming line blocks (user decision 2026-07-28).
+    ///
+    /// <para>A deep fade silences the sync pulses for longer than the §1.10 retire timeout, so the train
+    /// used to retire mid-image: the half image was finalized, and when the signal came back the pulses
+    /// spawned a fresh train — a SECOND image that is really the continuation of the first. That split can
+    /// never be right, because the silence between two transmissions is longer than one transmission: a
+    /// signal returning inside the image span always belongs to the image being received. So once decoding
+    /// has started the train keeps its lines, coasting through the fade on the RLS grid (and re-locking to
+    /// the pulses when they return), until every scan line has been rendered.</para></summary>
+    internal bool IsMidImage(SstvPulseTrain train, int time)
+      => !train.ImageScanned(time) && IsEmergingImageTrain(train);
+
+    /// <summary>Whether <paramref name="train"/> may still claim line blocks at <paramref name="time"/>:
+    /// past its retirement point only while it is mid-image, so the fade renders into the same image.</summary>
+    private bool StillClaims(SstvPulseTrain train, int time)
+      => !train.IsRetiredAt(time) || IsMidImage(train, time);
+
     /// <summary>Fraction of the train's claimed lines that carry a detected sync pulse — an image-quality
     /// confidence (≈1 for a strong burst; low values mean the grid mostly coasted).</summary>
     public double FillRatio(SstvPulseTrain train)
@@ -381,7 +401,7 @@ namespace VE3NEA.SkySSTV
           case SstvTrainState.Active:
             int stepTime = train.TakePhaseStep();
             if (stepTime >= 0) MarkDirty(stepTime);
-            if (train.CanRetire(time))
+            if (train.CanRetire(time) && !IsMidImage(train, time))
             {
               train.State = SstvTrainState.Retired;
               MarkDirty(train.Regr.LastPulseTime);
@@ -433,7 +453,7 @@ namespace VE3NEA.SkySSTV
 
         SstvPulseTrain? best = null;
         double bestPower = 0;
-        if (lines.Count > 0 && !lines[^1].Train.IsRetiredAt(blockStart))
+        if (lines.Count > 0 && StillClaims(lines[^1].Train, blockStart))
         {
           best = lines[^1].Train;
           bestPower = best.GetPower(blockCenter);

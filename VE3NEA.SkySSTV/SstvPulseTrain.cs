@@ -259,6 +259,15 @@ namespace VE3NEA.SkySSTV
     public virtual bool IsCandidateIdle(int time)
       => (time - LastStrongTime) > promoteTimeout || (time - createdTime) > promoteTimeout;
 
+    /// <summary>Sync onset of the last scan line of the image this train carries — the transmission is
+    /// fully scanned once the stream passes it.</summary>
+    public double ImageEndTime => GetLineOnset(SstvModes.Get(Format).LineCount - 1);
+
+    /// <summary>Whether every scan line of the image has been transmitted by <paramref name="time"/>.
+    /// Until then a train that is already showing an image is held alive by the extractor, whatever its
+    /// idle clocks say (see <see cref="SstvPulseTrainExtractor.IsMidImage"/>).</summary>
+    public bool ImageScanned(int time) => ImageEndTime < time;
+
     /// <summary>An active train has gone idle long enough to retire. Two clocks: any associated pulse
     /// holds the train for one retire timeout (bridging weak stretches where only soft pulses survive),
     /// but soft-only life is bounded at twice that — with the wide RLS gate an in-gate noise pulse arrives
@@ -455,8 +464,7 @@ namespace VE3NEA.SkySSTV
     public override bool IsCandidateIdle(int time) => (time - LastStrongTime) > 2 * promoteTimeout;
 
     /// <summary>The mode is known, so the train retires exactly at its predicted image end.</summary>
-    public override bool CanRetire(int time)
-      => GetLineOnset(SstvModes.Get(Format).LineCount - 1) < time;
+    public override bool CanRetire(int time) => ImageScanned(time);
 
     public override bool IsRetiredAt(int time) => State == SstvTrainState.Retired && CanRetire(time);
 

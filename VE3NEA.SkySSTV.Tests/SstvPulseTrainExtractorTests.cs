@@ -10,8 +10,9 @@ namespace VE3NEA.SkySSTV.Tests
   /// <summary>
   /// P6(b) tests for the MHT pulse-train extractor (plan §4.1), driven by synthetic pulse lists: a clean
   /// periodic train must spawn/promote one hypothesis and claim the scan lines; scattered clutter must
-  /// never promote; a fade must coast within one train; sequential bursts (the UmKA-1 pattern) must come
-  /// out as separate trains; a VIS seed must promote on just 3 confirming pulses.
+  /// never promote; a fade must coast within one train — however deep, as long as the image it started is
+  /// still being scanned; sequential bursts (the UmKA-1 pattern) must come out as separate trains; a VIS
+  /// seed must promote on just 3 confirming pulses.
   /// </summary>
   public class SstvPulseTrainExtractorTests
   {
@@ -121,13 +122,41 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
     [Fact]
+    public void DeepFade_HoldsOneImageToTheLastLine()
+    {
+      // the fading defect (2026-07-28): a fade deeper than the 6 s retire timeout used to retire the train
+      // mid-image — the half image was finalized and the returning signal started a SECOND one. Now the
+      // train holds its line blocks to the image's last line, and the pulses after the fade land on it.
+      // the fade is 100 lines (15 s) — longer than the merge-on-promote gap, so the train itself must
+      // hold the image; a shorter one would be repaired after the fact by merging the re-spawned fragment
+      var pulses = Robot36Train(48000, 40);
+      pulses.AddRange(Robot36Train(48000 + 140 * 7200, 60));
+      int end = pulses[^1].Time + 12000;
+      var extractor = Run(pulses, end);
+
+      var promoted = extractor.Trains
+        .Where(t => t.State == SstvTrainState.Active || t.State == SstvTrainState.Retired).ToList();
+      output.WriteLine($"promoted trains: {promoted.Count}, pulses: {promoted.FirstOrDefault()?.PulseCnt}");
+      promoted.Should().HaveCount(1, "a fade inside the image span must not start a second image");
+      promoted[0].PulseCnt.Should().Be(100, "the pulses after the fade belong to the faded train");
+
+      // the fade is part of the same image: its line blocks stay claimed, on one consecutive grid
+      var claimed = extractor.Lines.Where(l => l.Train == promoted[0]).ToList();
+      output.WriteLine($"claimed lines: {claimed.Count} ({claimed[0].PulseNo}..{claimed[^1].PulseNo})");
+      claimed.Count.Should().BeGreaterThan(95, "the grid must coast through the fade");
+      for (int i = 1; i < claimed.Count; i++)
+        (claimed[i].PulseNo - claimed[i - 1].PulseNo).Should().Be(1, "claimed lines are consecutive");
+    }
+
+    [Fact]
     public void SequentialBursts_YieldSeparateTrains()
     {
-      // the UmKA-1 pattern: two SSTV bursts separated by >6 s of other traffic — the first train must
-      // retire and the second burst must spawn a fresh hypothesis; both claim their own lines
+      // the UmKA-1 pattern: two SSTV bursts, the second starting after the first's image span has run out
+      // — the first train must retire and the second burst must spawn a fresh hypothesis; both claim their
+      // own lines. (A burst INSIDE that span is a fade continuation: DeepFade_HoldsOneImageToTheLastLine.)
       var pulses = Robot36Train(48000, 60);
-      int gapStart = pulses[^1].Time;
-      int burst2 = gapStart + 10 * 48000;                    // 10 s gap > the 6 s retire timeout
+      int imageEnd = 48000 + (SstvModes.Get(SstvMode.Robot36).LineCount - 1) * 7200;
+      int burst2 = imageEnd + 10 * 48000;                    // 10 s past the first image's last line
       pulses.AddRange(Robot36Train(burst2, 60));
       int end = pulses[^1].Time + 8 * 48000;
       var extractor = Run(pulses, end);
@@ -378,7 +407,8 @@ namespace VE3NEA.SkySSTV.Tests
       // train retired is that train's echo, not a new transmission — no duplicate seed
       var pulses = Robot36Train(36000, 60);
       int lastPulse = pulses[^1].Time;
-      int end = lastPulse + 10 * 48000;                      // > the 6 s retire timeout
+      // past the image span: an image train retires only once its last scan line has been scanned
+      int end = 36000 + SstvModes.Get(SstvMode.Robot36).LineCount * 7200 + 12000;
       var extractor = Run(pulses, end);
       extractor.Trains.Single().State.Should().Be(SstvTrainState.Retired);
 
