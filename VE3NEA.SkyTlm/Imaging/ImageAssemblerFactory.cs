@@ -1,0 +1,33 @@
+using VE3NEA.SkyTlm.Core;
+using VE3NEA.SkyTlm.Imaging.Ssdv;
+
+namespace VE3NEA.SkyTlm.Imaging
+{
+  /// <summary>
+  /// Maps a resolved <see cref="SignalParams"/> to its <see cref="IImageAssembler"/>, or <c>null</c> when
+  /// the satellite sends no images we can reconstruct. The imaging counterpart of
+  /// <see cref="Deframing.DeframerFactory"/>, and the single place both the application and the tests ask,
+  /// so they cannot drift apart.
+  /// <para>
+  /// <paramref name="noradId"/> is passed separately because <see cref="SignalParams"/> does not carry
+  /// one — the same arrangement <c>TelemetryRegistry.ForNorad</c> already uses. It is unused today:
+  /// <see cref="Framing.HADES"/> is flown only by HADES-SA, so the framing alone identifies the source.
+  /// The parameter is here because the families still to come need it — the Geoscan fleet shares one
+  /// framing across six satellites, and the Sputnix birds share USP with satellites that send no images
+  /// at all.
+  /// </para>
+  /// </summary>
+  public static class ImageAssemblerFactory
+  {
+    public static IImageAssembler? Create(SignalParams p, int? noradId = null) => p.Framing switch
+    {
+      // HADES-SA packet type 10: standard SSDV with five constant leading bytes stripped.
+      Framing.HADES => new SsdvImageAssembler(SsdvSource.HadesSa),
+
+      // Still to come, each blocked on a capture to validate against rather than on effort:
+      //   AO40FEC / JY1Sat  → the 200-byte SSDV variant
+      //   GEOSCAN, USP      → raw JPEG fragments, a different assembler entirely
+      _ => null
+    };
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "baud": 800.0,
+  "modulation": "FSK",
+  "framing": "HADES",
+  "deviation": 800.0
+}
