@@ -75,11 +75,19 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [InlineData("K")]
     [InlineData("1A2B3C")]
     public void Callsign_RoundTrips(string callsign) =>
-      // pins the digit alphabet and encoder/decoder agreement. Digit *order* is fixed by fsphil's
-      // decoder, which fills a 7-character buffer right to left from the least significant digit, so
-      // the first character of the callsign is the most significant — neither live variant we decode
-      // (HADES-SA, JY1SAT) puts a real callsign in the field, so there is no off-air anchor for it.
+      // pins the digit alphabet and encoder/decoder agreement; the test below pins the digit order.
       SsdvPacket.DecodeCallsign(SsdvTx.EncodeCallsign(callsign)).Should().Be(callsign);
+
+    [Fact]
+    public void ReferenceCallsignEncoding()
+    {
+      // Digit order has no off-air anchor — neither live variant puts a real callsign in the field — so
+      // it is pinned against the reference tool instead: `ssdv -e -c VE3NEA` writes these four bytes.
+      // Note fsphil's encoder walks the string backwards, making the *last* character the most
+      // significant digit, which is the opposite of what the field layout suggests.
+      SsdvTx.EncodeCallsign("VE3NEA").Should().Be(0x584C99F3);
+      SsdvPacket.DecodeCallsign(0x584C99F3).Should().Be("VE3NEA");
+    }
 
     [Fact]
     public void Callsign_OutOfRangeCode_DecodesToNothing() =>
@@ -168,8 +176,7 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       var v = SsdvVariant.Standard256;
       var payload = SsdvTx.Payload(v, seed: 11);
       var raw = SsdvTx.Build(v, payload, imageId: 7, packetId: 3);
-      // spread over header, payload and parity — but never over the sync/type bytes, which gate the
-      // packet before RS runs (as ssdv.c's ssdv_dec_is_packet does).
+      // spread over header, payload and parity
       for (int i = 0; i < errors; i++) raw[2 + i * 13] ^= 0xFF;
 
       SsdvPacket.TryParse(raw, v, out var p).Should().BeTrue("RS(255,223) corrects up to 16 bytes");
@@ -190,19 +197,63 @@ namespace VE3NEA.SkyTlm.Tests.Unit
         "17+ byte errors are past RS capacity, and the CRC re-check rejects whatever RS claims");
     }
 
-    [Fact]
-    public void WrongSyncOrType_IsRejected()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void CorruptedSyncOrTypeByte_IsRepaired(int at)
     {
+      // Both bytes are constants for a known variant, so the parser overwrites them and lets RS and the
+      // CRC decide — as ssdv_dec_is_packet does. Gating on them instead would throw away packets whose
+      // only damage is in the two bytes we already know the value of.
+      var v = SsdvVariant.Standard256;
+      var raw = SsdvTx.Build(v, SsdvTx.Payload(v, seed: 13), imageId: 7, packetId: 3);
+      raw[at] ^= 0xFF;
+
+      SsdvPacket.TryParse(raw, v, out var p).Should().BeTrue();
+      p!.ImageId.Should().Be(7);
+      p.PacketId.Should().Be(3);
+      p.CorrectedBytes.Should().Be(0,
+        "overwriting a known constant repairs it before RS sees it, so none of the RS capacity is spent on it");
+    }
+
+    [Fact]
+    public void WrongVariant_IsRejected()
+    {
+      // 0x66 vs 0x67 is the only thing distinguishing a packet with RS from one without, and getting it
+      // wrong silently shifts the payload by 32 bytes. NoFec256 has no RS to fall back on, so the CRC —
+      // computed over a span 32 bytes longer than the sender used — rejects it.
       var v = SsdvVariant.Standard256;
       var raw = SsdvTx.Build(v, SsdvTx.Payload(v, seed: 13));
 
-      var badSync = (byte[])raw.Clone();
-      badSync[0] = 0x54;
-      SsdvPacket.TryParse(badSync, v, out _).Should().BeFalse();
-
-      // 0x66 vs 0x67 is the only thing distinguishing a packet with RS from one without, and getting it
-      // wrong silently shifts the payload by 32 bytes.
       SsdvPacket.TryParse(raw, SsdvVariant.NoFec256, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void NoiseWithTheRightLength_IsRejected()
+    {
+      // the flip side of repairing the sync/type bytes: with them forced, the CRC is the only thing
+      // standing between random bytes and the image map, and it has to hold.
+      var v = SsdvVariant.Standard256;
+      var noise = new byte[v.PacketLen];
+      new Random(99).NextBytes(noise);
+
+      SsdvPacket.TryParse(noise, v, out _).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(0, 15, 0, 0, "zero width")]
+    [InlineData(20, 0, 0, 0, "zero height")]
+    [InlineData(20, 15, 300, 0, "MCU index at the MCU count")]
+    [InlineData(20, 15, 0, 205, "MCU offset past the payload")]
+    public void ImplausibleHeader_IsRejected(int widthMcu, int heightMcu, int mcuIndex, int mcuOffset, string why)
+    {
+      // These pass the CRC — they are what the sender actually sent — but the transcoder trusts them
+      // absolutely, so ssdv_dec_is_packet's sanity checks are reproduced here.
+      var v = SsdvVariant.Standard256;
+      var raw = SsdvTx.Build(v, SsdvTx.Payload(v, seed: 15), widthMcu: widthMcu, heightMcu: heightMcu,
+                             subsampling: 0, mcuIndex: mcuIndex, mcuOffset: mcuOffset);
+
+      SsdvPacket.TryParse(raw, v, out _).Should().BeFalse(why);
     }
 
     [Fact]

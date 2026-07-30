@@ -59,6 +59,12 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     public int CorrectedBytes { get; init; }
 
     /// <summary>
+    /// Total MCUs in the image. The on-air width/height count 16×16 blocks, so a 2×2-subsampled image
+    /// has exactly that many MCUs; coarser subsampling splits each block into 2 or 4 smaller MCUs.
+    /// </summary>
+    public int McuCount => Width / 16 * (Height / 16) * (Subsampling == 0 ? 1 : Subsampling == 3 ? 4 : 2);
+
+    /// <summary>
     /// Parse and validate one canonical SSDV packet. The integrity order is fsphil's: check the CRC
     /// first and only fall back to RS to repair a packet that failed it, then re-check the CRC over the
     /// repaired bytes — an RS decode that "succeeds" on noise is common enough that its output has to be
@@ -74,16 +80,23 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     {
       parsed = null;
       if (packet.Length != v.PacketLen) return false;
-      if (v.HasSyncType && (packet[0] != SsdvVariant.SyncByte || packet[1] != v.TypeByte)) return false;
 
       var bytes = packet.ToArray();
       int corrected = 0;
+      bool syncTypeOk = !v.HasSyncType
+        || (bytes[0] == SsdvVariant.SyncByte && bytes[1] == v.TypeByte);
 
       if (v.HasCrc)
       {
-        if (!CrcOk(bytes, v))
+        if (!syncTypeOk || !CrcOk(bytes, v))
         {
           if (!v.HasRs) return false;
+
+          // Both leading bytes are constants for a known variant, so overwrite them rather than gate
+          // on them and let RS repair the rest — this is what ssdv_dec_is_packet does, and it means a
+          // packet whose type byte was hit in flight is still recoverable. The CRC below is what
+          // actually decides, and a false accept there is a 1-in-4-billion event.
+          if (v.HasSyncType) { bytes[0] = SsdvVariant.SyncByte; bytes[1] = v.TypeByte; }
 
           // RS(255,223), conventional basis, over bytes[1..PacketLen] — the sync byte is outside the
           // codeword. libfec corrects in place on any claimed success, so decode a copy.
@@ -96,11 +109,13 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
       }
       else if (v.HasRs)
       {
+        if (!syncTypeOk) return false;
         var cw = bytes[1..];
         corrected = RsCodeword.Decode(cw, v.RsPad, dualBasis: false);
         if (corrected < 0) return false;
         cw.CopyTo(bytes, 1);
       }
+      else if (!syncTypeOk) return false;
 
       int h = v.ImageIdOffset;
       byte flags = bytes[h + 5];
@@ -110,7 +125,11 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
         ? (uint)(bytes[2] << 24 | bytes[3] << 16 | bytes[4] << 8 | bytes[5])
         : 0;
 
-      parsed = new SsdvPacket
+      // Sanity checks, from ssdv_dec_is_packet. A packet that passed the CRC has almost certainly not
+      // been corrupted, but the transcoder trusts these fields absolutely — it seeks to McuOffset and
+      // fills the gap up to McuIndex — so an implausible header must be rejected here rather than
+      // become a malformed JPEG downstream.
+      var candidate = new SsdvPacket
       {
         Variant = v,
         CallsignCode = callsign,
@@ -127,6 +146,14 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
         Payload = bytes[v.HeaderLen..v.CrcOffset],
         CorrectedBytes = corrected
       };
+
+      if (candidate.Width == 0 || candidate.Height == 0) return false;
+      // note mcuOffset is the raw byte: 0xFF here means "index but no offset", which is contradictory
+      // and is rejected, exactly as the reference rejects it.
+      if (candidate.McuIndex >= 0 && (candidate.McuIndex >= candidate.McuCount || mcuOffset >= v.PayloadLen))
+        return false;
+
+      parsed = candidate;
       return true;
     }
 
@@ -140,23 +167,29 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     }
 
     /// <summary>
-    /// Base-40 callsign decode, matching fsphil's <c>ssdv_decode_callsign</c>: least significant digit
-    /// first, 0 = space, 1–10 = '0'–'9', 11–13 = '-', 14+ = 'A'–'Z'. Codes at or above 40^6 are not
-    /// callsigns and decode to nothing.
+    /// Base-40 callsign decode, matching fsphil's <c>decode_callsign</c> byte for byte: the <b>least</b>
+    /// significant digit is the <b>first</b> character, and digit values are 0 and 11–13 = '-',
+    /// 1–10 = '0'–'9', 14–39 = 'A'–'Z'. Codes above 40^6 − 1 are not callsigns and decode to nothing.
     /// </summary>
+    /// <remarks>
+    /// The digit order is the one thing here with no off-air anchor — neither live variant puts a real
+    /// callsign in the field (HADES-SA overloads it with constants, and the other variants have no
+    /// callsign at all). It is pinned instead against the reference encoder, which produced
+    /// <c>0x584C99F3</c> for "VE3NEA"; see <c>SsdvPacketTests.ReferenceCallsignEncoding</c>.
+    /// </remarks>
     public static string DecodeCallsign(uint code)
     {
       if (code == 0 || code > 0xF423FFFF) return "";
 
       var chars = new char[7];
-      int c = 7;
+      int c = 0;
       while (code > 0)
       {
         uint s = code % 40;
-        chars[--c] = s == 0 ? ' ' : s < 11 ? (char)('0' + s - 1) : s < 14 ? '-' : (char)('A' + s - 14);
+        chars[c++] = s < 1 || s >= 11 && s < 14 ? '-' : s < 11 ? (char)('0' + s - 1) : (char)('A' + s - 14);
         code /= 40;
       }
-      return new string(chars, c, 7 - c);
+      return new string(chars, 0, c);
     }
   }
 }

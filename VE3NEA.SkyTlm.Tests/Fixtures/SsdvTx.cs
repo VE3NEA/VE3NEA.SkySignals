@@ -64,16 +64,15 @@ namespace VE3NEA.SkyTlm.Tests.Fixtures
     }
 
     /// <summary>
-    /// Base-40 callsign encode — the exact inverse of <see cref="SsdvPacket.DecodeCallsign"/>: up to 6
-    /// characters, the first the most significant digit, digits as 1–10 and letters as 14–39. Characters
-    /// outside those two sets contribute nothing, which is why a decoded callsign is not always the one
-    /// that went in.
+    /// Base-40 callsign encode — a transcription of fsphil's <c>encode_callsign</c>, which walks the
+    /// string <b>backwards</b>, so the last character is the most significant digit. Up to 6 characters,
+    /// digits as 1–10 and letters as 14–39; characters outside those two sets contribute nothing, which
+    /// is why a decoded callsign is not always the one that went in.
     /// </summary>
     public static uint EncodeCallsign(string callsign)
     {
       uint code = 0;
-      int n = Math.Min(callsign.Length, 6);
-      for (int i = 0; i < n; i++)
+      for (int i = Math.Min(callsign.Length, 6) - 1; i >= 0; i--)
       {
         char c = char.ToUpperInvariant(callsign[i]);
         code *= 40;
