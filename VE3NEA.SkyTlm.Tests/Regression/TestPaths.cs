@@ -12,6 +12,9 @@ namespace VE3NEA.SkyTlm.Tests.Regression
     /// <summary>The test project root (the folder holding <c>VE3NEA.SkyTlm.Tests.csproj</c>).</summary>
     public static string ProjectRoot { get; } = FindProjectRoot();
 
+    /// <summary><c>Data</c> under the test project — the committed non-wav fixtures (golden vectors, JSON).</summary>
+    public static string DataDir => Path.Combine(ProjectRoot, "Data");
+
     /// <summary><c>Data/Wav</c> under the test project — the per-flavor regression corpus.</summary>
     public static string WavDir => Path.Combine(ProjectRoot, "Data", "Wav");
 

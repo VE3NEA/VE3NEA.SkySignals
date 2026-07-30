@@ -12,7 +12,9 @@ namespace VE3NEA.SkyTlm.Core
     HADES,
     AX100ASM,   // GOMspace AX100 "ASM+Golay" (mode 5)
     AX100RS,    // GOMspace AX100 "Reed Solomon" (GOMX-1 style)
-    CCSDS       // CCSDS TM (uncoded / Reed-Solomon / concatenated; the three blocks differ only by options)
+    CCSDS,      // CCSDS TM (uncoded / Reed-Solomon / concatenated; the three blocks differ only by options)
+    GEOSCAN,    // Geoscan/Sputnix CC1125 custom framing (syncword + PN9 whitening + CC11xx CRC-16)
+    AO40FEC     // AO-40 FEC (distributed syncframe + matrix deinterleave + Viterbi + descramble + RS I=2)
   }
 
   /// <summary>Modulation family, classified from the SatNOGS mode/description.</summary>
