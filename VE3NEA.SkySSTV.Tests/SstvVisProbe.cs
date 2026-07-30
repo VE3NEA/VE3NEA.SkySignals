@@ -48,12 +48,15 @@ namespace VE3NEA.SkySSTV.Tests
     // ----------------------------------------------------------------------------------------------------
 
 
-    [ManualFact("Result 2026-07-29 (after the StopSlack + LeaderGate fix): 22 headers over the 23 captures, " +
-      "every one decoding 0x88 = Robot 36, matching each recording's transmitter metadata, with no other " +
-      "byte reported anywhere. The stop-lag column splits the corpus into the two header families exactly " +
-      "along transmitter lines: 0 ms for UmKA-1 and SAKHACUBE-CHOLBON, 38-49 ms for UTMN2, Monitor-3 and " +
-      "VIZARD-meteo. Before the fix only the SAKHACUBE family was detected at all. Set SSTV_PROBE_WAV to " +
-      "check a single capture instead of the whole folder.")]
+    [ManualFact("Result 2026-07-30 (after the duration-weighted score replaced the per-element level " +
+      "gates): 35 headers over the 27 captures, up from 26, with every one of the 26 retained to within a " +
+      "sample. Every hit decodes 0x88 = Robot 36, matching each recording's transmitter metadata, with no " +
+      "other byte reported anywhere in the corpus — which is the false-alarm evidence, since a false hit " +
+      "would have to land on the one valid byte by luck. The stop-lag column still splits the corpus into " +
+      "the two header families exactly along transmitter lines: 0 ms for UmKA-1 and SAKHACUBE-CHOLBON, " +
+      "38-57 ms for UTMN2, Monitor-3 and VIZARD-meteo. The 9 newly found headers are all on weak passes; " +
+      "3 are on the 07-30 SAKHACUBE capture that prompted the fix, whose three headers sit on an exactly " +
+      "180 s cycle (76.2 / 255.2 / 435.4 s). Set SSTV_PROBE_WAV to check a single capture.")]
     public void VisCorpusCheck()
     {
       if (!Directory.Exists(RecordingsDir)) { output.WriteLine("recordings absent"); return; }
@@ -74,9 +77,10 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
-    [ManualFact("Result 2026-07-29 (the reported capture, after the fix): 2 completed Robot36 images — " +
-      "@52.4 s comb-seeded and @346.6 s VIS-seeded (fromVis=True). Before the fix the 346.6 s header was " +
-      "read correctly (right t0, 0x08, valid parity) and then thrown away by the stop-bit gate.")]
+    [ManualFact("Result 2026-07-30 (the reported capture, after the fix): 2 completed Robot36 images, both " +
+      "VIS-seeded (fromVis=True), @77.12 s and @256.14 s, 240 rows each — noisy but geometrically stable, " +
+      "so the seeds are on the right sample. The third header @435.4 s starts 4 s before the signal fades " +
+      "out at the end of the pass, so no image completes from it. Before the fix: 0 VIS, 0 images.")]
     public void StreamingVisCheck()
     {
       if (!Directory.Exists(RecordingsDir)) { output.WriteLine("recordings absent"); return; }
@@ -110,6 +114,73 @@ namespace VE3NEA.SkySSTV.Tests
       }
     }
 
+
+    [ManualFact("Result 2026-07-30: what sizes HeaderGate. Over 3552 tiles of the 27 captures the " +
+      "duration-weighted score separates 2.1x with nothing in the gap — detected headers run 0.222 (the " +
+      "weakest, on the 07-30 capture) to 0.987, and the loudest tile holding no header reaches 0.104, with " +
+      "every other file at or under 0.087. HeaderGate = 0.15 is essentially the geometric mean of the two. " +
+      "That margin is modest, and it is the honest one: it is what a 910 ms coherent statistic buys on " +
+      "passes this weak. No single element comes close — over the same corpus noise sits within a factor " +
+      "of 2 of real signal on the 30 ms bits and ABOVE it on the 10 ms break, which is why level is " +
+      "decided once, here, rather than per element.")]
+    public void VisScoreFloorDump()
+    {
+      if (!Directory.Exists(RecordingsDir)) { output.WriteLine("recordings absent"); return; }
+      var files = Environment.GetEnvironmentVariable("SSTV_PROBE_WAV") is string one && one.Length > 0
+        ? new[] { Path.Combine(RecordingsDir, one) }
+        : Directory.GetFiles(RecordingsDir, "*.iq.wav");
+
+      double worstHit = 1.0, bestMiss = 0.0;
+      int tiles = 0, hits = 0;
+      foreach (string wav in files)
+      {
+        var (iq, sr) = WavIqReader.Read(wav);
+        var o = new SstvDecodeOptions { SampleRate = sr };
+        double[] band = SstvDecoder.SyncAudio(SstvDecoder.Discriminator(iq, o), sr, o);
+
+        int header = SstvVisDetector.HeaderSamples(sr);
+        int step = (int)Math.Round(3.0 * sr);
+        int leader = (int)Math.Round(SstvTones.VisLeaderMs / 1000.0 * sr);
+        int oLeader2 = leader + (int)Math.Round(SstvTones.VisBreakMs / 1000.0 * sr);
+
+        // a rejected tile only measures the NOISE floor if no header is present in it, and there are three
+        // ways one can be. Two are excluded here: the 300 ms leader pair is the signal-independent way to
+        // say a header is absent (its own noise level, 0.019, sits an order of magnitude under any real
+        // header), and a tile adjacent to a found header is dropped because its best in-range t0 gets
+        // pinned to the tile edge, where it partially overlaps the real thing. The third — a header that
+        // fades mid-way, so its bits are unreadable and parity fails honestly — the ridge test catches
+        // (07-08_23_31 @65.5 s: L1=0.447, L2=0.108, data slots at noise).
+        var found = new List<int>();
+        var rest = new List<(int T0, double Score)>();
+        double fileWorst = 1.0;
+        for (int start = 0; start + header < band.Length; start += step)
+        {
+          var hit = SstvVisDetector.Detect(band, sr, start, step);
+          tiles++;
+          if (hit.Found) { hits++; found.Add(hit.T0Sample); fileWorst = Math.Min(fileWorst, hit.Score); continue; }
+
+          var b1900 = new SstvToneBank(band, sr, SstvTones.Center, hit.T0Sample, oLeader2 + leader);
+          double ridge = Math.Min(b1900.Coherence(hit.T0Sample, hit.T0Sample + leader),
+            b1900.Coherence(hit.T0Sample + oLeader2, hit.T0Sample + oLeader2 + leader));
+          if (ridge < 0.04) rest.Add((hit.T0Sample, hit.Score));
+        }
+
+        double fileMiss = 0, missAt = 0;
+        foreach (var (t0, sc) in rest)
+        {
+          if (sc <= fileMiss) continue;
+          if (found.Exists(f => Math.Abs(f - t0) < header)) continue;
+          fileMiss = sc;
+          missAt = t0 / (double)sr;
+        }
+        output.WriteLine($"{Path.GetFileName(wav),-48} worstHit={(fileWorst > 1 ? 0 : fileWorst),6:0.000} " +
+          $"bestMiss={fileMiss,6:0.000} @{missAt,8:0.000}s");
+        if (fileWorst <= 1.0) worstHit = Math.Min(worstHit, fileWorst);
+        bestMiss = Math.Max(bestMiss, fileMiss);
+      }
+      output.WriteLine($"{tiles} tiles, {hits} headers: weakest header {worstHit:0.000}, " +
+        $"loudest non-header {bestMiss:0.000}, separation {worstHit / bestMiss:0.0}x");
+    }
 
     [ManualFact("diagnostic probe: set SSTV_PROBE_T / SSTV_PROBE_SPAN to bound the reported window")]
     public void TrainLifecycleDump()
@@ -168,12 +239,15 @@ namespace VE3NEA.SkySSTV.Tests
     // ----------------------------------------------------------------------------------------------------
 
 
-    [ManualFact("Result 2026-07-29 (pre-fix, on the reported capture): the ONE real header, at 345.666 s, " +
-      "scored 0.407 with L1=0.237 L2=0.224 brk1200=0.235 start=0.321 stop=0.002, decoding 0x08 = Robot 36 " +
-      "with valid parity — so t0 and the data were right and two gates were wrong. stop=0.002 is the " +
-      "11-element family (see VisSlotDump); L1/L2 just under 0.25 is the old LeaderGate against a measured " +
-      "ridge noise floor of 0.021. The sliding stop reads 0.333 @38 ms here and at most 0.089 on any " +
-      "non-signal tile, which is what sized the replacement gate.")]
+    [ManualFact("Result 2026-07-30 (pre-fix, on the 07-30 SAKHACUBE capture): the three real headers all " +
+      "read the right t0 and decoded 0x88 with valid parity, and all three were thrown away by a level " +
+      "gate — 435.408 s by the stop (0.071 against BitGate 0.20), 255.228 s by the break (0.089) and the " +
+      "start (0.177), 76.211 s by all of them plus the leader. What the ridgeMax column shows is why no " +
+      "constant could have worked: the leader-pair noise floor is 0.019 over 300 ms, but the tiles that " +
+      "outscored the real headers are pure noise carrying brk1200 = 0.37-0.41, because a 10 ms coherence " +
+      "has ~30x the noise variance of a 300 ms one and the old search weighted the two equally. " +
+      "(2026-07-29, same probe: the one real header at 345.666 s read L1=0.237 L2=0.224 stop=0.002 — the " +
+      "11-element family, see VisSlotDump — against the then-0.25 LeaderGate.)")]
     public void VisGateDump()
     {
       var loaded = Load();
