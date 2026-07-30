@@ -18,7 +18,15 @@ namespace VE3NEA.SkyTlm.Tests.Unit
   /// dependency, only its output is.
   /// <para>
   /// The corpus covers all three subsampling modes, a greyscale source, complete and truncated images,
-  /// and both kinds of loss — interior gaps and a missing tail.
+  /// and every kind of loss — interior gaps, a missing tail and a missing head.
+  /// </para>
+  /// <para>
+  /// Three fixtures were completed from the SatNOGS DB (2026-07-30, NORAD 68446, observers
+  /// <c>EU1XX-KO33ru</c> and <c>HB9AKP-JN36gn</c>, all SiDS uploads — SatNOGS itself has no decoder for
+  /// this satellite, so its stations produce no frames). Different receivers lose different packets, so
+  /// the union of two captures is materially more complete than either: our own capture of image 235 held
+  /// 12 of 15 packets and SatNOGS supplied exactly the three that were missing. On-air and SatNOGS
+  /// packets are interchangeable once the five constant lead bytes are restored.
   /// </para>
   /// </summary>
   public class SsdvTranscoderTests
@@ -30,6 +38,9 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       { "hades-sa_img235_12of15",     320,  240,  12 },  // off air: interior gaps, EOI present
       { "hades-sa_img236_10pkt",      320,  240,  10 },  // off air: gaps and a missing tail
       { "hades-sa_img226_5pkt",       320,  240,   5 },  // off air: only the first third of the image
+      { "hades-sa_img235_complete",   320,  240,  15 },  // off air: the same image, completed from SatNOGS
+      { "hades-sa_img231_complete",   320,  240,  19 },  // off air: complete, and the most detailed we have
+      { "hades-sa_img225_tailonly",   320,  240,   6 },  // off air: packets 0-8 lost, so the head is all fill
       { "testcard_420",               160,  128,  21 },  // synthetic: complete, 2x2 subsampling
       { "testcard_444",               160,  128,  34 },  // synthetic: complete, 1x1 subsampling
       { "testcard_grey",              160,  128,  16 },  // synthetic: complete, greyscale source
@@ -174,6 +185,47 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       using var stream = new MemoryStream(lossy);
       using var bitmap = new Bitmap(stream);
       bitmap.Size.Should().Be(new Size(160, 128), "loss changes the content, never the geometry");
+    }
+
+    [Fact]
+    public void SatnogsPackets_CompleteAnImageOurOwnReceiverMissed()
+    {
+      // Image 235 twice: as one receiver heard it, and as two receivers heard it between them. This is
+      // the case for treating the SatNOGS DB as a packet source rather than a curiosity — and it also
+      // pins that packets from a third party parse and place identically to our own.
+      var ours = ReadPackets("hades-sa_img235_12of15");
+      var both = ReadPackets("hades-sa_img235_complete");
+
+      var mine = ours.Select(p => p.PacketId).ToList();
+      var merged = both.Select(p => p.PacketId).ToList();
+
+      mine.Should().NotContain([0, 6, 10]);
+      merged.Should().Contain(mine, "a union never loses a packet it already had");
+      merged.Should().Equal(Enumerable.Range(0, 15), "and it gained exactly the three that were missing");
+
+      both.Should().OnlyContain(p => p.ImageId == 235 && p.CallsignCode == 0xBF35FBA3);
+
+      // the completed image needs no gap fill at all, so every MCU in the file is real data
+      var t = new SsdvTranscoder();
+      foreach (var p in both) t.Feed(p);
+      t.IsComplete.Should().BeTrue();
+      t.McuId.Should().Be(300, "320x240 at 2x2 is 20x15 MCUs, all of them received");
+    }
+
+    [Fact]
+    public void MissingHead_IsFilledBeforeTheFirstRealPacket()
+    {
+      // Image 225 lost packets 0-8, so the transcoder's first act is to write nine packets' worth of
+      // neutral MCUs and only then place real data — the opposite end of the stream from the tail fill,
+      // and a path no synthetic fixture reaches.
+      var packets = ReadPackets("hades-sa_img225_tailonly");
+
+      packets.Select(p => p.PacketId).Should().Equal([9, 10, 11, 12, 13, 14]);
+      packets.Last().IsEoi.Should().BeTrue("the last packet of the image did arrive");
+
+      var t = new SsdvTranscoder();
+      t.Feed(packets[0]);
+      t.McuId.Should().BeGreaterThan(0, "the head was filled before the first real packet was placed");
     }
 
     [Fact]
