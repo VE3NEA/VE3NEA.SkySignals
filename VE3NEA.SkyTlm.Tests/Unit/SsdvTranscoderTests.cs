@@ -18,7 +18,9 @@ namespace VE3NEA.SkyTlm.Tests.Unit
   /// dependency, only its output is.
   /// <para>
   /// The corpus covers all three subsampling modes, a greyscale source, complete and truncated images,
-  /// and every kind of loss — interior gaps, a missing tail and a missing head.
+  /// and every kind of loss — interior gaps, a missing tail and a missing head. Between the two
+  /// satellites it spans six geometries including a portrait one, and quality levels 1, 2, 4, 5 and 7 —
+  /// five of the eight DQT scalings.
   /// </para>
   /// <para>
   /// Three fixtures were completed from the SatNOGS DB (2026-07-30, NORAD 68446, observers
@@ -45,21 +47,37 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       { "testcard_444",               160,  128,  34 },  // synthetic: complete, 1x1 subsampling
       { "testcard_grey",              160,  128,  16 },  // synthetic: complete, greyscale source
       { "testcard_420_lossy",         160,  128,  15 },  // synthetic: packets 0, 3, 4, 9, 15, 20 dropped
+      { "jy1sat_img7",                544,  304,  59 },  // off air: complete, q2
+      { "jy1sat_img8",                560,  320,  62 },  // off air: complete, q5
+      { "jy1sat_img9",                368,  656,  67 },  // off air: complete, portrait
+      { "jy1sat_img11",               432,  288,  67 },  // off air: complete, q4
+      { "jy1sat_img14",               544,  304,  69 },  // off air: complete, the largest fixture
+      { "jy1sat_img30",               560,  240,  29 },  // off air: complete, q1 — the coarsest DQT scaling
+      { "jy1sat_img9_lossy",          368,  656,  61 },  // off air, thinned: packets 0, 1, 17, 30-32 dropped
     };
+
+    /// <summary>
+    /// Which variant a fixture's packets are. Taken from the name rather than carried in the theory data
+    /// because <see cref="SsdvVariant"/> is a record, and xUnit would need it to be serialisable to put
+    /// it in a <see cref="TheoryData{T}"/>.
+    /// </summary>
+    private static SsdvVariant Variant(string name) =>
+      name.StartsWith("jy1sat") ? SsdvVariant.Jy1Sat200 : SsdvVariant.Standard256;
 
     private static string Path(string name, string ext) =>
       System.IO.Path.Combine(TestPaths.DataDir, "Ssdv", name + ext);
 
-    /// <summary>Concatenated canonical 256-byte packets in transmission order — what <c>ssdv -d</c> eats.</summary>
+    /// <summary>Concatenated canonical packets in transmission order — what <c>ssdv -d</c> eats.</summary>
     private static List<SsdvPacket> ReadPackets(string name)
     {
+      var v = Variant(name);
       var bytes = File.ReadAllBytes(Path(name, ".ssdv"));
-      (bytes.Length % 256).Should().Be(0, "the fixture is whole 256-byte packets");
+      (bytes.Length % v.PacketLen).Should().Be(0, $"the fixture is whole {v.PacketLen}-byte packets");
 
       var packets = new List<SsdvPacket>();
-      for (int i = 0; i < bytes.Length / 256; i++)
+      for (int i = 0; i < bytes.Length / v.PacketLen; i++)
       {
-        SsdvPacket.TryParse(bytes.AsSpan(i * 256, 256), SsdvVariant.Standard256, out var p)
+        SsdvPacket.TryParse(bytes.AsSpan(i * v.PacketLen, v.PacketLen), v, out var p)
           .Should().BeTrue($"packet {i} of {name} was validated when the fixture was built");
         packets.Add(p!);
       }
@@ -227,6 +245,55 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       t.Feed(packets[0]);
       t.McuId.Should().BeGreaterThan(0, "the head was filled before the first real packet was placed");
     }
+
+    // ---- the second variant ------------------------------------------------------------------------
+
+    [Fact]
+    public void Jy1SatPackets_CarryNoCallsignAndNoIntegrityLayer()
+    {
+      // 320,762 packets in the SatNOGS DB archive and not one of them can be checked: the AO-40 FEC
+      // layer below is the only integrity there is, so a packet damaged after it renders as a corrupt
+      // band instead of being rejected. These fixtures were majority-voted across ~200 complete copies
+      // of each picture for exactly that reason.
+      var packets = ReadPackets("jy1sat_img8");
+
+      packets.Should().OnlyContain(p => p.Variant == SsdvVariant.Jy1Sat200);
+      packets.Should().OnlyContain(p => p.CallsignCode == 0 && p.Callsign == "");
+      packets.Should().OnlyContain(p => p.CorrectedBytes == 0, "there is no RS to correct anything");
+      packets.Should().OnlyContain(p => p.Payload.Length == 189);
+    }
+
+    [Theory]
+    [InlineData("jy1sat_img30", 1)]
+    [InlineData("jy1sat_img7", 2)]
+    [InlineData("jy1sat_img11", 4)]
+    [InlineData("jy1sat_img8", 5)]
+    [InlineData("hades-sa_img235_complete", 7)]
+    public void QualityIndex_SelectsTheQuantisationTableScaling(string name, int quality)
+    {
+      // JY1SAT is the only source we have for quality levels other than 7, and the scaling factors run
+      // from 5000 to 0 — a mis-scaled table is invisible in the header and obvious in the picture.
+      var packets = ReadPackets(name);
+      packets.Should().OnlyContain(p => p.Quality == quality);
+
+      var jpeg = SsdvTranscoder.Transcode(packets);
+      var dqt = FirstDqt(jpeg);
+      dqt.Should().Equal(SsdvJpegTables.LoadStandardDqt(SsdvJpegTables.StdDqt0, quality)[1..],
+        "the DQT written must be the standard table scaled for this quality");
+    }
+
+    /// <summary>The 64 quantisation values of the first DQT segment in a JPEG.</summary>
+    private static byte[] FirstDqt(byte[] jpeg)
+    {
+      for (int i = 2; i + 4 < jpeg.Length; i += 2 + (jpeg[i + 2] << 8 | jpeg[i + 3]))
+      {
+        jpeg[i].Should().Be(0xFF, "markers are walked from SOI, so every step must land on one");
+        if (jpeg[i + 1] == 0xDB) return jpeg[(i + 5)..(i + 69)];
+        if (jpeg[i + 1] == 0xDA) break;
+      }
+      throw new InvalidOperationException("no DQT segment");
+    }
+
 
     [Fact]
     public void OutOfOrderPacket_IsSkipped()

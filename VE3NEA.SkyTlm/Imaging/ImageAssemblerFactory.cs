@@ -24,8 +24,12 @@ namespace VE3NEA.SkyTlm.Imaging
       // HADES-SA packet type 10: standard SSDV with five constant leading bytes stripped.
       Framing.HADES => new SsdvImageAssembler(SsdvSource.HadesSa),
 
+      // JY1SAT: the 200-byte SSDV variant riding in the tail of the AO-40 frame. AO40FEC is flown by
+      // the FUNcube family, of which only this bird sends images — the others' frames simply never
+      // pass the source's gate, so no norad check is needed to keep them out.
+      Framing.AO40FEC => new SsdvImageAssembler(SsdvSource.Jy1Sat),
+
       // Still to come, each blocked on a capture to validate against rather than on effort:
-      //   AO40FEC / JY1Sat  → the 200-byte SSDV variant
       //   GEOSCAN, USP      → raw JPEG fragments, a different assembler entirely
       _ => null
     };

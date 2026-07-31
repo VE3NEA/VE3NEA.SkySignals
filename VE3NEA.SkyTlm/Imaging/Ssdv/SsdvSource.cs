@@ -65,6 +65,41 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     private static readonly byte[] HadesLeadBytes = [0x55, 0x66, 0xBF, 0x35, 0xFB];
 
     /// <summary>
+    /// JY1SAT / JO-97: a 200-byte type-0x68 SSDV packet carried whole at a fixed offset 56 inside the
+    /// 256-byte AO-40 frame, filling it exactly. Nothing has to be reconstructed — the packet is simply
+    /// the tail of the frame, and the FUNcube telemetry that shares the downlink occupies frames whose
+    /// tail is not one.
+    /// <para>
+    /// The gate is the packet's own sync and type at offset 56, plus the frame-type byte. Measured over
+    /// the full SatNOGS DB archive (427,062 frames, 2019-02-27 to 2021-05-01): every one of the 320,822
+    /// frames carrying <c>55 68</c> there had <c>frame[0]</c> of 0xE0 or 0xE1, and no frame outside those
+    /// two types ever did. The second byte is 0x10 on 99.98 % of them but not all, so it is deliberately
+    /// not required — it would cost real packets and buy nothing the sync/type pair does not already give.
+    /// </para>
+    /// <para>
+    /// This variant carries neither a CRC nor RS: the AO-40 FEC layer below is the only integrity check,
+    /// and whatever survives it reaches us unverifiable per packet. A damaged packet therefore parses
+    /// normally and renders as a corrupt band rather than being rejected — measured across ~200 complete
+    /// copies of the same picture, a handful of packets in each differed. The header sanity checks in
+    /// <see cref="SsdvPacket.TryParse"/> are all the defence there is, which is why this gate is strict.
+    /// </para>
+    /// </summary>
+    public static readonly SsdvSource Jy1Sat = new("JY1SAT", SsdvVariant.Jy1Sat200, hasSenderId: false,
+      frame =>
+      {
+        if (frame.Framing != Framing.AO40FEC) return null;
+        if (frame.Bytes.Length != Ao40FrameLen) return null;
+        if (frame.Bytes[0] != 0xE0 && frame.Bytes[0] != 0xE1) return null;
+
+        var packet = frame.Bytes[Jy1SatPacketOffset..];
+        if (packet[0] != SsdvVariant.SyncByte || packet[1] != SsdvVariant.Jy1Sat200.TypeByte) return null;
+        return packet;
+      });
+
+    private const int Ao40FrameLen = 256;
+    private const int Jy1SatPacketOffset = Ao40FrameLen - 200;
+
+    /// <summary>
     /// Reconstruct the canonical SSDV packet this frame carries, or return false when the frame is not
     /// an image packet of this source. The bytes are not validated here — that is
     /// <see cref="SsdvPacket.TryParse"/>'s job, and it is the CRC there that decides.
