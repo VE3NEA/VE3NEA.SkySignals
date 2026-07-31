@@ -93,9 +93,18 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
     }
 
     /// <summary>
-    /// v2 (Lobachevsky): <c>sat_num, reserved0, dlen, reserved1:2, marker:u32, offset:u32, fnum:u16</c>,
-    /// then 54 payload bytes. There is no <c>mtype</c> — the marker is what says "this is an image
-    /// frame", and <c>fnum</c> is an explicit picture counter, so v2 needs no start command.
+    /// v2: <c>sat_num, reserved0, dlen, reserved1:2, marker:u32, offset:u32, fnum:u16</c>, then 54
+    /// payload bytes — 69 bytes in all. There is no <c>mtype</c>: the marker is what says "this is an
+    /// image frame", and <c>fnum</c> is an explicit picture counter, so v2 needs no start command.
+    /// <para>
+    /// <b>Not Lobachevsky's alone.</b> The research assigned v2 to Lobachevsky and the v1 <c>mtype</c>
+    /// table to the rest of the fleet; a Geoscan-1 image reception on 2026-07-30 (IZ7EVR) shows the
+    /// fleet sending images in v2 as well — <c>0B 98 43 1C EE 31 6F 6B 6F …</c>, marker present,
+    /// consecutive offsets 54 apart. Reading those bytes 3-4 as a v1 <c>mtype</c> yields 0xEE1C, which
+    /// is in no image-command table and is how an earlier survey mistook image frames for telemetry.
+    /// SatsDecoder gets this right by trying v2 first for every platform but <c>0x01</c> and
+    /// <c>0x02</c>, which is what <see cref="TryParse"/> does.
+    /// </para>
     /// </summary>
     private static RawJpegFragment? ParseV2(byte[] bytes, int sender)
     {
@@ -108,7 +117,8 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       int frameNum = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(13));
 
       var key = new RawJpegImageKey(sender, Flavour: 0, Sequence: frameNum);
-      return new RawJpegFragment(key, (int)offset, bytes[headerLen..(headerLen + dataLen)], IsStart: false);
+      return new RawJpegFragment(key, (int)offset, bytes[headerLen..(headerLen + dataLen)], IsStart: false,
+                                 FileRelative: true);
     }
   }
 }

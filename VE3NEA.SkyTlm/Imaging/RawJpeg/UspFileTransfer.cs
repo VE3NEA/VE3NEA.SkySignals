@@ -98,8 +98,10 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
           int session = payload[0];
           long offset = BinaryPrimitives.ReadUInt32LittleEndian(payload[1..]);
           if (offset > int.MaxValue) return null;
+          // USP offsets are file offsets — SatsDecoder writes them straight through, and the SOI is
+          // expected at offset 0 rather than at a base to be worked out.
           return new RawJpegFragment(Key(session), (int)offset, payload[DataFixedLen..].ToArray(),
-                                     IsStart: false);
+                                     IsStart: false, FileRelative: true);
         }
 
         case MessageInit:

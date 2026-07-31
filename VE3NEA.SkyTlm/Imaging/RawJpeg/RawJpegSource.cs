@@ -20,12 +20,10 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
   {
     private readonly Func<Frame, IReadOnlyList<RawJpegFragment>> extract;
 
-    private RawJpegSource(string name, bool hasSenderId, bool soiStartsNewImage,
-                          Func<Frame, IReadOnlyList<RawJpegFragment>> extract)
+    private RawJpegSource(string name, bool hasSenderId, Func<Frame, IReadOnlyList<RawJpegFragment>> extract)
     {
       Name = name;
       HasSenderId = hasSenderId;
-      SoiStartsNewImage = soiStartsNewImage;
       this.extract = extract;
     }
 
@@ -39,22 +37,13 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
     /// </summary>
     public bool HasSenderId { get; }
 
-    /// <summary>
-    /// Whether a second SOI marker means a second picture. It does for Geoscan, where nothing else
-    /// reliably marks a boundary: <c>mtype 0x0901</c> is not sent before every image, so SOI is the only
-    /// dependable signal, and SatsDecoder treats it that way. It does <b>not</b> for USP, which numbers
-    /// its transfers — there, a picture ends when the session ID changes or a new INIT arrives, and
-    /// reading SOI as a boundary would split one transfer whose blocks arrived out of order.
-    /// </summary>
-    public bool SoiStartsNewImage { get; }
-
     /// <summary>Geoscan v1 and v2, covering the whole fleet plus Lobachevsky.</summary>
     public static readonly RawJpegSource Geoscan =
-      new("Geoscan", hasSenderId: true, soiStartsNewImage: true, f => Wrap(GeoscanPayload.TryParse(f)));
+      new("Geoscan", hasSenderId: true, f => Wrap(GeoscanPayload.TryParse(f)));
 
     /// <summary>USP <c>FILETRANSFER_*</c>, covering the Sputnix birds — Luca, 239Alferov, HyperView-1G.</summary>
     public static readonly RawJpegSource Usp =
-      new("USP", hasSenderId: false, soiStartsNewImage: false, UspFileTransfer.Extract);
+      new("USP", hasSenderId: false, UspFileTransfer.Extract);
 
     /// <summary>
     /// Pull every image fragment out of a frame; empty when the frame carries none. On these downlinks

@@ -393,6 +393,33 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     }
 
     [Fact]
+    public void Version2_OffsetsAreFileOffsetsAndAreNotRebased()
+    {
+      // The distinction IZ7EVR's screenshot makes visible: the receiver shows "Base offset: 0" while
+      // the frames beside it carry 4266. v2 offsets are positions in the file, so a pass that starts
+      // mid-picture must leave a hole at the front, not slide the data down to zero the way v1 does.
+      var jpeg = KnownJpeg("hades-sa_img235_complete");
+      var (a, updates, _) = Assembler();
+
+      for (int at = 540; at < jpeg.Length; at += 54)
+        a.Push(V2(0x0B, at, frameNum: 1, jpeg.AsSpan(at, Math.Min(54, jpeg.Length - at))));
+
+      var final = updates[^1];
+      final.FirstGapOffset.Should().Be(0, "the first 540 bytes were missed, so nothing can be believed");
+      final.Complete.Should().BeFalse();
+      a.FragmentsRejected.Should().Be(0);
+
+      // and the bytes really are where they belong, so a later pass filling the head completes it
+      for (int at = 0; at < 540; at += 54)
+        a.Push(V2(0x0B, at, frameNum: 1, jpeg.AsSpan(at, 54)));
+
+      // as in Version2_IsRecognisedByItsMarker, the fixed 54-byte block pads the tail past the EOI
+      updates[^1].Jpeg.Take(jpeg.Length).Should().Equal(jpeg,
+        "the head slotted in front of data that never moved");
+      updates[^1].Complete.Should().BeTrue();
+    }
+
+    [Fact]
     public void Version2_SeparatesImagesByFrameNumber()
     {
       var jpeg = KnownJpeg("hades-sa_img235_complete");
@@ -416,6 +443,53 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       RawJpegSource.Geoscan.TryExtract(frame, out var fragment).Should().BeTrue();
       fragment.Offset.Should().Be(AddressBase);
       fragment.Data.Should().HaveCount(FragmentLen);
+    }
+
+    /// <summary>
+    /// Two real Geoscan-1 image frames, transcribed from IZ7EVR's 2026-07-30 16:00:54 UTC reception as
+    /// UZ7HO's High-Speed SoundModem printed them. Only the 15-byte header is transcribed — the payload
+    /// is a photograph of a screen and not legible byte for byte — so these pin the layout, not the
+    /// picture.
+    /// </summary>
+    private static Frame Iz7evr(string header)
+    {
+      var bytes = new byte[69];
+      var head = header.Split(' ').Select(h => Convert.ToByte(h, 16)).ToArray();
+      head.CopyTo(bytes, 0);
+      return new Frame { Bytes = bytes, CrcValid = true, Framing = Framing.GEOSCAN };
+    }
+
+    [Fact]
+    public void RealGeoscan1ImageFrames_ParseAsVersion2()
+    {
+      // The finding that matters: Geoscan-1 sends its images in the v2 layout. The research had v2 as
+      // Lobachevsky's alone and the v1 mtype table as the fleet's, which is why an earlier survey read
+      // bytes 3-4 of these as "mtype 0xEE1C" and found no image command — in v2 those bytes are
+      // reserved and the marker four bytes later is what identifies an image frame.
+      var first = Iz7evr("0B 98 43 1C EE 31 6F 6B 6F AA 10 00 00 01 00");
+      var second = Iz7evr("0B 98 43 1C EE 31 6F 6B 6F E0 10 00 00 01 00");
+
+      RawJpegSource.Geoscan.TryExtract(first, out var a).Should().BeTrue();
+      RawJpegSource.Geoscan.TryExtract(second, out var b).Should().BeTrue();
+
+      a.Key.Sender.Should().Be(0x0B, "sat_num 0x0B is Geoscan-1, which is the bird IZ7EVR was hearing");
+      a.Key.Sequence.Should().Be(1, "fnum 1 — and SatsDecoder named its output file GEOSCAN-1_N1");
+      b.Key.Should().Be(a.Key, "consecutive frames of one picture");
+
+      a.Offset.Should().Be(0x10AA);
+      b.Offset.Should().Be(0x10E0);
+      (b.Offset - a.Offset).Should().Be(54, "which is exactly the v2 payload length, independently");
+      a.Data.Should().HaveCount(54);
+    }
+
+    [Fact]
+    public void TheRealFrameLength_AgreesWithItsOwnDlen()
+    {
+      // dlen = 0x43 = 67 on those frames, and v1's convention is dlen - 6 payload bytes at offset 8.
+      // 8 + 61 = 69, which is the frame length v2's own fields imply: 15 header + 54 data. The two
+      // conventions closing on the same number is the check that the layout is read right.
+      const int dlen = 0x43;
+      (8 + (dlen - 6)).Should().Be(15 + 54);
     }
 
     [Fact]

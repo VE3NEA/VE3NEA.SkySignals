@@ -52,8 +52,12 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       // carries an SOI — a second start-of-image can only be a second picture. SatsDecoder makes the
       // same three decisions, via force_new and get_image(has_soi). An image that has no bytes yet is
       // reused rather than replaced, so USP's announce-then-send pair is one transfer and not two.
+      // A second SOI means a second picture only where the offsets are the satellite's rather than the
+      // file's. Geoscan v1 has no other dependable boundary — mtype 0x0901 is not sent before every
+      // image — but v2 and USP number their transfers, and there a leading SOI is just the first block,
+      // which may well arrive after the ones behind it.
       bool started = current != null && current.Fragments > 0
-        && (fragment.IsStart || fragment.HasSoi && source.SoiStartsNewImage);
+        && (fragment.IsStart || fragment.HasSoi && !fragment.FileRelative);
       if (!forCurrent && (current == null || fragment.Key != current.Key || started))
         StartNew(fragment);
 
@@ -65,11 +69,17 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       if (current!.IsIgnored) return;
       if (fragment.IsAnnouncement) return;
 
-      if (fragment.HasSoi)
+      if (fragment.FileRelative)
+      {
+        // Nothing to work out: the offset is already a position in the file. Rebasing one of these
+        // would shift the picture, which is why the distinction is carried per fragment — Geoscan
+        // speaks both conventions, v1 in address space and v2 in file space.
+        current.HasSoi |= fragment.HasSoi;
+      }
+      else if (fragment.HasSoi)
       {
         // The SOI marker is the only thing that relates the sender's offsets to the file's, and it does
-        // not have to arrive in the fragment that opened the image — USP announces a transfer in one
-        // message and starts sending it in the next.
+        // not have to arrive in the fragment that opened the image.
         current.BaseOffset = fragment.Offset;
         current.HasSoi = true;
       }
@@ -81,7 +91,7 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         current.BaseOffset = fragment.Offset;
       }
 
-      int at = fragment.Offset - current.BaseOffset;
+      int at = fragment.FileRelative ? fragment.Offset : fragment.Offset - current.BaseOffset;
       if (at < 0)
       {
         // Below a base that the SOI marker fixed, so this belongs to neither this picture nor a rebased

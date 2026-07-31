@@ -332,6 +332,25 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     }
 
     [Fact]
+    public void BlocksLandAtTheirFileOffsetEvenWhenTheStartIsMissed()
+    {
+      // USP offsets are file offsets, as SatsDecoder's straight-through push_data shows. A transfer
+      // joined in progress must leave the missing head as a hole rather than sliding down to zero.
+      var jpeg = KnownJpeg();
+      var frames = Transfer(jpeg);
+      var (a, updates, _) = Assembler();
+
+      // frames[0] is the announcement, so this joins the transfer at block 4 — no INIT, no FILESIZE
+      foreach (var f in frames.Skip(5)) a.Push(f);
+      updates[^1].FirstGapOffset.Should().Be(0, "the first four blocks are missing");
+
+      // and now the blocks that were missed, without a second INIT — a repeated INIT would mean a new
+      // transfer, which is a different case from a gap being filled
+      foreach (var f in frames.Skip(1).Take(4)) a.Push(f);
+      updates[^1].Jpeg.Should().Equal(jpeg, "the head slotted in front of data that never moved");
+    }
+
+    [Fact]
     public void OutOfOrderBlocks_StillLandInTheRightPlace()
     {
       var jpeg = KnownJpeg();

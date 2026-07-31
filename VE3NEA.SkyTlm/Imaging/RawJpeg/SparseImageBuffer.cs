@@ -18,14 +18,18 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
   public sealed class SparseImageBuffer
   {
     /// <summary>
-    /// Largest offset the buffer will accept, and so the largest image it will hold. SatDump allocates
-    /// 878 × 56 = 49,168 bytes for a Geoscan image and the largest seen off air is well under half that,
-    /// so this is generous as a size limit — it is really a sanity guard. A Geoscan offset is assembled
-    /// from <c>subsystem_num</c> and a 16-bit field, and a telemetry frame misread as an image frame
-    /// yields values like 16,308,290 (measured, 2026-07-30). Without a cap those would each ask for a
-    /// 16 MB allocation.
+    /// Largest offset the buffer will accept. This is a sanity guard, not a format limit: a Geoscan
+    /// offset is assembled from <c>subsystem_num</c> and a 16-bit field, and a telemetry frame misread
+    /// as an image frame yields values like 948,290 and 16,308,290 (both measured, 2026-07-30) — each
+    /// of which would otherwise ask for a multi-megabyte allocation.
+    /// <para>
+    /// Set well above any plausible picture rather than at one. SatDump allocates 878 × 56 = 49,168
+    /// bytes for a Geoscan image, but the fleet sends 640×480 and a JPEG that size can exceed it, so
+    /// using SatDump's number as a ceiling would risk truncating a real image. USP has no documented
+    /// limit at all, and moves whole files.
+    /// </para>
     /// </summary>
-    public const int MaxLength = 49168;
+    public const int MaxLength = 512 * 1024;
 
     private byte[] bytes = [];
     // written ranges as [start, end), kept sorted and merged, so gaps are the spaces between them

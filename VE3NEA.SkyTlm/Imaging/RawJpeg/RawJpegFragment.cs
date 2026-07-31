@@ -32,8 +32,20 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
   /// <param name="TotalSize">Final file length in bytes where the protocol states it — USP's
   /// <c>FILETRANSFER_FILESIZE</c> — or 0 when unknown. Worth carrying because it turns "complete" from
   /// an inference into a fact.</param>
+  /// <param name="FileRelative">
+  /// <see cref="Offset"/> is already an offset into the file, so byte 0 needs no working out. True for
+  /// Geoscan v2 and for USP; false for Geoscan v1, whose offsets are positions in the satellite's own
+  /// address space and mean nothing until an SOI marker relates the two.
+  /// <para>
+  /// This is not a detail: rebasing a file-relative stream would shift the picture. SatsDecoder draws
+  /// the same distinction by writing <c>off - base_offset</c> in its v1 path and a bare <c>off</c> in
+  /// its v2 and USP paths, and IZ7EVR's 2026-07-30 reception shows it plainly — the receiver reports
+  /// <c>Base offset: 0</c> while the frames beside it carry offset 4266.
+  /// </para>
+  /// </param>
   public readonly record struct RawJpegFragment(RawJpegImageKey Key, int Offset, byte[] Data, bool IsStart,
-                                                string? Name = null, int TotalSize = 0)
+                                                string? Name = null, int TotalSize = 0,
+                                                bool FileRelative = false)
   {
     /// <summary>
     /// Carries no file bytes: an announcement of a name or a size rather than a piece of the picture.
