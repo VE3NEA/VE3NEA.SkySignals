@@ -392,7 +392,6 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [Theory]
     [InlineData(Framing.AX25G3RUH)]
     [InlineData(Framing.USP)]
-    [InlineData(Framing.GEOSCAN)]
     public void Factory_ReturnsNullForFramingsWithNoImagingYet(Framing framing) =>
       ImageAssemblerFactory.Create(Params(framing)).Should().BeNull();
   }

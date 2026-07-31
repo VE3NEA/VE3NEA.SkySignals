@@ -1,4 +1,5 @@
 using VE3NEA.SkyTlm.Core;
+using VE3NEA.SkyTlm.Imaging.RawJpeg;
 using VE3NEA.SkyTlm.Imaging.Ssdv;
 
 namespace VE3NEA.SkyTlm.Imaging
@@ -29,8 +30,12 @@ namespace VE3NEA.SkyTlm.Imaging
       // pass the source's gate, so no norad check is needed to keep them out.
       Framing.AO40FEC => new SsdvImageAssembler(SsdvSource.Jy1Sat),
 
-      // Still to come, each blocked on a capture to validate against rather than on effort:
-      //   GEOSCAN, USP      → raw JPEG fragments, a different assembler entirely
+      // The Geoscan fleet plus Lobachevsky: raw JPEG byte ranges, a different assembler entirely.
+      // One framing, several satellites — but the payload names the sender, so no norad check is needed.
+      Framing.GEOSCAN => new RawJpegAssembler(RawJpegSource.Geoscan),
+
+      // Still to come, blocked on a capture to validate against rather than on effort:
+      //   USP → the FILETRANSFER_* stream, a second front-end onto RawJpegAssembler
       _ => null
     };
   }
