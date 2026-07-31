@@ -26,8 +26,22 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
   /// <param name="Data">The file bytes.</param>
   /// <param name="IsStart">The protocol explicitly said "new image starts here" (Geoscan's
   /// <c>mtype 0x0901</c>), which is stronger evidence than a key change and resets the offset base.</param>
-  public readonly record struct RawJpegFragment(RawJpegImageKey Key, int Offset, byte[] Data, bool IsStart)
+  /// <param name="Name">File name, where the protocol announces one — USP's <c>FILETRANSFER_INIT</c>.
+  /// Null when unknown, which is always the case for Geoscan and is also normal for USP until the
+  /// announcement is heard.</param>
+  /// <param name="TotalSize">Final file length in bytes where the protocol states it — USP's
+  /// <c>FILETRANSFER_FILESIZE</c> — or 0 when unknown. Worth carrying because it turns "complete" from
+  /// an inference into a fact.</param>
+  public readonly record struct RawJpegFragment(RawJpegImageKey Key, int Offset, byte[] Data, bool IsStart,
+                                                string? Name = null, int TotalSize = 0)
   {
+    /// <summary>
+    /// Carries no file bytes: an announcement of a name or a size rather than a piece of the picture.
+    /// USP sends both as their own messages, so a fragment that only tells the assembler something is
+    /// normal and is not a failure to parse.
+    /// </summary>
+    public bool IsAnnouncement => Data.Length == 0;
+
     /// <summary>Start-of-image marker: this fragment holds the first bytes of the JPEG file itself.</summary>
     public bool HasSoi => Data.Length >= 2 && Data[0] == 0xFF && Data[1] == 0xD8;
 

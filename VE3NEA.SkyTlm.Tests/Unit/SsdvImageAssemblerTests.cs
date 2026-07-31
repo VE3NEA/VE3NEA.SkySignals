@@ -389,10 +389,9 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       ((SsdvImageAssembler)funcube1).PacketsRejected.Should().Be(0);
     }
 
-    [Theory]
-    [InlineData(Framing.AX25G3RUH)]
-    [InlineData(Framing.USP)]
-    public void Factory_ReturnsNullForFramingsWithNoImagingYet(Framing framing) =>
-      ImageAssemblerFactory.Create(Params(framing)).Should().BeNull();
+    [Fact]
+    public void Factory_ReturnsNullForAFramingWithNoImaging() =>
+      ImageAssemblerFactory.Create(Params(Framing.AX25G3RUH)).Should().BeNull(
+        "plain AX.25 carries no image protocol of its own");
   }
 }

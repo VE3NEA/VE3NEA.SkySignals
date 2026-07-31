@@ -34,8 +34,11 @@ namespace VE3NEA.SkyTlm.Imaging
       // One framing, several satellites — but the payload names the sender, so no norad check is needed.
       Framing.GEOSCAN => new RawJpegAssembler(RawJpegSource.Geoscan),
 
-      // Still to come, blocked on a capture to validate against rather than on effort:
-      //   USP → the FILETRANSFER_* stream, a second front-end onto RawJpegAssembler
+      // The Sputnix birds — Luca, 239Alferov, HyperView-1G — send JPEGs down the ordinary telemetry
+      // downlink as USP file transfers. Not all USP satellites image, but the ones that do not simply
+      // never send a FILETRANSFER_* message, so the source's gate is the whole filter.
+      Framing.USP => new RawJpegAssembler(RawJpegSource.Usp),
+
       _ => null
     };
   }

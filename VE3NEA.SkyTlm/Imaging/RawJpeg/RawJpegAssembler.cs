@@ -20,6 +20,7 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
   public sealed class RawJpegAssembler : IImageAssembler
   {
     private readonly RawJpegSource source;
+    private readonly Dictionary<RawJpegImageKey, string> announced = [];
     private Image? current;
     private int imagesSeen;
 
@@ -37,13 +38,41 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
 
     public void Push(Frame frame)
     {
-      if (!source.TryExtract(frame, out var fragment)) return;
+      foreach (var fragment in source.Extract(frame)) Accept(fragment);
+    }
+
+    private void Accept(RawJpegFragment fragment)
+    {
+      // A message that names the transfer in progress rather than a transfer of its own — USP's
+      // FILESIZE, which carries no session ID. It attaches to whatever is open and starts nothing.
+      bool forCurrent = fragment.Key == UspFileTransfer.AnySession;
+      if (forCurrent && current == null) return;
 
       // The sender has moved on when the identity changes, when it says so outright, or when a fragment
       // carries an SOI — a second start-of-image can only be a second picture. SatsDecoder makes the
-      // same three decisions, via force_new and get_image(has_soi).
-      if (current == null || fragment.Key != current.Key || fragment.IsStart || fragment.HasSoi)
+      // same three decisions, via force_new and get_image(has_soi). An image that has no bytes yet is
+      // reused rather than replaced, so USP's announce-then-send pair is one transfer and not two.
+      bool started = current != null && current.Fragments > 0
+        && (fragment.IsStart || fragment.HasSoi && source.SoiStartsNewImage);
+      if (!forCurrent && (current == null || fragment.Key != current.Key || started))
         StartNew(fragment);
+
+      if (fragment.Name != null) { current!.Name = fragment.Name; announced[fragment.Key] = fragment.Name; }
+      if (fragment.TotalSize > 0) current!.TotalSize = fragment.TotalSize;
+
+      // USP moves logs and configs down the same channel as pictures, so a transfer that has announced
+      // a name we cannot render is dropped rather than buffered and offered as a broken JPEG.
+      if (current!.IsIgnored) return;
+      if (fragment.IsAnnouncement) return;
+
+      if (fragment.HasSoi)
+      {
+        // The SOI marker is the only thing that relates the sender's offsets to the file's, and it does
+        // not have to arrive in the fragment that opened the image — USP announces a transfer in one
+        // message and starts sending it in the next.
+        current.BaseOffset = fragment.Offset;
+        current.HasSoi = true;
+      }
       else if (!current.HasSoi && fragment.Offset < current.BaseOffset)
       {
         // No SOI has been seen, so the base is only a guess: the lowest offset so far. A lower one
@@ -93,12 +122,20 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         HasSoi = fragment.HasSoi,
         Id = imagesSeen++
       };
+
+      // A name announced for this identity earlier in the pass still applies: USP sends INIT once and
+      // then a long run of DATA, and the picture only really begins at the first of those.
+      if (announced.TryGetValue(fragment.Key, out var name)) current.Name = name;
     }
 
     private void Complete(Image image, ImageProduct? product = null)
     {
       if (image.Announced) return;
       image.Announced = true;
+      // An image with no bytes is not a picture: a USP transfer whose announcement was heard and whose
+      // data was not, or a Geoscan image whose every fragment was refused. ImageProduct promises a
+      // decodable JPEG, and there is nothing here to make one from.
+      if (image.Fragments == 0 || image.IsIgnored) return;
       ImageCompleted?.Invoke(product ?? Product(image));
     }
 
@@ -112,7 +149,9 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         // does have fnum, which is in the key and is what separates its images; it is not an ID either,
         // being a slot number the satellite reuses.
         ImageId: image.Id,
-        Source: source.HasSenderId ? SenderName(image.Key.Sender) : null,
+        // Geoscan's sat_num names the satellite; USP's session number names nothing, and its file name
+        // is the useful label — it is what the operator called the picture.
+        Source: source.HasSenderId ? SenderName(image.Key.Sender) : NullIfEmpty(image.Name),
         Jpeg: jpeg,
         Width: width,
         Height: height,
@@ -121,6 +160,8 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         FirstGapOffset: image.Buffer.FirstGapOffset,
         Complete: image.IsComplete);
     }
+
+    private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
 
     /// <summary>SatsDecoder's platform table, for the birds that carry cameras.</summary>
     private static string? SenderName(int sender) => sender switch
@@ -161,12 +202,30 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       public int LargestFragment { get; set; }
       public bool Announced { get; set; }
 
+      /// <summary>File name where the protocol announced one (USP), otherwise null.</summary>
+      public string? Name { get; set; }
+
+      /// <summary>Final file length where the protocol stated it (USP's FILESIZE), otherwise 0.</summary>
+      public int TotalSize { get; set; }
+
+      /// <summary>
+      /// A file this assembler has no business reconstructing. USP is a general file-transfer channel —
+      /// logs and configuration files come down it alongside pictures — and a name is the only warning
+      /// before the bytes arrive. Nothing else in either protocol can say this, so an unnamed transfer is
+      /// always attempted.
+      /// </summary>
+      public bool IsIgnored => Name != null && Name.Length > 0
+        && !Name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+        && !Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase);
+
       /// <summary>
       /// Both ends of the file present and nothing missing in between. Stricter than SatsDecoder, which
       /// calls an image finished on a heuristic — an EOI in a fragment shorter than its predecessor —
-      /// because that has to decide without being able to see the gaps, and this does not.
+      /// because that has to decide without being able to see the gaps, and this does not. Where the
+      /// protocol states the file length outright, that is used instead of looking for an EOI.
       /// </summary>
-      public bool IsComplete => HasSoi && HasEoi && Buffer.IsContiguous;
+      public bool IsComplete => HasSoi && Buffer.IsContiguous
+        && (TotalSize > 0 ? Buffer.Length >= TotalSize : HasEoi);
 
       /// <summary>
       /// How many fragments the picture would take if none were missing. Fragments are uniform within a
