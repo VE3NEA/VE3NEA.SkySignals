@@ -47,6 +47,14 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     /// provides both). 189 B payload.</summary>
     public static readonly SsdvVariant Jy1Sat200 = new(200, 0x68, true, false, false, false);
 
+    /// <summary>
+    /// SilverSat, type 0x67 shortened to 195 bytes to fit its IL2P payload block, which supplies the FEC
+    /// the type byte says is absent. 176 B payload. The bird has re-entered, so this exists for the one
+    /// packet we have of it — see <c>ssdv-research.md</c> §1.3 — and because it is the proof that the
+    /// CRC follows the shortened length rather than sitting at a fixed offset.
+    /// </summary>
+    public static readonly SsdvVariant SilverSat195 = new(195, 0x67, true, true, true, false);
+
     /// <summary>DSLWP / LO-94: no sync, no type byte, no callsign, no CRC, no RS. 209 B payload.</summary>
     public static readonly SsdvVariant Dslwp218 = new(218, 0x00, false, false, false, false);
 

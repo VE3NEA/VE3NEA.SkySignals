@@ -34,11 +34,21 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       return pkt;
     }
 
+    // the one SilverSat packet we have: WP2XGW image 31 packet 18, read off a 2026-03-03 Dire Wolf
+    // hexdump (211-byte AX.25 UI frame = 16-byte header + 195-byte SSDV, IL2P below). The CRC-32 below
+    // is what proves the transcription byte-exact.
+    private const string SilverSatOnAir =
+      "5567DEEB796C1F0012140F000100A2236018A951C8205442941AF41AB9CA8B42620601FA9A723139C9EB5594F3CD49BB18C1" +
+      "34AC87724772A7AD34B96C649229A016393DE94004818A69242B8F51BB3D8521183522ED18069CD1E40205098588D40279A9" +
+      "5703BE29A140033460123069DC42B1C9EB4A0E08A555C1C91411939038AA40C9A321BD01ED569000809C0354901041C1C8AB" +
+      "684481571CFA0A9608BB0C4A5376464F5A86450D20423073C1A557641B790076A012640D9E01ACD269ECA5D00D";
+
     private static SsdvVariant Variant(string name) => name switch
     {
       "Standard256" => SsdvVariant.Standard256,
       "NoFec256" => SsdvVariant.NoFec256,
       "Jy1Sat200" => SsdvVariant.Jy1Sat200,
+      "SilverSat195" => SsdvVariant.SilverSat195,
       "Dslwp218" => SsdvVariant.Dslwp218,
       _ => throw new ArgumentException(name)
     };
@@ -54,6 +64,7 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [InlineData("Standard256", 15, 205)]
     [InlineData("NoFec256", 15, 237)]
     [InlineData("Jy1Sat200", 11, 189)]
+    [InlineData("SilverSat195", 15, 176)]
     [InlineData("Dslwp218", 9, 209)]
     public void Variant_HeaderAndPayloadLengths_AreTheDocumentedOnes(string name, int headerLen, int payloadLen)
     {
@@ -81,10 +92,10 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [Fact]
     public void ReferenceCallsignEncoding()
     {
-      // Digit order has no off-air anchor — neither live variant puts a real callsign in the field — so
-      // it is pinned against the reference tool instead: `ssdv -e -c VE3NEA` writes these four bytes.
+      // Digit order is pinned against the reference tool: `ssdv -e -c VE3NEA` writes these four bytes.
       // Note fsphil's encoder walks the string backwards, making the *last* character the most
-      // significant digit, which is the opposite of what the field layout suggests.
+      // significant digit, which is the opposite of what the field layout suggests. The off-air
+      // confirmation is SilverSatGoldenPacket_DecodesToItsRealCallsign below.
       SsdvTx.EncodeCallsign("VE3NEA").Should().Be(0x584C99F3);
       SsdvPacket.DecodeCallsign(0x584C99F3).Should().Be("VE3NEA");
     }
@@ -101,6 +112,7 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [InlineData("Standard256")]
     [InlineData("NoFec256")]
     [InlineData("Jy1Sat200")]
+    [InlineData("SilverSat195")]
     [InlineData("Dslwp218")]
     public void CleanPacket_RoundTrips(string name)
     {
@@ -311,5 +323,61 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       onAir.Should().HaveCount(251);
       SsdvPacket.TryParse(onAir, SsdvVariant.HadesSa251, out _).Should().BeFalse();
     }
+
+
+    // ---- the golden off-air SilverSat packet --------------------------------------------------------
+
+    [Fact]
+    public void SilverSatGoldenPacket_Parses()
+    {
+      // 195 bytes straight out of an AX.25 UI info field, no reconstruction of any kind: SilverSat put
+      // the packet at info[0] and let IL2P below supply the FEC that type 0x67 says is absent.
+      var packet = Convert.FromHexString(SilverSatOnAir);
+
+      packet.Should().HaveCount(195);
+      SsdvPacket.TryParse(packet, SsdvVariant.SilverSat195, out var p).Should().BeTrue();
+
+      p!.ImageId.Should().Be(31);
+      p.PacketId.Should().Be(18);
+      p.Width.Should().Be(320);
+      p.Height.Should().Be(240);
+      p.Quality.Should().Be(4);
+      p.IsEoi.Should().BeFalse();
+      p.Subsampling.Should().Be(0);
+      p.McuOffset.Should().Be(1);
+      p.McuIndex.Should().Be(162);
+      p.Payload.Should().HaveCount(176);
+      p.CorrectedBytes.Should().Be(0, "there is no RS in this variant — the CRC is the only gate");
+    }
+
+    [Fact]
+    public void SilverSatGoldenPacket_DecodesToItsRealCallsign() =>
+      // The only off-air anchor for the base-40 digit order that exists: every other live variant either
+      // omits the field (JY1SAT, DSLWP) or overloads it with constants (HADES-SA). Dire Wolf decoded the
+      // AX.25 address of the same frame as WP2XGW independently, so two implementations agree on real
+      // on-air bytes — the "encoder walks the string backwards" correction is confirmed, not merely
+      // self-consistent.
+      SsdvPacket.DecodeCallsign(0xDEEB796C).Should().Be("WP2XGW");
+
+    [Fact]
+    public void SilverSatGoldenPacket_CrcFollowsTheShortenedLength()
+    {
+      // The CRC sits at PacketLen−4 and covers PacketLen−5 bytes, wherever the operator cut the packet;
+      // it does not stay at the 256-byte variant's offset. This is the assertion that would fail if
+      // CrcOffset were ever hard-coded, and the 195-byte case is the only real-world proof we have.
+      var packet = Convert.FromHexString(SilverSatOnAir);
+      var v = SsdvVariant.SilverSat195;
+
+      v.CrcOffset.Should().Be(191);
+      Crc32.Compute(packet.AsSpan(1, v.CrcOffset - 1)).Should().Be(0xECA5D00D);
+      Convert.ToHexString(packet, v.CrcOffset, 4).Should().Be("ECA5D00D", "and it is stored big-endian");
+    }
+
+    [Fact]
+    public void SilverSatGoldenPacket_ParsedAsTheFullLengthVariant_IsRejected() =>
+      // a shortened packet read at the wrong length is the failure mode the variant table exists to
+      // prevent; there is no RS here, so nothing masks it.
+      SsdvPacket.TryParse(Convert.FromHexString(SilverSatOnAir), SsdvVariant.NoFec256, out _)
+        .Should().BeFalse();
   }
 }
