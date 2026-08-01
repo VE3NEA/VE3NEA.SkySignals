@@ -1,0 +1,105 @@
+{
+  "description": "GEOSCAN-2 beacon telemetry pins. Real CRC-OK off-air frames archived by SkyRoof's telemetry panel (TelemetryDecodes/frames_*.txt), unmodified and complete from the first AX.25 address byte, which is what the geoscan2.json field positions are measured from. The expected values are the ones the fleet's published protocol yields via SatsDecoder's geoscan2_tlm: the timestamps land within seconds of the reception time noted below, the batteries read 8.3 V, and tx_packets increments between the two consecutive RS51S frames. nonBeaconFrames are native Geoscan frames from the same downlink (Geoscan-4, mtype 0xBD05) which must decode to nothing at all - they are the reason the layout is gated on control/pid/mayak_id.",
+  "frames": [
+    {
+      "norad": 61785,
+      "sat": "RTU MIREA1 (RS51S), heard 2026-07-30 00:18:27",
+      "hex": "848A82869E9C60A4A66A62A600E103F0017AD06A6A03497C00B5002A106D200600090A4E000000008600FC06100D0B0000000000000000000D6720790A9C941715B301000A000000",
+      "layout": "beacon",
+      "expect": {
+        "time": "2026-07-30 04:18:02 UTC",
+        "eps_mode": "3",
+        "current_total": "124",
+        "current_solar_panels": "181",
+        "voltage_per_battery": "4138",
+        "voltage_total": "8301",
+        "temp_battery_1": "9",
+        "temp_battery_2": "10",
+        "act_flywheels": "ON",
+        "act_coils": "ON",
+        "act_ins": "ON",
+        "act_camera": "ON",
+        "act_panel_x_plus": "ON",
+        "act_panel_x_minus": "ON",
+        "act_panel_y_plus": "OFF",
+        "act_panel_y_minus": "OFF",
+        "temp_x_plus": "6",
+        "temp_x_minus": "16",
+        "temp_y_plus": "13",
+        "temp_y_minus": "11",
+        "gnss_satellites": "0",
+        "camera_files": "0",
+        "vbus_voltage": "8295",
+        "rssi_last": "-100",
+        "rssi_min": "-108",
+        "tx_packets": "179",
+        "qso_count": "0"
+      }
+    },
+    {
+      "norad": 61785,
+      "sat": "RTU MIREA1 (RS51S), heard 2026-07-30 00:18:37",
+      "hex": "848A82869E9C60A4A66A62A600E103F0017AD06A6A03497C00B5002A106D200600090A4E000000008600FC05110C100000000000000000000D6720790A9C941715B401000A000000",
+      "layout": "beacon",
+      "expect": {
+        "time": "2026-07-30 04:18:02 UTC",
+        "voltage_total": "8301",
+        "temp_x_plus": "5",
+        "temp_x_minus": "17",
+        "temp_y_plus": "12",
+        "temp_y_minus": "16",
+        "vbus_voltage": "8295",
+        "rssi_last": "-100",
+        "rssi_min": "-108",
+        "tx_packets": "180"
+      }
+    },
+    {
+      "norad": 64881,
+      "sat": "RS-61S (RS61S), heard 2026-07-31 16:38:08",
+      "hex": "848A82869E9C60A4A66C62A600E103F0019C076D6A0304380036003C106B200200000070000000537500F4030E0B0100000000FF000000000DDD209A03A18F5E71270100F7000000",
+      "layout": "beacon",
+      "expect": {
+        "time": "2026-07-31 20:37:48 UTC",
+        "eps_mode": "3",
+        "current_total": "56",
+        "current_solar_panels": "54",
+        "voltage_per_battery": "4156",
+        "voltage_total": "8299",
+        "temp_battery_1": "0",
+        "temp_battery_2": "0",
+        "act_flywheels": "ON",
+        "act_coils": "ON",
+        "act_ins": "ON",
+        "act_camera": "ON",
+        "act_panel_x_plus": "OFF",
+        "act_panel_x_minus": "ON",
+        "act_panel_y_plus": "OFF",
+        "act_panel_y_minus": "OFF",
+        "temp_x_plus": "3",
+        "temp_x_minus": "14",
+        "temp_y_plus": "11",
+        "temp_y_minus": "1",
+        "gnss_satellites": "0",
+        "camera_files": "0",
+        "vbus_voltage": "8413",
+        "rssi_last": "-95",
+        "rssi_min": "-113",
+        "tx_packets": "39",
+        "qso_count": "0"
+      }
+    }
+  ],
+  "nonBeaconFrames": [
+    {
+      "norad": 64892,
+      "sat": "Geoscan-4 native frame, heard 2026-07-30 04:03:52",
+      "hex": "0E984605BD42581A0DB29F01000072D7A04A3DB42449945B834AD0529845C06425C4FF7DB6C50C224DBEA619693F38F5B2BEFEF6BDBD0000000700006461133B70BBB53964DB26BC"
+    },
+    {
+      "norad": 64892,
+      "sat": "Geoscan-4 native frame, heard 2026-07-30 05:31:36",
+      "hex": "0E984605BD42D86C5DB29F0100000BA83B4A77CE5149025DB84A363ED545472894C3E68C55C5035F083EA95352BFE147BB3E5F3DD5BE000000070000E8F968BB1377F6BB612D683B"
+    }
+  ]
+}

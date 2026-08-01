@@ -1,0 +1,188 @@
+{
+  // GEOSCAN-2 (3U) beacon telemetry, from the fleet's published radio protocol as implemented by
+  // SatsDecoder's geoscan.py (geoscan2_tlm). The beacon rides an AX.25 UI frame on the same GEOSCAN
+  // downlink as the native Geoscan frames, so every field is positioned from the start of the frame:
+  // 14 bytes of address, control 0x03, pid 0xF0, then the beacon itself at byte 16.
+  //
+  // Nothing is read unless the control/pid/mayak_id triple matches, which is what keeps the native
+  // Geoscan frames sharing this downlink from being sliced into meaningless fields.
+  //
+  // Validated 2026-08-01 against 131 archived beacons from RS92S2..RS92S6, RS51S and RS61S: the
+  // timestamps match the reception time to the second, batteries read 8.30 V, currents 50-330 mA,
+  // temperatures 0-10 °C, RSSI -86..-115 dBm, and tx_packets increments between consecutive frames.
+  // Lobachevsky (RS83S) sends a beacon of the same shape that does NOT fit this layout - its
+  // timestamps and voltages come out as nonsense - so it is deliberately not listed here. The rest of
+  // the fleet is left out for the same reason: no capture to confirm it with yet.
+  "id": "geoscan2",
+  "norad": [61785, 64879, 64881, 64890, 64891, 64892, 64893],
+  "bitOrder": "msb",
+  "endian": "le",
+  "default": "beacon",
+  "layouts": {
+    "beacon": {
+      "fields": [
+        {
+          "name": "beacon_gate",
+          "pos": 14,
+          "bits": 24,
+          "endian": "be",
+          "hidden": true
+        },
+        {
+          "name": "telemetry",
+          "if": "beacon_gate == 0x03F001",
+          "fields": [
+            {
+              "name": "time",
+              "pos": 17,
+              "bytes": 4,
+              "transform": "unixtime"
+            },
+            {
+              "name": "eps_mode",
+              "bytes": 1
+            },
+            {
+              "name": "current_total",
+              "pos": 23,
+              "bytes": 2,
+              "units": "mA"
+            },
+            {
+              "name": "current_solar_panels",
+              "bytes": 2,
+              "units": "mA"
+            },
+            {
+              "name": "voltage_per_battery",
+              "bytes": 2,
+              "units": "mV"
+            },
+            {
+              "name": "voltage_total",
+              "bytes": 2,
+              "units": "mV"
+            },
+            {
+              "name": "temp_battery_1",
+              "pos": 33,
+              "bytes": 1,
+              "type": "int",
+              "units": "°C"
+            },
+            {
+              "name": "temp_battery_2",
+              "bytes": 1,
+              "type": "int",
+              "units": "°C"
+            },
+            // the OBC actuator flags, one byte, most significant bit first
+            {
+              "name": "act_flywheels",
+              "pos": 42,
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_coils",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_ins",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_camera",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_panel_x_plus",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_panel_x_minus",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_panel_y_plus",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "act_panel_y_minus",
+              "bits": 1,
+              "type": "bool"
+            },
+            {
+              "name": "temp_x_plus",
+              "bytes": 1,
+              "type": "int",
+              "units": "°C"
+            },
+            {
+              "name": "temp_x_minus",
+              "bytes": 1,
+              "type": "int",
+              "units": "°C"
+            },
+            {
+              "name": "temp_y_plus",
+              "bytes": 1,
+              "type": "int",
+              "units": "°C"
+            },
+            {
+              "name": "temp_y_minus",
+              "bytes": 1,
+              "type": "int",
+              "units": "°C"
+            },
+            {
+              "name": "gnss_satellites",
+              "bytes": 1
+            },
+            {
+              "name": "camera_files",
+              "pos": 50,
+              "bytes": 1
+            },
+            {
+              "name": "vbus_voltage",
+              "pos": 57,
+              "bytes": 2,
+              "units": "mV"
+            },
+            {
+              "name": "rssi_last",
+              "pos": 61,
+              "bytes": 1,
+              "type": "int",
+              "units": "dBm"
+            },
+            {
+              "name": "rssi_min",
+              "bytes": 1,
+              "type": "int",
+              "units": "dBm"
+            },
+            {
+              "name": "tx_packets",
+              "pos": 65,
+              "bytes": 1
+            },
+            {
+              "name": "qso_count",
+              "pos": 69,
+              "bytes": 1
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

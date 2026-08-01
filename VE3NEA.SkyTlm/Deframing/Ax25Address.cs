@@ -40,10 +40,15 @@ namespace VE3NEA.SkyTlm.Deframing
       for (int i = 0; i < 6; i++)
       {
         char c = (char)(frame[offset + i] >> 1);
-        if (c == ' ') continue;
+        // the standard pads a short callsign with spaces, but several of the Geoscan fleet (RS51S,
+        // RS61S, RS83S) pad theirs with NULs instead — rejecting those loses the whole address. Only a
+        // TRAILING NUL is padding: a callsign is left-aligned, so a leading one means these are not
+        // callsign bytes at all (a native Geoscan frame's sat_num 0x01 shifts to exactly that).
+        if (c == ' ' || (c == '\0' && sb.Length > 0)) continue;
         if (c < '0' || c > 'z') return string.Empty; // not a plausible callsign char
         sb.Append(c);
       }
+      if (sb.Length == 0) return string.Empty;   // padding only — an SSID alone is not an address
       int ssid = (frame[offset + 6] >> 1) & 0x0f;
       if (ssid != 0) sb.Append('-').Append(ssid);
       return sb.ToString();
