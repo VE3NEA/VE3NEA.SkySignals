@@ -360,6 +360,59 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     }
 
 
+    // ---- the per-frame integrity verdict -------------------------------------------------------------
+
+    [Fact]
+    public void Check_OnATelemetryFrame_IsNull() =>
+      // not an image packet at all, which a display layer must be able to tell from one that failed
+      new SsdvImageAssembler(SsdvSource.HadesSa).Check(Telemetry()).Should().BeNull();
+
+    [Fact]
+    public void Check_OnACleanPacket_PassesWithNoCorrections() =>
+      new SsdvImageAssembler(SsdvSource.HadesSa).Check(Frames("hades-sa_img235_12of15")[0])
+        .Should().Be(new ImagePacketCheck(true, 0));
+
+    [Fact]
+    public void Check_OnARepairablePacket_ReportsWhatRsCost()
+    {
+      // the count is the point of reporting it: a packet that spent most of the RS capacity decoded, but
+      // the link nearly lost it, and on a marginal pass that is the difference worth seeing.
+      var frame = Frames("hades-sa_img235_12of15")[0];
+      for (int i = 0; i < 5; i++) frame.Bytes[10 + i * 20] ^= 0xFF;
+
+      new SsdvImageAssembler(SsdvSource.HadesSa).Check(frame).Should().Be(new ImagePacketCheck(true, 5));
+    }
+
+    [Fact]
+    public void Check_OnAnUnrecoverablePacket_Fails()
+    {
+      // 17+ byte errors are past RS(255,223), which is the case the whole feature exists to show: off air
+      // this is what a weak pass produces, and the frame's own CRC field says "n/a" for it.
+      var frame = Frames("hades-sa_img235_12of15")[0];
+      for (int i = 0; i < 24; i++) frame.Bytes[10 + i * 9] ^= 0xFF;
+
+      new SsdvImageAssembler(SsdvSource.HadesSa).Check(frame).Should().Be(new ImagePacketCheck(false, 0));
+    }
+
+    [Fact]
+    public void CheckImagePacket_RoutesThroughTheFactorysTable()
+    {
+      ImageAssemblerFactory.CheckImagePacket(Params(Framing.HADES), 68446, Frames("hades-sa_img235_12of15")[0])
+        .Should().Be(new ImagePacketCheck(true, 0));
+      ImageAssemblerFactory.CheckImagePacket(Params(Framing.HADES), 68446, Telemetry())
+        .Should().BeNull();
+      ImageAssemblerFactory.CheckImagePacket(Params(Framing.AX25G3RUH), null, Telemetry())
+        .Should().BeNull("a framing with no imaging has no fragment to check");
+    }
+
+    [Fact]
+    public void CheckImagePacket_OnTheRawJpegFamily_IsNull() =>
+      // Geoscan fragments have no integrity layer of their own — the framing's CRC is the only one — so
+      // there is nothing to report, as distinct from reporting a failure.
+      ImageAssemblerFactory.CheckImagePacket(Params(Framing.GEOSCAN), 53385, Telemetry())
+        .Should().BeNull();
+
+
     // ---- dispatch ----------------------------------------------------------------------------------
 
     private static SignalParams Params(Framing framing) =>

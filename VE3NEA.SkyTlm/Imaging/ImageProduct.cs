@@ -30,6 +30,20 @@ namespace VE3NEA.SkyTlm.Imaging
 
 
   /// <summary>
+  /// Whether the image fragment inside one frame survived its own integrity check, and what that cost.
+  /// Only the SSDV family answers: its packets carry a CRC-32 and RS(255,223) of their own, riding above
+  /// framings — <see cref="Core.Framing.HADES"/>, <see cref="Core.Framing.AO40FEC"/> — that carry no frame
+  /// CRC at all, so <c>Frame.CrcValid</c> is null on exactly the frames whose payload does have one. The
+  /// raw-JPEG family has no per-fragment check, its framing's CRC being the only one, and never yields this.
+  /// </summary>
+  /// <param name="Ok">The fragment passed its checksum, possibly after FEC repair.</param>
+  /// <param name="CorrectedBytes">Bytes the FEC had to repair to get there — 0 when the fragment arrived
+  /// clean, and meaningless when <paramref name="Ok"/> is false. A packet that needed most of the RS
+  /// capacity is one the link nearly lost, which is worth showing even though it decoded.</param>
+  public readonly record struct ImagePacketCheck(bool Ok, int CorrectedBytes);
+
+
+  /// <summary>
   /// Accumulates frames into images. One implementation per fragment protocol — SSDV packets and raw
   /// JPEG byte ranges share nothing but this interface and the product it yields.
   /// <para>

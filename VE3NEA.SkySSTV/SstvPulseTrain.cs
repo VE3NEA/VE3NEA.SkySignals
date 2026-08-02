@@ -167,7 +167,13 @@ namespace VE3NEA.SkySSTV
     /// <summary>Fold an accepted pulse in: update the regressor. The pulse
     /// list stays time-sorted (back-fill inserts at the front). The regressor is fed the pulse time with
     /// the line's phase offset removed, so it keeps modelling one clean line clock across the steps.</summary>
-    public void AddPulse(in SstvPulse pulse)
+    public void AddPulse(in SstvPulse pulse) => AddPulse(pulse, fit: true);
+
+    /// <summary>As <see cref="AddPulse(in SstvPulse)"/>, but <paramref name="fit"/> false keeps the pulse out
+    /// of the regressor: it still counts as evidence (promotion, life clocks, its line slot is filled) while
+    /// contributing nothing to the line clock. For an onset that is real but systematically biased — see the
+    /// VIS train's line-0 merged stop-bit run.</summary>
+    protected void AddPulse(in SstvPulse pulse, bool fit)
     {
       if (pulses.Count > 0 && pulse.Time < pulses[0].Time) pulses.Insert(0, pulse);
       else pulses.Add(pulse);
@@ -179,7 +185,7 @@ namespace VE3NEA.SkySSTV
       }
       lastPulseNo = GetLineNo(pulse.Time);
       filledLines.Add(lastPulseNo);
-      Regr.ProcessPulse(pulse.Time - (int)Math.Round(Offset(lastPulseNo)));
+      if (fit) Regr.ProcessPulse(pulse.Time - (int)Math.Round(Offset(lastPulseNo)));
     }
 
     /// <summary>On promotion, back-fill earlier detections this train explains (Hopper <c>AddOldPulses</c>):
@@ -412,7 +418,16 @@ namespace VE3NEA.SkySSTV
       VisTime = headerEndSample;
       anchorWing = (int)Math.Round(AnchorWingMs / 1000.0 * fs);
       tripletWing = (int)Math.Round(TripletWingMs / 1000.0 * fs);
-      Regr = new SstvSyncRegressor(headerEndSample, nominalPeriod, fs);
+      // tight period prior, as on the comb-seeded train: a decoded VIS fixes the mode, so the line period is
+      // the tabulated one to real slants of tens of ppm. With the default 1 % prior the association gate
+      // grows as 3·0.01·period·Δlines and passes half a line period by ~17 lines out, so a single weak
+      // off-grid pulse at a long baseline moves the period by innovation/Δlines — the whole 1 % the prior
+      // allows. That is what sheared the 2026-08-01 00:08 SAKHACUBE-CHOLBON image: one 0.20-power pulse
+      // 27 ms off grid, 23 lines after the first, pulled the period to 7137.8 samples against a measured
+      // 7199.95 (−0.86 %), and the tilt is self-consistent — every later pulse was then assigned to the line
+      // the tilted grid predicted, so the fit never recovered. 4.7 px of shear per line, 1125 px over the
+      // image: diagonal stripes.
+      Regr = new SstvSyncRegressor(headerEndSample, nominalPeriod, fs, periodPpm: 200);
       LastStrongTime = headerEndSample;
       State = SstvTrainState.VisOnly;
     }
@@ -437,7 +452,13 @@ namespace VE3NEA.SkySSTV
       int gate = PulseCnt == 0 ? anchorWing : (int)Regr.GetMaxError(pulseNo);
       if (Math.Abs(pulse.Time - expected) > gate) return false;
 
-      AddPulse(pulse);
+      // the line-0 slot IS the merged stop-bit run (see the AnchorWingMs note): its detected onset is
+      // biased by up to ~17 ms, so it counts as evidence but must not become the train's phase
+      // measurement. That is what lets the tight period prior stand — on the 2026-07-30 10:42 capture the
+      // next pulse comes 51 lines later, and with the biased onset fitted as phase it, and every pulse
+      // after it, fell outside the tightened gate: the train never promoted and a plain one took the
+      // transmission 7.7 s (51 lines) late.
+      AddPulse(pulse, fit: pulseNo != 0);
       State = SstvTrainState.Candidate;
       return true;
     }

@@ -58,6 +58,21 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     }
 
     /// <summary>
+    /// The verdict <see cref="Push"/> would reach on one frame, without assembling anything: <c>null</c>
+    /// when the frame is not an SSDV packet of this source at all, otherwise whether it passed the
+    /// packet's own CRC-32 and how much RS repair that took. For a caller describing a frame rather than
+    /// accumulating it — see <see cref="ImagePacketCheck"/> for why the frame's own CRC cannot answer.
+    /// </summary>
+    public ImagePacketCheck? Check(Frame frame)
+    {
+      if (!source.TryExtract(frame, out var bytes)) return null;
+
+      return SsdvPacket.TryParse(bytes, source.Variant, out var packet)
+        ? new ImagePacketCheck(true, packet!.CorrectedBytes)
+        : new ImagePacketCheck(false, 0);
+    }
+
+    /// <summary>
     /// End of stream. The pass is over, so the image still being received will get nothing more —
     /// announce it, incomplete as it is.
     /// </summary>

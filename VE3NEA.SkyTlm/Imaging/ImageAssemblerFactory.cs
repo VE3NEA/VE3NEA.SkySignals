@@ -41,5 +41,18 @@ namespace VE3NEA.SkyTlm.Imaging
 
       _ => null
     };
+
+    /// <summary>
+    /// Whether the image fragment inside one frame passed its own integrity check — <c>null</c> when the
+    /// frame carries no fragment, or when its family has no per-fragment check to apply. Routed through
+    /// <see cref="Create"/> so the framing-to-source mapping stays in one table.
+    /// <para>
+    /// This is for describing a single frame — a detail pane, a log line — not for a decode loop: it
+    /// allocates a throwaway assembler and runs an RS decode per call. <see cref="IImageAssembler.Push"/>
+    /// already reaches the same verdict on the frames it is fed.
+    /// </para>
+    /// </summary>
+    public static ImagePacketCheck? CheckImagePacket(SignalParams p, int? noradId, Frame frame) =>
+      (Create(p, noradId) as SsdvImageAssembler)?.Check(frame);
   }
 }
