@@ -55,6 +55,13 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     /// <summary>Entropy-coded scan bytes, <see cref="SsdvVariant.PayloadLen"/> of them.</summary>
     public required byte[] Payload { get; init; }
 
+    /// <summary>
+    /// The whole canonical packet as validated — the bytes the header fields above were read out of,
+    /// <see cref="SsdvVariant.PacketLen"/> of them, with any RS repair already applied. Kept so that a
+    /// packet can be written to an archive and parsed back later; nothing in the decode path reads it.
+    /// </summary>
+    public required byte[] Bytes { get; init; }
+
     /// <summary>Bytes the RS decoder had to correct (0 = the packet arrived CRC-clean).</summary>
     public int CorrectedBytes { get; init; }
 
@@ -144,6 +151,7 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
         McuOffset = mcuOffset == 0xFF ? -1 : mcuOffset,
         McuIndex = mcuIndex == 0xFFFF ? -1 : mcuIndex,
         Payload = bytes[v.HeaderLen..v.CrcOffset],
+        Bytes = bytes,
         CorrectedBytes = corrected
       };
 

@@ -72,6 +72,19 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     public bool IsComplete => HasEoi && packets.Count == PacketsExpected;
 
     /// <summary>
+    /// The packets held, in the form an archive stores and hands back, ascending by packet ID. This is
+    /// the image's own account of what it was built from — a packet that was offered and refused is not
+    /// in it, so the count always agrees with <see cref="PacketsReceived"/>.
+    /// </summary>
+    public ImageFragment[] ToFragments()
+    {
+      var fragments = new ImageFragment[packets.Count];
+      int i = 0;
+      foreach (var p in packets.Values) fragments[i++] = new ImageFragment(p.PacketId, p.Bytes, p.CorrectedBytes);
+      return fragments;
+    }
+
+    /// <summary>
     /// Add a packet. Returns false when a packet with that ID is already held (a duplicate from a
     /// re-transmission or an overlapping decode window), in which case the image is unchanged.
     /// </summary>

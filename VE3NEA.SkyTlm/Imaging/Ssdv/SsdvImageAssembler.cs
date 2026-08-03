@@ -98,6 +98,12 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
       // SSDV has no such boundary: a lost packet costs its own MCUs and everything after it still lands
       // in the right place. See the remarks on ImageProduct.FirstGapOffset.
       FirstGapOffset: -1,
-      Complete: image.IsComplete);
+      Complete: image.IsComplete,
+      Fragments: image.ToFragments(),
+      // A packet is worth archiving only if it can be verified on its own, and the CRC is what does that.
+      // Without one — JY1SAT, DSLWP — a packet damaged below the SSDV layer parses normally and renders
+      // as a corrupt band, so a stored copy could not be told from a good one when rebuilding an image
+      // later, and neither could a copy of a different picture that reused the image ID.
+      FragmentFormat: source.Variant.HasCrc ? source.Variant.Name : null);
   }
 }

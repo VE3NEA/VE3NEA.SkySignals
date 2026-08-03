@@ -168,7 +168,12 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         FragmentsReceived: image.Fragments,
         FragmentsExpected: image.FragmentsExpected,
         FirstGapOffset: image.Buffer.FirstGapOffset,
-        Complete: image.IsComplete);
+        Complete: image.IsComplete,
+        // A raw-JPEG fragment is a byte range with no identity, no length of its own and no check of its
+        // own — the framing's CRC below is the only one, and it is spent by the time the range is cut out.
+        // There is nothing here that could be stored and later be known to belong to this picture.
+        Fragments: [],
+        FragmentFormat: null);
     }
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;

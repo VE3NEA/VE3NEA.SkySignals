@@ -28,11 +28,18 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     /// <summary>SSDV sync byte; more sync bytes may precede it on air.</summary>
     public const byte SyncByte = 0x55;
 
+    /// <summary>
+    /// What this variant is called. It is written into archives beside the packets stored under it and
+    /// read back through <see cref="ByName"/>, so it is a persisted identifier: rename one and the files
+    /// already on disk stop being readable.
+    /// </summary>
+    public string Name { get; init; } = "";
+
     /// <summary>Standard packet, type 0x66: sync + type + callsign + 9 header bytes, CRC and RS. 205 B payload.</summary>
-    public static readonly SsdvVariant Standard256 = new(256, 0x66, true, true, true, true);
+    public static readonly SsdvVariant Standard256 = new(256, 0x66, true, true, true, true) { Name = "Standard256" };
 
     /// <summary>Standard packet without FEC, type 0x67 — the 32 RS bytes become payload. 237 B payload.</summary>
-    public static readonly SsdvVariant NoFec256 = new(256, 0x67, true, true, true, false);
+    public static readonly SsdvVariant NoFec256 = new(256, 0x67, true, true, true, false) { Name = "NoFec256" };
 
     /// <summary>
     /// HADES-SA, which <b>is</b> <see cref="Standard256"/> once the five constant bytes AMSAT-EA strips
@@ -45,7 +52,7 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
 
     /// <summary>JY1SAT / JO-97, type 0x68: no callsign, no CRC and no RS (the AO-40 FEC layer below
     /// provides both). 189 B payload.</summary>
-    public static readonly SsdvVariant Jy1Sat200 = new(200, 0x68, true, false, false, false);
+    public static readonly SsdvVariant Jy1Sat200 = new(200, 0x68, true, false, false, false) { Name = "Jy1Sat200" };
 
     /// <summary>
     /// SilverSat, type 0x67 shortened to 195 bytes to fit its IL2P payload block, which supplies the FEC
@@ -53,10 +60,24 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     /// packet we have of it — see <c>ssdv-research.md</c> §1.3 — and because it is the proof that the
     /// CRC follows the shortened length rather than sitting at a fixed offset.
     /// </summary>
-    public static readonly SsdvVariant SilverSat195 = new(195, 0x67, true, true, true, false);
+    public static readonly SsdvVariant SilverSat195 = new(195, 0x67, true, true, true, false) { Name = "SilverSat195" };
 
     /// <summary>DSLWP / LO-94: no sync, no type byte, no callsign, no CRC, no RS. 209 B payload.</summary>
-    public static readonly SsdvVariant Dslwp218 = new(218, 0x00, false, false, false, false);
+    public static readonly SsdvVariant Dslwp218 = new(218, 0x00, false, false, false, false) { Name = "Dslwp218" };
+
+    /// <summary>
+    /// The variant of that name, or null when it is not one this build knows. Null is the normal answer
+    /// for an archive written by a later version, and is a reason to skip that file rather than to fail.
+    /// </summary>
+    public static SsdvVariant? ByName(string? name) => name switch
+    {
+      "Standard256" => Standard256,
+      "NoFec256" => NoFec256,
+      "Jy1Sat200" => Jy1Sat200,
+      "SilverSat195" => SilverSat195,
+      "Dslwp218" => Dslwp218,
+      _ => null
+    };
 
     /// <summary>Header length in bytes: the 9 fields every variant carries (image ID, packet ID,
     /// width, height, flags, MCU offset, MCU index) plus the optional sync/type pair and callsign.</summary>
