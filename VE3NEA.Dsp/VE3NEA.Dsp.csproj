@@ -46,6 +46,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>fec.dll</Link>
     </None>
+    <!-- codec2 (David Rowe) x64, P/Invoked by NativeCodec2 for the HADES-SA voice downlink. -->
+    <None Include="Vendor\codec2\codec2.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>codec2.dll</Link>
+    </None>
   </ItemGroup>
 
 </Project>

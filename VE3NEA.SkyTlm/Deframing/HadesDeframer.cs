@@ -48,9 +48,11 @@ namespace VE3NEA.SkyTlm.Deframing
     //   10 SSDV   → 251 B (type/address … 205-byte image data … 32-bit CRC … 256-bit RS), RS passed through
     //   11 CODEC2 → 37 B  (type/address, frame number, 35-byte = 280-bit raw codec2 payload), one per sub-frame
     //   13 PN9    → 249 B (type/address … 248-byte PN9 link-quality pattern)
-    // none carry the HADES CRC-16, so unlike telemetry they are crop+descramble only (no CRC strip).
-    // SSDV/CODEC2/PN9 are otherwise scrambled like telemetry (the GENESIS multiplicative
-    // scrambler, first byte = type/address exempt). Decoded bytes only — no JPEG/voice/PN9 conversion.
+    // none carries the HADES CRC-16, and none is GENESIS-scrambled either: unlike telemetry these are
+    // cropped and nothing else. Proved twice over — SSDV passes its own CRC-32 on the undescrambled
+    // bytes (470 of 470 SatNOGS frames), and the PN9 payload satisfies its generator's recurrence in
+    // long runs as received, both of which descrambling destroys. Decoded bytes only: the CODEC2 XOR
+    // mask and 700C decode live in VE3NEA.SkyTlm.Audio, and SSDV/PN9 likewise convert elsewhere.
     private static readonly IReadOnlyDictionary<int, int> HadesSaSpecialLengths = new Dictionary<int, int>
     {
       [10] = 251, [11] = 37, [13] = 249,
@@ -199,8 +201,9 @@ namespace VE3NEA.SkyTlm.Deframing
     /// Decode one SSDV(10) / CODEC2(11) / PN9(13) packet: just crop to the fixed per-type length 
     /// (type/address byte first). Unlike telemetry,
     /// these types are <b>not</b> GENESIS-descrambled and carry no HADES CRC-16. SSDV is standard
-    /// SSDV with its own inner CRC-32 + Reed–Solomon (passed through uncorrected so reproducing the KISS bytes 
-    /// needs no FEC), CODEC2 is raw 280-bit codec2 frames, PN9 is the link-
+    /// SSDV with its own inner CRC-32 + Reed–Solomon (passed through uncorrected so reproducing the KISS bytes
+    /// needs no FEC), CODEC2 is 280 bits of Codec2 700C behind a fixed XOR mask
+    /// (<see cref="Audio.Codec2.Codec2Variant.HadesSa700C"/>), PN9 is the link-
     /// quality pseudorandom pattern. <see cref="Frame.CrcValid"/> is left null (no HADES CRC to check); the
     /// recovered bytes are the deliverable — no JPEG/voice/PN9 conversion. Spurious 0xBF35 hits are rejected by
     /// requiring the exact type/address byte (source address 3) plus a full-length capture; returns null when
