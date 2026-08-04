@@ -292,7 +292,7 @@ namespace VE3NEA.SkySSTV
 
       FillMissingChroma(cr, hasCr, w, h);
       FillMissingChroma(cb, hasCb, w, h);
-      if (o.WienerEnabled) SstvWienerFilter.Apply(y, cr, cb, w, h);
+      if (o.WienerEnabled) SstvWienerFilter.Apply(y, cr, cb, w, h, null, o);
 
       var img = new RgbImage(w, h);
       for (int row = 0; row < h; row++)
@@ -323,7 +323,7 @@ namespace VE3NEA.SkySSTV
         RenderPdLine(bw, spec, o, lineOnset[line], corr, line, weight, y, cr, cb);
       }
 
-      if (o.WienerEnabled) SstvWienerFilter.Apply(y, cr, cb, w, h);
+      if (o.WienerEnabled) SstvWienerFilter.Apply(y, cr, cb, w, h, null, o);
 
       var img = new RgbImage(w, h);
       for (int row = 0; row < h; row++)

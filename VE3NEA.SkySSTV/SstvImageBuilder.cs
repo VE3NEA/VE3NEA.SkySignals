@@ -106,7 +106,7 @@ namespace VE3NEA.SkySSTV
       if (o.WienerEnabled)
       {
         gain = new double[rows * w];
-        SstvWienerFilter.Apply(sy, sCr, sCb, w, rows, gain);
+        SstvWienerFilter.Apply(sy, sCr, sCb, w, rows, gain, o);
       }
 
       for (int row = 0; row < rows; row++)

@@ -32,10 +32,20 @@ namespace VE3NEA.SkySSTV
     /// confidence that goes into the image's alpha channel — g ≈ 1 where real detail passed, g ≈ 0
     /// where the pixel collapsed to its local mean). <paramref name="yGain"/> must hold w·h values.</summary>
     public static void Apply(double[] y, double[] cr, double[] cb, int w, int h, double[]? yGain)
+      => Apply(y, cr, cb, w, h, yGain, null);
+
+    /// <summary>Filter variant taking the window/gain-floor tunables from the decode options; a null
+    /// <paramref name="o"/> uses the P6(d)-locked geometry (9×5, no gain floor, no separate aperture).</summary>
+    public static void Apply(double[] y, double[] cr, double[] cb, int w, int h, double[]? yGain,
+      SstvDecodeOptions? o)
     {
-      Lee(y, w, h, RowNoiseVar(y, w, h, 1), 1.0, yGain);
-      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), ChromaK, null);
-      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), ChromaK, null);
+      int ww = o?.WienerWindowW ?? WindowW, wh = o?.WienerWindowH ?? WindowH;
+      int dw = (o?.WienerDetectW ?? 0) > 0 ? o!.WienerDetectW : ww;
+      int dh = (o?.WienerDetectH ?? 0) > 0 ? o!.WienerDetectH : wh;
+      double floor = o?.WienerGainFloor ?? 0.0;
+      Lee(y, w, h, RowNoiseVar(y, w, h, 1), 1.0, yGain, ww, wh, dw, dh, floor);
+      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), ChromaK, null, ww, wh, dw, dh, floor);
+      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), ChromaK, null, ww, wh, dw, dh, floor);
     }
 
     /// <summary>Per-row noise variance: σ = median_x|p[y] − p[y−step]| / 0.6745 / √2 (the Gaussian
@@ -68,7 +78,8 @@ namespace VE3NEA.SkySSTV
       return v;
     }
 
-    private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain = null)
+    private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain,
+      int winW, int winH, int detW, int detH, double gainFloor)
     {
       // 2D prefix sums of x and x² give O(1) window mean/variance
       var s1 = new double[(w + 1) * (h + 1)];
@@ -82,19 +93,27 @@ namespace VE3NEA.SkySSTV
           s2[i] = v * v + s2[i - 1] + s2[i - w - 1] - s2[i - w - 2];
         }
 
-      int rx = WindowW / 2, ry = WindowH / 2;
+      int rx = winW / 2, ry = winH / 2;                      // smoothing aperture: supplies the local mean
+      int dx = detW / 2, dy = detH / 2;                      // detection aperture: decides the gain
       var outp = new double[w * h];
       for (int y = 0; y < h; y++)
       {
         double vn = k * rowVar[y];
         int y0 = Math.Max(0, y - ry), y1 = Math.Min(h - 1, y + ry);
+        int dy0 = Math.Max(0, y - dy), dy1 = Math.Min(h - 1, y + dy);
         for (int x = 0; x < w; x++)
         {
           int x0 = Math.Max(0, x - rx), x1 = Math.Min(w - 1, x + rx);
           double n = (x1 - x0 + 1) * (y1 - y0 + 1);
           double mu = Box(s1, w, x0, y0, x1, y1) / n;
-          double varLoc = Math.Max(0, Box(s2, w, x0, y0, x1, y1) / n - mu * mu);
+
+          int dx0 = Math.Max(0, x - dx), dx1 = Math.Min(w - 1, x + dx);
+          double dn = (dx1 - dx0 + 1) * (dy1 - dy0 + 1);
+          double dmu = Box(s1, w, dx0, dy0, dx1, dy1) / dn;
+          double varLoc = Math.Max(0, Box(s2, w, dx0, dy0, dx1, dy1) / dn - dmu * dmu);
+
           double g = varLoc > vn ? (varLoc - vn) / varLoc : 0.0;
+          if (g < gainFloor) g = gainFloor;
           if (gain != null) gain[y * w + x] = g;
           outp[y * w + x] = mu + g * (p[y * w + x] - mu);
         }
