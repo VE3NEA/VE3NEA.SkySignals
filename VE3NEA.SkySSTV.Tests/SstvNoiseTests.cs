@@ -158,10 +158,10 @@ namespace VE3NEA.SkySSTV.Tests
           var iq = SstvEncoder.Encode(src, SstvMode.Robot36, new SstvEncoderOptions
           { IncludeVis = false, DeviationHz = 3300.0, NoiseStdDev = sigma, NoiseSeed = 7 });
           var o = new SstvDecodeOptions
-          { Acquire = false, Track = false, ChannelBwHz = 4000.0, WienerEnabled = false };
+          { Acquire = false, Track = false, ChannelBwHz = 4000.0, Denoise = new() { Method = SstvDenoiseMethod.None } };
           double[] disc = SstvDecoder.Discriminator(iq, o);
           var dec = SstvDecoder.Decode(disc, SstvMode.Robot36, o);
-          var filtered = SstvDecoder.Decode(disc, SstvMode.Robot36, o with { WienerEnabled = true });
+          var filtered = SstvDecoder.Decode(disc, SstvMode.Robot36, o with { Denoise = new() { Method = SstvDenoiseMethod.Wiener } });
 
           double rawPsnr = Psnr(src, dec), fPsnr = Psnr(src, filtered);
           output.WriteLine($"{name} sigma={sigma:0.0}: raw={rawPsnr:0.0} dB wiener={fPsnr:0.0} dB " +

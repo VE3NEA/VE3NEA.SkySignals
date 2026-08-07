@@ -246,64 +246,20 @@ namespace VE3NEA.SkySSTV
     /// the inter-pixel frequency-step transitions.</summary>
     public double PixelWindowFraction { get; init; } = 0.5;
 
-    /// <summary>Enable the Wiener (Lee) post-filter on the reconstructed Y/Cr/Cb planes
-    /// (<see cref="SstvWienerFilter"/>, plan §6.2). Default ON per the P6(d) visual judgment
-    /// (2026-07-04): the w9×5 / chroma-k4 / no-shrink variant gave the best denoising on every
-    /// decodable real burst while preserving fine structure (text). Disable to inspect the raw
-    /// reconstruction — on below-FM-threshold bursts (the umka0418 class) the raw image shows
-    /// marginally more detail through the noise.</summary>
-    public bool WienerEnabled { get; init; } = true;
-
-    /// <summary>Width (pixels) of the Wiener post-filter's local window. The P6(d)-locked value is 9.
+    /// <summary>The post-filter applied to the reconstructed Y/Cr/Cb planes before the RGB
+    /// conversion (plan §6.2, denoise plan §4.1). Defaults to the Wiener filter at its P6(d)-locked
+    /// geometry, which is the behavior every decode had before the denoise work: the w9×5 /
+    /// chroma-k4 variant gave the best denoising on every decodable real burst while preserving fine
+    /// structure. Set <see cref="SstvDenoiseOptions.Method"/> to
+    /// <see cref="SstvDenoiseMethod.None"/> to inspect the raw reconstruction — on
+    /// below-FM-threshold bursts (the umka0418 class) the raw image shows marginally more detail
+    /// through the noise.
     ///
-    /// <para>Note the window is BOTH the smoothing kernel and the detection aperture, and the second role
-    /// is what makes the width critical: the gain test asks whether local variance rises above the noise,
-    /// and a thin stroke is diluted across the whole window, so its variance contribution falls as its
-    /// share of the window area. Over 9×5 = 45 samples a one-pixel stroke needs ≈6.8 σ to reach g &gt; 0
-    /// while a broad edge passes at 2.0 σ — a selective bias against fine detail, present at any SNR.
-    /// Set <see cref="WienerDetectW"/>/<see cref="WienerDetectH"/> to decouple the two roles.</para></summary>
-    public int WienerWindowW { get; init; } = 9;
+    /// <para>The SAME record type is what the denoise dialog passes to
+    /// <see cref="SstvImagePlanes.Denoise"/>, so the Wiener's tunables exist in exactly one place
+    /// (denoise plan D11). Non-local means is never selected here: it costs 0.5–1.5 s and this runs
+    /// on the thread pushing IQ, and its settings are image-dependent (D14).</para></summary>
+    public SstvDenoiseOptions Denoise { get; init; } = new();
 
-    /// <summary>Height (lines) of the Wiener post-filter's local window; P6(d)-locked value 5. This is the
-    /// only stage in the chain that smooths ACROSS scan lines — the Stage-3 brightness low-pass runs along
-    /// each line, and lines are independent time slices — so all vertical correlation in the output comes
-    /// from here.</summary>
-    public int WienerWindowH { get; init; } = 5;
-
-    /// <summary>Lower bound on the Wiener gain, i.e. the fraction of the original deviation from the local
-    /// mean that survives even where the filter judges the pixel to be pure noise. 0 is the P6(d)-locked
-    /// value and lets noise-dominated areas collapse completely to their local mean.
-    ///
-    /// <para>Default 0.25 since 2026-08-04, reported as "MMSSTV produces a sharper image with more detail
-    /// on the same signal". On noise-dominated bursts the measured luma gain is 0 over 66–75 % of pixels
-    /// (median exactly 0), so the output there IS the local mean — a
-    /// <see cref="WienerWindowW"/>×<see cref="WienerWindowH"/> box blur, and the reported image's noise
-    /// autocorrelation matched that box to three decimals. A floor keeps some texture rather than a flat
-    /// wash; it costs noise but restores the per-pixel sharpness cue.</para>
-    ///
-    /// <para>Locked at 0.25 by <c>SstvWienerWindowProbe.WindowSweep</c>, which swept this against the
-    /// window size and a decoupled detection aperture — the other two do NOT work (see that probe: window
-    /// size is nearly inert because it shrinks the detection aperture too, and decoupling the aperture
-    /// hollows out thick strokes). The floor is self-targeting, which is why it can be a global default:
-    /// on the weak Monitor-3 146 s burst it takes the horizontal noise lag-1 from +0.954 to +0.915 and the
-    /// share of power above 0.2 cycles/pixel from 2.7 to 5.5 %, while on the strong 286 s burst it moves
-    /// lag-1 by under 0.005 — it only bites where the gain had already collapsed. 0.40 gets closer to
-    /// MMSSTV's texture but visibly restores speckle; 0.25 is the conservative end of that pair.</para>
-    ///
-    /// <para>Note this cannot close the gap alone: with the Wiener fully off the decoded noise still reads
-    /// lag-1 +0.70..+0.83 against MMSSTV's +0.489, the Stage-3 <see cref="BrightnessBwHz"/> low-pass being
-    /// the floor under all of it.</para></summary>
-    public double WienerGainFloor { get; init; } = 0.25;
-
-    /// <summary>Width (pixels) of a SEPARATE, smaller aperture used to measure the local variance that
-    /// decides the gain, while <see cref="WienerWindowW"/> still supplies the local mean that noise-only
-    /// pixels collapse to. 0 (the default) uses the smoothing window for both, i.e. the P6(d) behavior.
-    /// Decoupling the two lets the detector keep a thin stroke's variance concentrated (so it passes) while
-    /// the mean stays smooth enough to be a useful noise estimate.</summary>
-    public int WienerDetectW { get; init; } = 0;
-
-    /// <summary>Height (lines) of the separate detection aperture; see <see cref="WienerDetectW"/>.
-    /// 0 uses the smoothing window.</summary>
-    public int WienerDetectH { get; init; } = 0;
   }
 }

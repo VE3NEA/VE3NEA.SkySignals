@@ -103,10 +103,10 @@ namespace VE3NEA.SkySSTV
       SstvDecoder.FillMissingChroma(sCr, sHasCr, w, rows);
       SstvDecoder.FillMissingChroma(sCb, sHasCb, w, rows);
       double[]? gain = null;
-      if (o.WienerEnabled)
+      if (o.Denoise.Method == SstvDenoiseMethod.Wiener)
       {
         gain = new double[rows * w];
-        SstvWienerFilter.Apply(sy, sCr, sCb, w, rows, gain, o);
+        SstvWienerFilter.Apply(sy, sCr, sCb, w, rows, gain, o.Denoise);
       }
 
       for (int row = 0; row < rows; row++)

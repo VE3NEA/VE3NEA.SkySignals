@@ -39,17 +39,17 @@ namespace VE3NEA.SkySSTV.Tests
     {
       // every variant pins the floor explicitly so the grid stays a true before/after whatever the shipping
       // default is: 01_base9x5 is the pre-2026-08-04 build, 05_floor25 is the one that replaced it
-      new("00_off",        b => b with { WienerEnabled = false }),
-      new("01_base9x5",    b => b with { WienerGainFloor = 0.0 }),
-      new("02_w7x3",       b => b with { WienerGainFloor = 0.0, WienerWindowW = 7, WienerWindowH = 3 }),
-      new("03_w5x3",       b => b with { WienerGainFloor = 0.0, WienerWindowW = 5, WienerWindowH = 3 }),
-      new("04_w5x1",       b => b with { WienerGainFloor = 0.0, WienerWindowW = 5, WienerWindowH = 1 }),
-      new("05_floor25",    b => b with { WienerGainFloor = 0.25 }),
-      new("06_floor40",    b => b with { WienerGainFloor = 0.40 }),
-      new("07_det3x3",     b => b with { WienerGainFloor = 0.0, WienerDetectW = 3, WienerDetectH = 3 }),
-      new("08_w5x3_fl25",  b => b with { WienerGainFloor = 0.25, WienerWindowW = 5, WienerWindowH = 3 }),
-      new("09_w5x3_det3",  b => b with { WienerGainFloor = 0.0, WienerWindowW = 5, WienerWindowH = 3,
-                                         WienerDetectW = 3, WienerDetectH = 3 })
+      new("00_off",        b => b with { Denoise = new() { Method = SstvDenoiseMethod.None } }),
+      new("01_base9x5",    b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.0 } }),
+      new("02_w7x3",       b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.0, WienerWindowW = 7, WienerWindowH = 3 } }),
+      new("03_w5x3",       b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.0, WienerWindowW = 5, WienerWindowH = 3 } }),
+      new("04_w5x1",       b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.0, WienerWindowW = 5, WienerWindowH = 1 } }),
+      new("05_floor25",    b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.25 } }),
+      new("06_floor40",    b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.40 } }),
+      new("07_det3x3",     b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.0, WienerDetectW = 3, WienerDetectH = 3 } }),
+      new("08_w5x3_fl25",  b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.25, WienerWindowW = 5, WienerWindowH = 3 } }),
+      new("09_w5x3_det3",  b => b with { Denoise = b.Denoise with { WienerGainFloor = 0.0, WienerWindowW = 5, WienerWindowH = 3,
+                                         WienerDetectW = 3, WienerDetectH = 3 } })
     };
 
     private readonly ITestOutputHelper output;
@@ -175,11 +175,11 @@ namespace VE3NEA.SkySSTV.Tests
 
     private static (double mean, double zero) GainStats(Complex32[] seg, SstvMode mode, SstvDecodeOptions o)
     {
-      if (!o.WienerEnabled) return (1.0, 0.0);
+      if (o.Denoise.Method != SstvDenoiseMethod.Wiener) return (1.0, 0.0);
       // the batch path does not surface the gain plane; recompute it over the same geometry. The planes
       // come back through the exact RGB inverse (the P6(d) prototype's route), so heavily clipped noise
       // reads slightly low here — an indicator, not the shipping gain.
-      var probe = SstvDecoder.Decode(seg, mode, o with { WienerEnabled = false });
+      var probe = SstvDecoder.Decode(seg, mode, o with { Denoise = new() { Method = SstvDenoiseMethod.None } });
       int w = probe.Width, h = probe.Height;
       var y = new double[w * h]; var cr = new double[w * h]; var cb = new double[w * h];
       for (int i = 0; i < w * h; i++)
@@ -188,7 +188,7 @@ namespace VE3NEA.SkySSTV.Tests
         y[i] = yy; cr[i] = rr; cb[i] = bb;
       }
       var gain = new double[w * h];
-      SstvWienerFilter.Apply(y, cr, cb, w, h, gain, o);
+      SstvWienerFilter.Apply(y, cr, cb, w, h, gain, o.Denoise);
       return (gain.Average(), 100.0 * gain.Count(v => v < 0.02) / gain.Length);
     }
 

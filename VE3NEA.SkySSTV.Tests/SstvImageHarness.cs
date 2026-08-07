@@ -934,7 +934,7 @@ namespace VE3NEA.SkySSTV.Tests
 
         var spec = SstvModes.Get(best.Format);
         var o = new SstvDecodeOptions
-        { SampleRate = sr, ChannelBwHz = 4000.0, BlankerThreshold = 0.5, WienerEnabled = false,
+        { SampleRate = sr, ChannelBwHz = 4000.0, BlankerThreshold = 0.5, Denoise = new() { Method = SstvDenoiseMethod.None },
           Acquire = false, StartSample = firstSync };
         double[] disc = SstvDecoder.Discriminator(seg, o);
         var raw = SstvDecoder.Decode(disc, best.Format, o);

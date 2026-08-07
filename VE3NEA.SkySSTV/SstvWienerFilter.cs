@@ -10,48 +10,51 @@ namespace VE3NEA.SkySSTV
   /// alternating chroma is still separate.
   ///
   /// Defaults locked by the P6(d) visual judgment (2026-07-04, <c>Real_P6dWienerProbe</c>): window
-  /// 9×5, chroma noise over-weight k = 4, no shrink-to-neutral, image-domain noise map — the row-wise
-  /// vertical first-difference median estimator (scan lines are independent time slices, so inter-line
+  /// 9×5, chroma noise over-weight k = 4, image-domain noise map — the row-wise vertical
+  /// first-difference median estimator (scan lines are independent time slices, so inter-line
   /// differences carry the full noise power even where the post-LPF FM noise is horizontally
   /// correlated; the plan's Immerkær residual read several× low on exactly that noise and was
-  /// dropped). Every operation is row-local with a ≤2-line lag (window rows + the 5-row median), so
-  /// the P7.5 push-based decoder can run it at line emission.
+  /// dropped).
+  ///
+  /// <para>Its two halves are separable and are used separately: the <b>detector</b>
+  /// (<see cref="GainMap"/>) answers "is there signal above the noise here", and the <b>smoother</b>
+  /// applies the shrinkage. The non-local means filter consumes the detector while discarding the
+  /// smoother, because the smoother is what over-flattens noise areas into a box blur — the defect
+  /// that motivated the denoise plan (§5.4).</para>
   /// </summary>
   internal static class SstvWienerFilter
   {
-    private const int WindowW = 9;                           // local window, pixels × lines
-    private const int WindowH = 5;
-    private const double ChromaK = 4.0;                      // chroma noise over-weight (plan §6.2)
-
     /// <summary>Filter the three planes in place. Chroma noise is estimated over a 2-row step because
     /// Robot36/PD chroma rows are nearest-neighbor duplicates (vertical upsampling).</summary>
-    public static void Apply(double[] y, double[] cr, double[] cb, int w, int h)
-      => Apply(y, cr, cb, w, h, null);
-
-    /// <summary>Filter variant capturing the luma plane's per-pixel Wiener gain (plan §6.2: the
-    /// confidence that goes into the image's alpha channel — g ≈ 1 where real detail passed, g ≈ 0
-    /// where the pixel collapsed to its local mean). <paramref name="yGain"/> must hold w·h values.</summary>
-    public static void Apply(double[] y, double[] cr, double[] cb, int w, int h, double[]? yGain)
-      => Apply(y, cr, cb, w, h, yGain, null);
-
-    /// <summary>Filter variant taking the window/gain-floor tunables from the decode options; a null
-    /// <paramref name="o"/> uses the P6(d)-locked geometry (9×5, no gain floor, no separate aperture).</summary>
+    /// <param name="yGain">Optional capture of the luma plane's per-pixel gain, UNFLOORED — the
+    /// confidence quantity (g ≈ 1 where real detail passed, 0 where the pixel collapsed to its local
+    /// mean), kept independent of <see cref="SstvDenoiseOptions.WienerGainFloor"/> so an aesthetic
+    /// setting cannot masquerade as confidence.</param>
     public static void Apply(double[] y, double[] cr, double[] cb, int w, int h, double[]? yGain,
-      SstvDecodeOptions? o)
+      SstvDenoiseOptions o)
     {
-      int ww = o?.WienerWindowW ?? WindowW, wh = o?.WienerWindowH ?? WindowH;
-      int dw = (o?.WienerDetectW ?? 0) > 0 ? o!.WienerDetectW : ww;
-      int dh = (o?.WienerDetectH ?? 0) > 0 ? o!.WienerDetectH : wh;
-      double floor = o?.WienerGainFloor ?? 0.0;
+      int ww = o.WienerWindowW, wh = o.WienerWindowH;
+      int dw = o.WienerDetectW > 0 ? o.WienerDetectW : ww;
+      int dh = o.WienerDetectH > 0 ? o.WienerDetectH : wh;
+      double k = o.WienerChromaK, floor = o.WienerGainFloor;
       Lee(y, w, h, RowNoiseVar(y, w, h, 1), 1.0, yGain, ww, wh, dw, dh, floor);
-      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), ChromaK, null, ww, wh, dw, dh, floor);
-      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), ChromaK, null, ww, wh, dw, dh, floor);
+      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor);
+      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor);
     }
 
     /// <summary>Per-row noise variance: σ = median_x|p[y] − p[y−step]| / 0.6745 / √2 (the Gaussian
     /// median-absolute-deviation of a two-row difference), then median-of-5 smoothed across rows so
-    /// content-heavy rows (horizontal edges) do not spike the estimate.</summary>
-    private static double[] RowNoiseVar(double[] p, int w, int h, int step)
+    /// content-heavy rows (horizontal edges) do not spike the estimate.
+    ///
+    /// <para>The vertical difference is the whole point: scan lines are independent time slices, so
+    /// their difference carries the full noise power even where the post-Stage-3 FM noise is
+    /// horizontally correlated by the ±600 Hz brightness low-pass. Any operator that differences
+    /// ALONG the row sees correlated samples and underreads — which is why the reference NLM's own
+    /// estimator is not used for the absolute noise map (denoise plan §5.3).</para>
+    ///
+    /// <para><paramref name="rowValid"/>, when supplied, excludes unrendered rows: they are black,
+    /// so they would report σ 0 and drag the estimate down (denoise plan §7).</para></summary>
+    public static double[] RowNoiseVar(double[] p, int w, int h, int step, bool[]? rowValid = null)
     {
       var sigma = new double[h];
       var absd = new double[w];
@@ -59,6 +62,7 @@ namespace VE3NEA.SkySSTV
       {
         int y2 = y >= step ? y - step : y + step;
         if (y2 >= h) continue;
+        if (rowValid != null && (!rowValid[y] || !rowValid[y2])) continue;
         for (int x = 0; x < w; x++) absd[x] = Math.Abs(p[y * w + x] - p[y2 * w + x]);
         Array.Sort(absd);
         sigma[y] = absd[w / 2] / 0.6745 / Math.Sqrt(2.0);
@@ -70,7 +74,8 @@ namespace VE3NEA.SkySSTV
       {
         int cnt = 0;
         for (int d = -2; d <= 2; d++)
-          if (y + d >= 0 && y + d < h) win[cnt++] = sigma[y + d];
+          if (y + d >= 0 && y + d < h && sigma[y + d] > 0) win[cnt++] = sigma[y + d];
+        if (cnt == 0) { v[y] = 0; continue; }
         Array.Sort(win, 0, cnt);
         double med = win[cnt / 2];
         v[y] = med * med;
@@ -78,10 +83,63 @@ namespace VE3NEA.SkySSTV
       return v;
     }
 
+    /// <summary>The detector alone: the per-pixel gain, UNFLOORED, over the detection aperture.
+    /// Its known bias is against thin strokes — over a 9×5 = 45-sample aperture a one-pixel stroke
+    /// needs ≈6.8 σ to reach g &gt; 0 while a broad edge passes at 2.0 σ. That bias is harmful when
+    /// it drives a smoother (the stroke is erased) and far milder when it only shapes a noise map
+    /// (the stroke is merely a weaker donor), which is what makes it reusable by the NLM.</summary>
+    public static double[] GainMap(double[] p, int w, int h, double[] rowVar, double k,
+      int detW, int detH)
+    {
+      var (s1, s2) = PrefixSums(p, w, h);
+      var gain = new double[w * h];
+      int dx = detW / 2, dy = detH / 2;
+
+      for (int y = 0; y < h; y++)
+      {
+        double vn = k * rowVar[y];
+        int dy0 = Math.Max(0, y - dy), dy1 = Math.Min(h - 1, y + dy);
+        for (int x = 0; x < w; x++)
+        {
+          int dx0 = Math.Max(0, x - dx), dx1 = Math.Min(w - 1, x + dx);
+          double dn = (dx1 - dx0 + 1) * (dy1 - dy0 + 1);
+          double dmu = Box(s1, w, dx0, dy0, dx1, dy1) / dn;
+          double varLoc = Math.Max(0, Box(s2, w, dx0, dy0, dx1, dy1) / dn - dmu * dmu);
+          gain[y * w + x] = varLoc > vn ? (varLoc - vn) / varLoc : 0.0;
+        }
+      }
+      return gain;
+    }
+
     private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain,
       int winW, int winH, int detW, int detH, double gainFloor)
     {
-      // 2D prefix sums of x and x² give O(1) window mean/variance
+      var (s1, _) = PrefixSums(p, w, h);
+      double[] g = GainMap(p, w, h, rowVar, k, detW, detH);
+      if (gain != null) Array.Copy(g, gain, Math.Min(g.Length, gain.Length));
+
+      int rx = winW / 2, ry = winH / 2;                      // smoothing aperture: supplies the local mean
+      var outp = new double[w * h];
+      for (int y = 0; y < h; y++)
+      {
+        int y0 = Math.Max(0, y - ry), y1 = Math.Min(h - 1, y + ry);
+        for (int x = 0; x < w; x++)
+        {
+          int x0 = Math.Max(0, x - rx), x1 = Math.Min(w - 1, x + rx);
+          double n = (x1 - x0 + 1) * (y1 - y0 + 1);
+          double mu = Box(s1, w, x0, y0, x1, y1) / n;
+
+          int i = y * w + x;
+          double gi = g[i] < gainFloor ? gainFloor : g[i];
+          outp[i] = mu + gi * (p[i] - mu);
+        }
+      }
+      Array.Copy(outp, p, p.Length);
+    }
+
+    /// <summary>2D prefix sums of x and x², giving O(1) window mean and variance.</summary>
+    private static (double[] s1, double[] s2) PrefixSums(double[] p, int w, int h)
+    {
       var s1 = new double[(w + 1) * (h + 1)];
       var s2 = new double[(w + 1) * (h + 1)];
       for (int y = 0; y < h; y++)
@@ -92,33 +150,7 @@ namespace VE3NEA.SkySSTV
           s1[i] = v + s1[i - 1] + s1[i - w - 1] - s1[i - w - 2];
           s2[i] = v * v + s2[i - 1] + s2[i - w - 1] - s2[i - w - 2];
         }
-
-      int rx = winW / 2, ry = winH / 2;                      // smoothing aperture: supplies the local mean
-      int dx = detW / 2, dy = detH / 2;                      // detection aperture: decides the gain
-      var outp = new double[w * h];
-      for (int y = 0; y < h; y++)
-      {
-        double vn = k * rowVar[y];
-        int y0 = Math.Max(0, y - ry), y1 = Math.Min(h - 1, y + ry);
-        int dy0 = Math.Max(0, y - dy), dy1 = Math.Min(h - 1, y + dy);
-        for (int x = 0; x < w; x++)
-        {
-          int x0 = Math.Max(0, x - rx), x1 = Math.Min(w - 1, x + rx);
-          double n = (x1 - x0 + 1) * (y1 - y0 + 1);
-          double mu = Box(s1, w, x0, y0, x1, y1) / n;
-
-          int dx0 = Math.Max(0, x - dx), dx1 = Math.Min(w - 1, x + dx);
-          double dn = (dx1 - dx0 + 1) * (dy1 - dy0 + 1);
-          double dmu = Box(s1, w, dx0, dy0, dx1, dy1) / dn;
-          double varLoc = Math.Max(0, Box(s2, w, dx0, dy0, dx1, dy1) / dn - dmu * dmu);
-
-          double g = varLoc > vn ? (varLoc - vn) / varLoc : 0.0;
-          if (g < gainFloor) g = gainFloor;
-          if (gain != null) gain[y * w + x] = g;
-          outp[y * w + x] = mu + g * (p[y * w + x] - mu);
-        }
-      }
-      Array.Copy(outp, p, p.Length);
+      return (s1, s2);
     }
 
     private static double Box(double[] s, int w, int x0, int y0, int x1, int y1)

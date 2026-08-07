@@ -68,7 +68,7 @@ namespace VE3NEA.SkySSTV.Tests
               Acquire = false,
               StartSample = firstSync - start,
               BrightnessBwHz = bw,
-              WienerEnabled = wiener
+              Denoise = new() { Method = wiener ? SstvDenoiseMethod.Wiener : SstvDenoiseMethod.None }
             });
             string path = Path.Combine(OutDir, $"{tag}_bw{bw:0}_{(wiener ? "wien" : "raw")}.png");
             img.SavePng(path);
@@ -84,7 +84,7 @@ namespace VE3NEA.SkySSTV.Tests
             Acquire = false,
             StartSample = firstSync - start,
             BrightnessBwHz = 1600.0,
-            WienerEnabled = false,
+            Denoise = new() { Method = SstvDenoiseMethod.None },
             PixelWindowFraction = frac
           });
           img.SavePng(Path.Combine(OutDir, $"{tag}_bw1600_raw_frac{frac:0.00}.png"));
@@ -257,7 +257,7 @@ namespace VE3NEA.SkySSTV.Tests
         {
           SampleRate = 48000.0,
           BrightnessBwHz = bw,
-          WienerEnabled = false
+          Denoise = new() { Method = SstvDenoiseMethod.None }
         });
         img.SavePng(Path.Combine(OutDir, $"res_bw{bw:0}.png"));
         output.WriteLine($"bw={bw} psnr={Psnr(src, img):0.0}");
