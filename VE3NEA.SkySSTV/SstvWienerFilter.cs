@@ -42,11 +42,11 @@ namespace VE3NEA.SkySSTV
       // of the image carries a picture is a property of the band, not of a colour component, and a
       // chroma plane is too sparsely sampled to decide it on its own
       double[] yVar = RowNoiseVar(y, w, h, 1);
-      bool[] gate = RowHasSignal(y, w, h, yVar, o.MinRowSnr);
+      double[] blend = RowBlend(y, w, h, yVar, o.MinRowSnr, o.FullFilterRowSnr);
 
-      Lee(y, w, h, yVar, 1.0, yGain, ww, wh, dw, dh, floor, gate);
-      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor, gate);
-      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor, gate);
+      Lee(y, w, h, yVar, 1.0, yGain, ww, wh, dw, dh, floor, blend);
+      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor, blend);
+      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor, blend);
     }
 
     /// <summary>Per-row noise variance: σ = median_x|p[y] − p[y−step]| / 0.6745 / √2 (the Gaussian
@@ -106,7 +106,7 @@ namespace VE3NEA.SkySSTV
     /// contributor to "the whole image has no small detail" — where leaving the noise alone reads
     /// honestly as "no signal here". In a medium-SNR band the speckle is exactly what should go. So
     /// the filter wants to work in the middle of this statistic and keep its hands off both ends.</para></summary>
-    public static double[] RowSnr(double[] p, int w, int h, double[] rowVar)
+    public static double[] RowSnr(double[] p, int w, int h, double[] rowVar, int smoothRows = 9)
     {
       var raw = new double[h];
       for (int y = 0; y < h; y++)
@@ -118,41 +118,58 @@ namespace VE3NEA.SkySSTV
         double v = 0;
         for (int x = 0; x < w; x++) { double d = p[y * w + x] - mean; v += d * d; }
         v /= w;
-        raw[y] = rowVar[y] > 1e-9 ? Math.Max(0.0, v / rowVar[y] - 1.0) : 0.0;
+        // NOT clamped at 0: on pure noise the ratio fluctuates symmetrically about zero, and clipping
+        // that away costs exactly the resolution the low end of this scale is judged on. Gating is
+        // unaffected either way, every useful threshold being positive
+        raw[y] = rowVar[y] > 1e-9 ? v / rowVar[y] - 1.0 : 0.0;
       }
 
-      // one fluke row must not flip the gate under a band of otherwise uniform character
+      // One fluke row must not flip the gate under a band of otherwise uniform character. The window
+      // also sets the statistic's OWN noise floor: a row variance over w samples carries a relative
+      // error of ≈√(2/w), so a single row resolves the ratio only to ≈±0.11 at w = 320, and a median
+      // over `smoothRows` rows is what buys the resolution needed to separate pure noise from a weak
+      // but real picture. Bands run to tens of rows, so 9 costs nothing at their edges.
       var snr = new double[h];
-      var win = new double[5];
+      var win = new double[Math.Max(1, smoothRows)];
+      int wing = win.Length / 2;
       for (int y = 0; y < h; y++)
       {
         int cnt = 0;
-        for (int d = -2; d <= 2; d++) if (y + d >= 0 && y + d < h) win[cnt++] = raw[y + d];
+        for (int d = -wing; d <= wing; d++) if (y + d >= 0 && y + d < h) win[cnt++] = raw[y + d];
         Array.Sort(win, 0, cnt);
         snr[y] = win[cnt / 2];
       }
       return snr;
     }
 
-    /// <summary>Which rows carry enough image to be worth filtering — <see cref="RowSnr"/> against
-    /// <paramref name="minSnr"/>, with 0 disabling the gate entirely. Rows that fail are passed through
-    /// untouched by the Wiener, and by the NLM are additionally excluded as donors and from the noise
-    /// estimate, exactly as unrendered rows are (plan §7): a band of pure noise offers nothing to any
-    /// other row and only drags the noise estimate up.</summary>
-    public static bool[] RowHasSignal(double[] p, int w, int h, double[] rowVar, double minSnr,
-      bool[]? rowValid = null)
+    /// <summary>How much of the filtered result each row should keep: 0 where the row is pure noise,
+    /// 1 where it plainly carries a picture, ramped linearly in <see cref="RowSnr"/> between
+    /// <paramref name="minSnr"/> and <paramref name="fullSnr"/>. <paramref name="minSnr"/> ≤ 0 disables
+    /// the whole mechanism and returns all-ones.
+    ///
+    /// <para><b>A ramp, not a gate.</b> The first attempt was a hard per-row on/off, and it produced
+    /// exactly the artifact its structure invites: measured on genuinely pure noise the statistic has a
+    /// spread of ≈±0.16 (04-18, p05…p95 −0.161…+0.16), so any threshold inside that band decides
+    /// individual rows near-arbitrarily, and the output came out in HARD HORIZONTAL STRIPES of filtered
+    /// and unfiltered rows — far more objectionable than either treatment applied uniformly. A ramp
+    /// makes the transition invisible, and it is also the truer model: signal-to-noise across a fade is
+    /// continuous, not binary. The decode chain already resolves the same tension the same way, blending
+    /// its narrow and wide brightness branches over a σ 35→65 ramp rather than switching between
+    /// them.</para></summary>
+    public static double[] RowBlend(double[] p, int w, int h, double[] rowVar, double minSnr,
+      double fullSnr)
     {
-      var gate = new bool[h];
+      var blend = new double[h];
       if (minSnr <= 0)
       {
-        for (int y = 0; y < h; y++) gate[y] = rowValid == null || rowValid[y];
-        return gate;
+        Array.Fill(blend, 1.0);
+        return blend;
       }
 
       double[] snr = RowSnr(p, w, h, rowVar);
-      for (int y = 0; y < h; y++)
-        gate[y] = (rowValid == null || rowValid[y]) && snr[y] >= minSnr;
-      return gate;
+      double span = Math.Max(1e-6, fullSnr - minSnr);
+      for (int y = 0; y < h; y++) blend[y] = Math.Clamp((snr[y] - minSnr) / span, 0.0, 1.0);
+      return blend;
     }
 
     /// <summary>The detector alone: the per-pixel gain, UNFLOORED, over the detection aperture.
@@ -184,7 +201,7 @@ namespace VE3NEA.SkySSTV
     }
 
     private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain,
-      int winW, int winH, int detW, int detH, double gainFloor, bool[]? rowHasSignal = null)
+      int winW, int winH, int detW, int detH, double gainFloor, double[]? rowBlend = null)
     {
       var (s1, _) = PrefixSums(p, w, h);
       double[] g = GainMap(p, w, h, rowVar, k, detW, detH);
@@ -196,7 +213,8 @@ namespace VE3NEA.SkySSTV
       {
         // a noise-only band is left exactly as received: there is no detail in it to preserve, and
         // averaging it is what turns "no signal here" into "a blurred picture"
-        if (rowHasSignal != null && !rowHasSignal[y])
+        double mix = rowBlend == null ? 1.0 : rowBlend[y];
+        if (mix <= 0)
         {
           Array.Copy(p, y * w, outp, y * w, w);
           continue;
@@ -210,7 +228,8 @@ namespace VE3NEA.SkySSTV
 
           int i = y * w + x;
           double gi = g[i] < gainFloor ? gainFloor : g[i];
-          outp[i] = mu + gi * (p[i] - mu);
+          double filtered = mu + gi * (p[i] - mu);
+          outp[i] = mix >= 1.0 ? filtered : p[i] + mix * (filtered - p[i]);
         }
       }
       Array.Copy(outp, p, p.Length);

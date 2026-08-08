@@ -213,7 +213,7 @@ namespace VE3NEA.SkySSTV.Tests
         if (!File.Exists(wav)) continue;
         output.WriteLine($"### {relPath} — {note}");
         output.WriteLine($"    {"burst",-22} {"p05",7} {"p25",7} {"med",7} {"p75",7} {"p95",7} "
-          + $"{"g0.2",6} {"g0.5",6} {"g1.0",6} {"g2.0",6}");
+          + $"{"g.02",6} {"g.05",6} {"g.10",6} {"g.20",6} {"g.50",6}");
 
         foreach (var burst in Load(wav).Bursts)
         {
@@ -226,9 +226,10 @@ namespace VE3NEA.SkySSTV.Tests
           var sorted = (double[])snr.Clone();
           Array.Sort(sorted);
 
-          output.WriteLine($"    {burst.Tag,-22} {P(sorted, 0.05),7:0.00} {P(sorted, 0.25),7:0.00} "
-            + $"{P(sorted, 0.50),7:0.00} {P(sorted, 0.75),7:0.00} {P(sorted, 0.95),7:0.00} "
-            + $"{Gated(snr, 0.2),5:0}% {Gated(snr, 0.5),5:0}% {Gated(snr, 1.0),5:0}% {Gated(snr, 2.0),5:0}%");
+          output.WriteLine($"    {burst.Tag,-22} {P(sorted, 0.05),7:+0.000} {P(sorted, 0.25),7:+0.000} "
+            + $"{P(sorted, 0.50),7:+0.000} {P(sorted, 0.75),7:+0.000} {P(sorted, 0.95),7:+0.00} "
+            + $"{Gated(snr, 0.02),5:0}% {Gated(snr, 0.05),5:0}% {Gated(snr, 0.10),5:0}% "
+            + $"{Gated(snr, 0.20),5:0}% {Gated(snr, 0.50),5:0}%");
         }
         output.WriteLine("");
       }
@@ -251,16 +252,23 @@ namespace VE3NEA.SkySSTV.Tests
       + "what it should not touch, and is the reason this one cannot be read from the table at all.")]
     public void NoiseGate()
     {
+      // arms are named lo_hi: the ramp's foot and its full-strength point. The hard-switch arms
+      // (lo == hi) are kept because they are what produced the stripes, and a sheet that shows only the
+      // fix does not show why the fix was needed
+      var nlm = Nlm() with { NlmSig = 0.6 };
+      var wiener = new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4 };
       var arms = new[]
       {
-        new Arm("nlm_gate0",   Nlm() with { NlmSig = 0.6 }),
-        new Arm("nlm_gate02",  Nlm() with { NlmSig = 0.6, MinRowSnr = 0.2 }),
-        new Arm("nlm_gate05",  Nlm() with { NlmSig = 0.6, MinRowSnr = 0.5 }),
-        new Arm("nlm_gate10",  Nlm() with { NlmSig = 0.6, MinRowSnr = 1.0 }),
-        new Arm("nlm_gate20",  Nlm() with { NlmSig = 0.6, MinRowSnr = 2.0 }),
-        new Arm("wnr_gate0",   new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4 }),
-        new Arm("wnr_gate05",  new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4, MinRowSnr = 0.5 }),
-        new Arm("wnr_gate10",  new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4, MinRowSnr = 1.0 })
+        new Arm("off",         nlm),
+        new Arm("hard_020",    nlm with { MinRowSnr = 0.20, FullFilterRowSnr = 0.20 }),
+        new Arm("ramp_00_05",  nlm with { MinRowSnr = 0.001, FullFilterRowSnr = 0.5 }),
+        new Arm("ramp_00_10",  nlm with { MinRowSnr = 0.001, FullFilterRowSnr = 1.0 }),
+        new Arm("ramp_05_10",  nlm with { MinRowSnr = 0.05, FullFilterRowSnr = 1.0 }),
+        new Arm("ramp_05_20",  nlm with { MinRowSnr = 0.05, FullFilterRowSnr = 2.0 }),
+        new Arm("ramp_20_10",  nlm with { MinRowSnr = 0.20, FullFilterRowSnr = 1.0 }),
+        new Arm("wnr_off",     wiener),
+        new Arm("wnr_00_10",   wiener with { MinRowSnr = 0.001, FullFilterRowSnr = 1.0 }),
+        new Arm("wnr_20_10",   wiener with { MinRowSnr = 0.20, FullFilterRowSnr = 1.0 })
       };
       Run("gate", arms);
     }

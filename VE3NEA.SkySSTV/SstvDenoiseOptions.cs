@@ -173,9 +173,16 @@ namespace VE3NEA.SkySSTV
     /// removable speckle.</para>
     ///
     /// <para>The statistic is <see cref="SstvWienerFilter.RowSnr"/>: <c>var_row/σ²n − 1</c>, ≈0 in a
-    /// noise-only band and well above it wherever a picture is present. The gate is decided on luma and
-    /// applied to all three planes.</para></summary>
+    /// noise-only band and well above it wherever a picture is present. It is measured on luma and
+    /// applied to all three planes, and it acts as the LOW end of a ramp to
+    /// <see cref="FullFilterRowSnr"/> rather than as a hard switch — a hard per-row switch was tried
+    /// first and struck horizontal stripes, the statistic's own spread on pure noise being ≈±0.16.</para></summary>
     public double MinRowSnr { get; init; } = 0.0;
+
+    /// <summary>The row SNR at which filtering reaches full strength; between this and
+    /// <see cref="MinRowSnr"/> the filtered and unfiltered rows are cross-faded. Setting the two equal
+    /// gives back the hard switch, and the stripes with it.</summary>
+    public double FullFilterRowSnr { get; init; } = 1.0;
 
     /// <summary>Chroma noise over-weight for the NLM, decoupled from the Wiener's
     /// <see cref="WienerChromaK"/> because the same number does not mean the same thing in the two
