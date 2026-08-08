@@ -245,30 +245,36 @@ namespace VE3NEA.SkySSTV.Tests
       return 100.0 * n / snr.Length;
     }
 
-    [ManualFact("Not yet run. §9.8 step 2 — the noise-only gate at work, on both filters. The claim "
-      + "under test is that leaving a below-threshold band ALONE looks better than averaging it, even "
-      + "though averaging lowers every noise statistic there. Expect the metrics to get WORSE as the "
-      + "threshold rises (dx1 up, hf up, toward the raw image) — that is the gate declining to touch "
-      + "what it should not touch, and is the reason this one cannot be read from the table at all.")]
+    [ManualFact("Result 2026-08-07. The noise-only exclusion is IN and is a SWITCH, not a slider. What "
+      + "settled that was the threshold search failing: gating helped and 0.2 was the best of the first "
+      + "ladder, but sweeping below it showed (a) a hard per-row switch strikes HARD HORIZONTAL STRIPES, "
+      + "the statistic's spread on genuinely pure noise being about +-0.16 so any threshold inside that "
+      + "band decides rows near-arbitrarily — fixed by cross-fading over 0.02..0.5 instead of switching; "
+      + "and (b) even 0.02 stands the filter down over areas with detail the eye can see. The reported "
+      + "burst 08-07 00:50 t53 is indistinguishable from the genuinely below-threshold 04-18 on this "
+      + "measure (medians +0.027 vs -0.044, p95 +0.18 vs +0.16, overlapping throughout) and yet plainly "
+      + "has content NLM recovers. That is the instrument, not the tuning: per-row variance is LOCAL, "
+      + "and what NLM finds in a marginal burst is non-local structure that only appears once many "
+      + "similar patches are averaged. So there is nothing left to tune between those two positions, and "
+      + "the operator — who can see the image — makes the call. Expect every metric to get WORSE with "
+      + "the switch on, toward the raw image: that is it declining to touch what it should not touch.")]
     public void NoiseGate()
     {
-      // arms are named lo_hi: the ramp's foot and its full-strength point. The hard-switch arms
-      // (lo == hi) are kept because they are what produced the stripes, and a sheet that shows only the
-      // fix does not show why the fix was needed
-      var nlm = Nlm() with { NlmSig = 0.6 };
+      // the setting is a switch, so the sheet is a switch: each method at two strengths, with and
+      // without. There is no ladder left to sweep — the threshold search is what concluded there is no
+      // threshold worth exposing
+      var nlm = Nlm();
       var wiener = new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4 };
       var arms = new[]
       {
-        new Arm("off",         nlm),
-        new Arm("hard_020",    nlm with { MinRowSnr = 0.20, FullFilterRowSnr = 0.20 }),
-        new Arm("ramp_00_05",  nlm with { MinRowSnr = 0.001, FullFilterRowSnr = 0.5 }),
-        new Arm("ramp_00_10",  nlm with { MinRowSnr = 0.001, FullFilterRowSnr = 1.0 }),
-        new Arm("ramp_05_10",  nlm with { MinRowSnr = 0.05, FullFilterRowSnr = 1.0 }),
-        new Arm("ramp_05_20",  nlm with { MinRowSnr = 0.05, FullFilterRowSnr = 2.0 }),
-        new Arm("ramp_20_10",  nlm with { MinRowSnr = 0.20, FullFilterRowSnr = 1.0 }),
-        new Arm("wnr_off",     wiener),
-        new Arm("wnr_00_10",   wiener with { MinRowSnr = 0.001, FullFilterRowSnr = 1.0 }),
-        new Arm("wnr_20_10",   wiener with { MinRowSnr = 0.20, FullFilterRowSnr = 1.0 })
+        new Arm("nlm40_off",  nlm with { NlmSig = 0.4 }),
+        new Arm("nlm40_skip", nlm with { NlmSig = 0.4, SkipNoiseOnlyBands = true }),
+        new Arm("nlm60_off",  nlm with { NlmSig = 0.6 }),
+        new Arm("nlm60_skip", nlm with { NlmSig = 0.6, SkipNoiseOnlyBands = true }),
+        new Arm("nlm80_off",  nlm with { NlmSig = 0.8 }),
+        new Arm("nlm80_skip", nlm with { NlmSig = 0.8, SkipNoiseOnlyBands = true }),
+        new Arm("wnr_off",    wiener),
+        new Arm("wnr_skip",   wiener with { SkipNoiseOnlyBands = true })
       };
       Run("gate", arms);
     }

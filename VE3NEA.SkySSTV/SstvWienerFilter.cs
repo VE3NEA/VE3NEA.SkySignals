@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace VE3NEA.SkySSTV
 {
@@ -42,7 +42,7 @@ namespace VE3NEA.SkySSTV
       // of the image carries a picture is a property of the band, not of a colour component, and a
       // chroma plane is too sparsely sampled to decide it on its own
       double[] yVar = RowNoiseVar(y, w, h, 1);
-      double[] blend = RowBlend(y, w, h, yVar, o.MinRowSnr, o.FullFilterRowSnr);
+      double[] blend = RowBlend(y, w, h, yVar, o.SkipNoiseOnlyBands);
 
       Lee(y, w, h, yVar, 1.0, yGain, ww, wh, dw, dh, floor, blend);
       Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor, blend);
@@ -156,21 +156,29 @@ namespace VE3NEA.SkySSTV
     /// continuous, not binary. The decode chain already resolves the same tension the same way, blending
     /// its narrow and wide brightness branches over a σ 35→65 ramp rather than switching between
     /// them.</para></summary>
-    public static double[] RowBlend(double[] p, int w, int h, double[] rowVar, double minSnr,
-      double fullSnr)
+    public static double[] RowBlend(double[] p, int w, int h, double[] rowVar, bool enabled)
     {
       var blend = new double[h];
-      if (minSnr <= 0)
+      if (!enabled)
       {
         Array.Fill(blend, 1.0);
         return blend;
       }
 
       double[] snr = RowSnr(p, w, h, rowVar);
-      double span = Math.Max(1e-6, fullSnr - minSnr);
-      for (int y = 0; y < h; y++) blend[y] = Math.Clamp((snr[y] - minSnr) / span, 0.0, 1.0);
+      double span = NoiseBandSnrFull - NoiseBandSnrLow;
+      for (int y = 0; y < h; y++) blend[y] = Math.Clamp((snr[y] - NoiseBandSnrLow) / span, 0.0, 1.0);
       return blend;
     }
+
+    /// <summary>Foot and full-strength point of the noise-band cross-fade, in <see cref="RowSnr"/> units.
+    ///
+    /// <para>The foot is 0.02 because the threshold was swept down to there and no lower value helps:
+    /// below it the statistic is inside its own spread on pure noise (≈±0.16) and decides nothing. The
+    /// full point is 0.5 because that is comfortably above where the good bursts' weakest rows sit
+    /// (p05 = 0.13…1.35 across the probe subset) and far enough from the foot that the fade cannot
+    /// reintroduce the stripes a narrow transition caused.</para></summary>
+    public const double NoiseBandSnrLow = 0.02, NoiseBandSnrFull = 0.5;
 
     /// <summary>The detector alone: the per-pixel gain, UNFLOORED, over the detection aperture.
     /// Its known bias is against thin strokes — over a 9×5 = 45-sample aperture a one-pixel stroke

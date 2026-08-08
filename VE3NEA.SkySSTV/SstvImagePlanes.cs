@@ -174,9 +174,9 @@ namespace VE3NEA.SkySSTV
 
         // the noise-only ramp is measured on luma, before filtering, and reused for chroma — whether a
         // band carries a picture is a property of the band, not of a colour component (see MinRowSnr)
-        double[]? blend = o.MinRowSnr > 0
+        double[]? blend = o.SkipNoiseOnlyBands
           ? SstvWienerFilter.RowBlend(y, Width, rows,
-              SstvWienerFilter.RowNoiseVar(y, Width, rows, 1, valid), o.MinRowSnr, o.FullFilterRowSnr)
+              SstvWienerFilter.RowNoiseVar(y, Width, rows, 1, valid), true)
           : null;
         double[]? rawY = blend == null ? null : (double[])y.Clone();
         double[]? rawCr = blend == null ? null : (double[])cr.Clone();

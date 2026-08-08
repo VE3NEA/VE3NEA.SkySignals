@@ -173,16 +173,19 @@ namespace VE3NEA.SkySSTV
     /// removable speckle.</para>
     ///
     /// <para>The statistic is <see cref="SstvWienerFilter.RowSnr"/>: <c>var_row/σ²n − 1</c>, ≈0 in a
-    /// noise-only band and well above it wherever a picture is present. It is measured on luma and
-    /// applied to all three planes, and it acts as the LOW end of a ramp to
-    /// <see cref="FullFilterRowSnr"/> rather than as a hard switch — a hard per-row switch was tried
-    /// first and struck horizontal stripes, the statistic's own spread on pure noise being ≈±0.16.</para></summary>
-    public double MinRowSnr { get; init; } = 0.0;
-
-    /// <summary>The row SNR at which filtering reaches full strength; between this and
-    /// <see cref="MinRowSnr"/> the filtered and unfiltered rows are cross-faded. Setting the two equal
-    /// gives back the hard switch, and the stripes with it.</summary>
-    public double FullFilterRowSnr { get; init; } = 1.0;
+    /// noise-only band and well above it wherever a picture is present. It is measured on luma, applied
+    /// to all three planes, and drives a CROSS-FADE rather than a switch —
+    /// <see cref="SstvWienerFilter.NoiseBandSnrLow"/> to <see cref="SstvWienerFilter.NoiseBandSnrFull"/>
+    /// — because a hard per-row switch was tried first and struck horizontal stripes, the statistic's
+    /// own spread on pure noise being ≈±0.16.</para>
+    ///
+    /// <para><b>A switch and not a slider, deliberately.</b> The threshold was swept down to 0.02 and
+    /// even there it stands the filter down over areas with detail the eye can see — the two cases are
+    /// not separable on a per-row variance, which is a local statistic, where what NLM recovers from a
+    /// marginal burst is non-local structure that only appears once many similar patches are averaged.
+    /// So there is no threshold to tune: the operator, who can see the image, decides whether this one
+    /// is a picture buried in noise or noise with nothing in it.</para></summary>
+    public bool SkipNoiseOnlyBands { get; init; } = false;
 
     /// <summary>Chroma noise over-weight for the NLM, decoupled from the Wiener's
     /// <see cref="WienerChromaK"/> because the same number does not mean the same thing in the two
