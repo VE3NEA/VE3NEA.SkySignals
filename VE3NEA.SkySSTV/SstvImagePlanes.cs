@@ -172,26 +172,17 @@ namespace VE3NEA.SkySSTV
         var valid = new bool[rows];
         Array.Copy(RowRendered, first, valid, 0, rows);
 
-        // the noise-only ramp is measured on luma, before filtering, and reused for chroma — whether a
-        // band carries a picture is a property of the band, not of a colour component (see MinRowSnr)
-        double[]? blend = o.SkipNoiseOnlyBands
-          ? SstvWienerFilter.RowBlend(y, Width, rows,
-              SstvWienerFilter.RowNoiseVar(y, Width, rows, 1, valid), true)
-          : null;
-        double[]? rawY = blend == null ? null : (double[])y.Clone();
-        double[]? rawCr = blend == null ? null : (double[])cr.Clone();
-        double[]? rawCb = blend == null ? null : (double[])cb.Clone();
+        // the noise-only decision folds straight into row validity, because a band of pure noise wants
+        // exactly what an unrendered row wants: not filtered, not a donor, and not in the noise
+        // estimate (plan §7). Measured on luma and reused for chroma — whether a band carries a picture
+        // is a property of the band, not of a colour component
+        if (o.SkipNoiseOnlyBands)
+          valid = SstvWienerFilter.RowHasSignal(y, Width, rows,
+            SstvWienerFilter.RowNoiseVar(y, Width, rows, 1, valid), true, valid);
 
         SstvNlmFilter.Apply(y, Width, rows, valid, 1.0, 1, o, lumaStats);
         DenoiseChroma(cr, valid, first, rows, o, chromaStats);
         DenoiseChroma(cb, valid, first, rows, o, chromaStats);
-
-        if (blend != null)
-        {
-          Blend(y, rawY!, blend, rows);
-          Blend(cr, rawCr!, blend, rows);
-          Blend(cb, rawCb!, blend, rows);
-        }
       }
 
       Store(result.Y, y, first, rows);
@@ -258,21 +249,6 @@ namespace VE3NEA.SkySSTV
     //                                            utilities
     // ----------------------------------------------------------------------------------------------------
 
-
-    /// <summary>Pull each row back toward its unfiltered self by the row's blend weight, in place.</summary>
-    private void Blend(double[] filtered, double[] raw, double[] blend, int rows)
-    {
-      for (int row = 0; row < rows; row++)
-      {
-        double mix = blend[row];
-        if (mix >= 1.0) continue;
-        for (int x = 0; x < Width; x++)
-        {
-          int i = row * Width + x;
-          filtered[i] = raw[i] + mix * (filtered[i] - raw[i]);
-        }
-      }
-    }
 
     private double[] Extract(byte[] plane, int first, int rows)
     {

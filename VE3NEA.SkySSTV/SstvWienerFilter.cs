@@ -42,11 +42,11 @@ namespace VE3NEA.SkySSTV
       // of the image carries a picture is a property of the band, not of a colour component, and a
       // chroma plane is too sparsely sampled to decide it on its own
       double[] yVar = RowNoiseVar(y, w, h, 1);
-      double[] blend = RowBlend(y, w, h, yVar, o.SkipNoiseOnlyBands);
+      bool[] gate = RowHasSignal(y, w, h, yVar, o.SkipNoiseOnlyBands);
 
-      Lee(y, w, h, yVar, 1.0, yGain, ww, wh, dw, dh, floor, blend);
-      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor, blend);
-      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor, blend);
+      Lee(y, w, h, yVar, 1.0, yGain, ww, wh, dw, dh, floor, gate);
+      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor, gate);
+      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor, gate);
     }
 
     /// <summary>Per-row noise variance: σ = median_x|p[y] − p[y−step]| / 0.6745 / √2 (the Gaussian
@@ -156,49 +156,34 @@ namespace VE3NEA.SkySSTV
     /// continuous, not binary. The decode chain already resolves the same tension the same way, blending
     /// its narrow and wide brightness branches over a σ 35→65 ramp rather than switching between
     /// them.</para></summary>
-    public static double[] RowBlend(double[] p, int w, int h, double[] rowVar, bool enabled)
+    public static bool[] RowHasSignal(double[] p, int w, int h, double[] rowVar, bool enabled,
+      bool[]? rowValid = null)
     {
-      var blend = new double[h];
+      var gate = new bool[h];
       if (!enabled)
       {
-        Array.Fill(blend, 1.0);
-        return blend;
+        for (int y = 0; y < h; y++) gate[y] = rowValid == null || rowValid[y];
+        return gate;
       }
 
+      // A plain per-row decision that EXCLUDES the row rather than fading it. Two attempts to soften it
+      // were made and both were wrong, in the same way: they filtered every row and mixed the result
+      // back per row afterwards, which leaves the noise-only rows donating patches and inflating the
+      // noise estimate, so the picture rows change too — 43 % of pixels moved against the plain gate on
+      // a burst whose noise rows are interleaved with picture rows. Excluding a noise-only row is the
+      // whole point (plan §7): it is not a donor, it is not in the estimate, and it is not filtered.
       double[] snr = RowSnr(p, w, h, rowVar);
-      for (int y = 0; y < h; y++) blend[y] = snr[y] >= NoiseBandSnr ? 1.0 : 0.0;
-
-      // Smooth the DECISION, not the threshold. A blend ramped over a span of SNR would have to reach
-      // far above 0.02 to be gradual, and would then hold back filtering over rows that are plainly
-      // picture; smoothing the 0/1 mask across rows instead keeps the threshold exactly where it was
-      // judged and makes only the TRANSITION gradual. An isolated dissenting row inside a picture band
-      // barely moves (weight ≈ 0.9), while a real band of tens of noise rows still reaches 0 in its
-      // middle and fades over its edges.
-      var smoothed = new double[h];
       for (int y = 0; y < h; y++)
-      {
-        double sum = 0, weight = 0;
-        for (int d = -TransitionRows; d <= TransitionRows; d++)
-        {
-          int row = y + d;
-          if (row < 0 || row >= h) continue;
-          double tri = TransitionRows + 1 - Math.Abs(d);
-          sum += tri * blend[row];
-          weight += tri;
-        }
-        smoothed[y] = weight > 0 ? sum / weight : 1.0;
-      }
-      return smoothed;
+        gate[y] = (rowValid == null || rowValid[y]) && snr[y] >= NoiseBandSnr;
+      return gate;
     }
 
-    /// <summary>The row SNR below which a row is taken to carry no picture, and the half-width in rows
-    /// over which that decision is faded in.
+    /// <summary>The row SNR below which a row is taken to carry no picture.
     ///
     /// <para>0.02 is where the threshold search stopped: below it the statistic is inside its own spread
     /// on pure noise (≈±0.16) and decides nothing at all. It is not a tunable — see
     /// <see cref="SstvDenoiseOptions.SkipNoiseOnlyBands"/>, which is why this is a switch.</para></summary>
     public const double NoiseBandSnr = 0.02;
-    private const int TransitionRows = 6;
 
     /// <summary>The detector alone: the per-pixel gain, UNFLOORED, over the detection aperture.
     /// Its known bias is against thin strokes — over a 9×5 = 45-sample aperture a one-pixel stroke
@@ -229,7 +214,7 @@ namespace VE3NEA.SkySSTV
     }
 
     private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain,
-      int winW, int winH, int detW, int detH, double gainFloor, double[]? rowBlend = null)
+      int winW, int winH, int detW, int detH, double gainFloor, bool[]? rowHasSignal = null)
     {
       var (s1, _) = PrefixSums(p, w, h);
       double[] g = GainMap(p, w, h, rowVar, k, detW, detH);
@@ -241,8 +226,7 @@ namespace VE3NEA.SkySSTV
       {
         // a noise-only band is left exactly as received: there is no detail in it to preserve, and
         // averaging it is what turns "no signal here" into "a blurred picture"
-        double mix = rowBlend == null ? 1.0 : rowBlend[y];
-        if (mix <= 0)
+        if (rowHasSignal != null && !rowHasSignal[y])
         {
           Array.Copy(p, y * w, outp, y * w, w);
           continue;
@@ -256,8 +240,7 @@ namespace VE3NEA.SkySSTV
 
           int i = y * w + x;
           double gi = g[i] < gainFloor ? gainFloor : g[i];
-          double filtered = mu + gi * (p[i] - mu);
-          outp[i] = mix >= 1.0 ? filtered : p[i] + mix * (filtered - p[i]);
+          outp[i] = mu + gi * (p[i] - mu);
         }
       }
       Array.Copy(outp, p, p.Length);
