@@ -195,6 +195,76 @@ namespace VE3NEA.SkySSTV.Tests
     }
 
 
+    [ManualFact("Not yet run. §9.8 step 1 — does the per-row SNR statistic actually SEPARATE the two "
+      + "regimes? Before any threshold is chosen it has to be shown that noise-only bands and picture "
+      + "bands land in different places on it. The 04-18 capture is the control at one end: it is below "
+      + "the FM threshold throughout, so essentially every row should read near 0. A capture with a "
+      + "visible picture should read well above. If the distributions overlap, the gate is not "
+      + "implementable on this statistic and something 2-D is needed instead.")]
+    public void RowSnrProfile()
+    {
+      output.WriteLine("per-row SNR = var_row/sigma_n^2 - 1, median-of-5 smoothed. 0 = pure noise.");
+      output.WriteLine("gated% at each candidate threshold is the share of rows that would be left alone.");
+      output.WriteLine("");
+
+      foreach (var (relPath, note) in Corpus)
+      {
+        string wav = Path.Combine(RecordingsRoot, relPath);
+        if (!File.Exists(wav)) continue;
+        output.WriteLine($"### {relPath} — {note}");
+        output.WriteLine($"    {"burst",-22} {"p05",7} {"p25",7} {"med",7} {"p75",7} {"p95",7} "
+          + $"{"g0.2",6} {"g0.5",6} {"g1.0",6} {"g2.0",6}");
+
+        foreach (var burst in Load(wav).Bursts)
+        {
+          int w = burst.Planes.Width, h = burst.Planes.Height;
+          var y = new double[w * h];
+          for (int i = 0; i < y.Length; i++) y[i] = burst.Planes.Y[i];
+
+          double[] rowVar = SstvWienerFilter.RowNoiseVar(y, w, h, 1, burst.Planes.RowRendered);
+          double[] snr = SstvWienerFilter.RowSnr(y, w, h, rowVar);
+          var sorted = (double[])snr.Clone();
+          Array.Sort(sorted);
+
+          output.WriteLine($"    {burst.Tag,-22} {P(sorted, 0.05),7:0.00} {P(sorted, 0.25),7:0.00} "
+            + $"{P(sorted, 0.50),7:0.00} {P(sorted, 0.75),7:0.00} {P(sorted, 0.95),7:0.00} "
+            + $"{Gated(snr, 0.2),5:0}% {Gated(snr, 0.5),5:0}% {Gated(snr, 1.0),5:0}% {Gated(snr, 2.0),5:0}%");
+        }
+        output.WriteLine("");
+      }
+    }
+
+    private static double P(double[] sorted, double q)
+      => sorted[Math.Clamp((int)(q * sorted.Length), 0, sorted.Length - 1)];
+
+    private static double Gated(double[] snr, double threshold)
+    {
+      int n = 0;
+      foreach (double v in snr) if (v < threshold) n++;
+      return 100.0 * n / snr.Length;
+    }
+
+    [ManualFact("Not yet run. §9.8 step 2 — the noise-only gate at work, on both filters. The claim "
+      + "under test is that leaving a below-threshold band ALONE looks better than averaging it, even "
+      + "though averaging lowers every noise statistic there. Expect the metrics to get WORSE as the "
+      + "threshold rises (dx1 up, hf up, toward the raw image) — that is the gate declining to touch "
+      + "what it should not touch, and is the reason this one cannot be read from the table at all.")]
+    public void NoiseGate()
+    {
+      var arms = new[]
+      {
+        new Arm("nlm_gate0",   Nlm() with { NlmSig = 0.6 }),
+        new Arm("nlm_gate02",  Nlm() with { NlmSig = 0.6, MinRowSnr = 0.2 }),
+        new Arm("nlm_gate05",  Nlm() with { NlmSig = 0.6, MinRowSnr = 0.5 }),
+        new Arm("nlm_gate10",  Nlm() with { NlmSig = 0.6, MinRowSnr = 1.0 }),
+        new Arm("nlm_gate20",  Nlm() with { NlmSig = 0.6, MinRowSnr = 2.0 }),
+        new Arm("wnr_gate0",   new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4 }),
+        new Arm("wnr_gate05",  new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4, MinRowSnr = 0.5 }),
+        new Arm("wnr_gate10",  new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.4, MinRowSnr = 1.0 })
+      };
+      Run("gate", arms);
+    }
+
     [ManualFact("Not yet run. §9.2b — the chroma over-weight, once DashAnatomy showed k = 4 puts chroma "
       + "at 60-72 % flat-top against luma's 0.1-0.9 %, i.e. box-averaged while luma is filtered gently. "
       + "Because the noise map scales as Sig^2*k, effective chroma strength goes as sqrt(k): k = 4 is "

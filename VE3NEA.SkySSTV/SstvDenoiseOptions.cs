@@ -160,6 +160,23 @@ namespace VE3NEA.SkySSTV
     /// as a measurable arm.</para></summary>
     public bool NlmNativeChroma { get; init; } = true;
 
+    /// <summary>Below this per-row signal-to-noise ratio a row is treated as carrying no image and is
+    /// passed through UNFILTERED by both methods. 0 (the default) disables the gate, reproducing the
+    /// behaviour measured up to 2026-08-07.
+    ///
+    /// <para>Aimed at a defect that no amount of tuning the shrinkage curve can reach: where the pass
+    /// dropped below the FM threshold the image carries bands of pure noise at high RMS, both filters
+    /// average them, and the resulting soft grey wash reads as a BLURRED PICTURE rather than as absent
+    /// signal. It is a large part of the reported "the whole image has no small detail", and it is
+    /// entirely avoidable — those bands have no detail to protect, so the correct action is to do
+    /// nothing to them. Denoising belongs in the medium-SNR bands, where a visible picture carries
+    /// removable speckle.</para>
+    ///
+    /// <para>The statistic is <see cref="SstvWienerFilter.RowSnr"/>: <c>var_row/σ²n − 1</c>, ≈0 in a
+    /// noise-only band and well above it wherever a picture is present. The gate is decided on luma and
+    /// applied to all three planes.</para></summary>
+    public double MinRowSnr { get; init; } = 0.0;
+
     /// <summary>Chroma noise over-weight for the NLM, decoupled from the Wiener's
     /// <see cref="WienerChromaK"/> because the same number does not mean the same thing in the two
     /// filters.

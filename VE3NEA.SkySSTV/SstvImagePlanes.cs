@@ -171,6 +171,14 @@ namespace VE3NEA.SkySSTV
       {
         var valid = new bool[rows];
         Array.Copy(RowRendered, first, valid, 0, rows);
+
+        // the noise-only gate folds straight into row validity, because a band of pure noise wants
+        // exactly what an unrendered row wants: not filtered, not a donor, and not in the noise
+        // estimate. Decided on luma and reused for chroma — see MinRowSnr
+        if (o.MinRowSnr > 0)
+          valid = SstvWienerFilter.RowHasSignal(y, Width, rows,
+            SstvWienerFilter.RowNoiseVar(y, Width, rows, 1, valid), o.MinRowSnr, valid);
+
         SstvNlmFilter.Apply(y, Width, rows, valid, 1.0, 1, o, lumaStats);
         DenoiseChroma(cr, valid, first, rows, o, chromaStats);
         DenoiseChroma(cb, valid, first, rows, o, chromaStats);

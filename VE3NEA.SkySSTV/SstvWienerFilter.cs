@@ -37,9 +37,16 @@ namespace VE3NEA.SkySSTV
       int dw = o.WienerDetectW > 0 ? o.WienerDetectW : ww;
       int dh = o.WienerDetectH > 0 ? o.WienerDetectH : wh;
       double k = o.WienerChromaK, floor = o.WienerGainFloor;
-      Lee(y, w, h, RowNoiseVar(y, w, h, 1), 1.0, yGain, ww, wh, dw, dh, floor);
-      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor);
-      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor);
+
+      // the noise-only gate is decided ONCE, on luma, and applied to all three planes: whether a band
+      // of the image carries a picture is a property of the band, not of a colour component, and a
+      // chroma plane is too sparsely sampled to decide it on its own
+      double[] yVar = RowNoiseVar(y, w, h, 1);
+      bool[] gate = RowHasSignal(y, w, h, yVar, o.MinRowSnr);
+
+      Lee(y, w, h, yVar, 1.0, yGain, ww, wh, dw, dh, floor, gate);
+      Lee(cr, w, h, RowNoiseVar(cr, w, h, 2), k, null, ww, wh, dw, dh, floor, gate);
+      Lee(cb, w, h, RowNoiseVar(cb, w, h, 2), k, null, ww, wh, dw, dh, floor, gate);
     }
 
     /// <summary>Per-row noise variance: σ = median_x|p[y] − p[y−step]| / 0.6745 / √2 (the Gaussian
@@ -83,6 +90,71 @@ namespace VE3NEA.SkySSTV
       return v;
     }
 
+    /// <summary>Per-row signal-to-noise ratio: the row's own variance measured against the noise
+    /// variance, <c>var_row/σ²n − 1</c>, median-of-5 smoothed across rows.
+    ///
+    /// <para>This answers a question the per-pixel gain cannot: <b>is there an image in this row at
+    /// all?</b> Where the pass dropped below the FM threshold the row is pure noise of high RMS, so
+    /// <c>var_row ≈ σ²n</c> and the ratio falls to ≈0; where an image is present the row's variance
+    /// carries the picture on top of the noise and the ratio rises well above it. Both quantities are
+    /// measured on the same clipped data, so the clipping that flattens high-σ noise scales them
+    /// together and largely cancels in the ratio.</para>
+    ///
+    /// <para>The distinction matters because the two regimes want OPPOSITE treatment, which no
+    /// monotone shrinkage curve can express. In a noise-only band there is no detail to protect and
+    /// smoothing it produces a soft grey wash that reads as a blurred PICTURE — the strongest single
+    /// contributor to "the whole image has no small detail" — where leaving the noise alone reads
+    /// honestly as "no signal here". In a medium-SNR band the speckle is exactly what should go. So
+    /// the filter wants to work in the middle of this statistic and keep its hands off both ends.</para></summary>
+    public static double[] RowSnr(double[] p, int w, int h, double[] rowVar)
+    {
+      var raw = new double[h];
+      for (int y = 0; y < h; y++)
+      {
+        double mean = 0;
+        for (int x = 0; x < w; x++) mean += p[y * w + x];
+        mean /= w;
+
+        double v = 0;
+        for (int x = 0; x < w; x++) { double d = p[y * w + x] - mean; v += d * d; }
+        v /= w;
+        raw[y] = rowVar[y] > 1e-9 ? Math.Max(0.0, v / rowVar[y] - 1.0) : 0.0;
+      }
+
+      // one fluke row must not flip the gate under a band of otherwise uniform character
+      var snr = new double[h];
+      var win = new double[5];
+      for (int y = 0; y < h; y++)
+      {
+        int cnt = 0;
+        for (int d = -2; d <= 2; d++) if (y + d >= 0 && y + d < h) win[cnt++] = raw[y + d];
+        Array.Sort(win, 0, cnt);
+        snr[y] = win[cnt / 2];
+      }
+      return snr;
+    }
+
+    /// <summary>Which rows carry enough image to be worth filtering — <see cref="RowSnr"/> against
+    /// <paramref name="minSnr"/>, with 0 disabling the gate entirely. Rows that fail are passed through
+    /// untouched by the Wiener, and by the NLM are additionally excluded as donors and from the noise
+    /// estimate, exactly as unrendered rows are (plan §7): a band of pure noise offers nothing to any
+    /// other row and only drags the noise estimate up.</summary>
+    public static bool[] RowHasSignal(double[] p, int w, int h, double[] rowVar, double minSnr,
+      bool[]? rowValid = null)
+    {
+      var gate = new bool[h];
+      if (minSnr <= 0)
+      {
+        for (int y = 0; y < h; y++) gate[y] = rowValid == null || rowValid[y];
+        return gate;
+      }
+
+      double[] snr = RowSnr(p, w, h, rowVar);
+      for (int y = 0; y < h; y++)
+        gate[y] = (rowValid == null || rowValid[y]) && snr[y] >= minSnr;
+      return gate;
+    }
+
     /// <summary>The detector alone: the per-pixel gain, UNFLOORED, over the detection aperture.
     /// Its known bias is against thin strokes — over a 9×5 = 45-sample aperture a one-pixel stroke
     /// needs ≈6.8 σ to reach g &gt; 0 while a broad edge passes at 2.0 σ. That bias is harmful when
@@ -112,7 +184,7 @@ namespace VE3NEA.SkySSTV
     }
 
     private static void Lee(double[] p, int w, int h, double[] rowVar, double k, double[]? gain,
-      int winW, int winH, int detW, int detH, double gainFloor)
+      int winW, int winH, int detW, int detH, double gainFloor, bool[]? rowHasSignal = null)
     {
       var (s1, _) = PrefixSums(p, w, h);
       double[] g = GainMap(p, w, h, rowVar, k, detW, detH);
@@ -122,6 +194,13 @@ namespace VE3NEA.SkySSTV
       var outp = new double[w * h];
       for (int y = 0; y < h; y++)
       {
+        // a noise-only band is left exactly as received: there is no detail in it to preserve, and
+        // averaging it is what turns "no signal here" into "a blurred picture"
+        if (rowHasSignal != null && !rowHasSignal[y])
+        {
+          Array.Copy(p, y * w, outp, y * w, w);
+          continue;
+        }
         int y0 = Math.Max(0, y - ry), y1 = Math.Min(h - 1, y + ry);
         for (int x = 0; x < w; x++)
         {
