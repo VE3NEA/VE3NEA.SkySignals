@@ -166,19 +166,39 @@ namespace VE3NEA.SkySSTV
       }
 
       double[] snr = RowSnr(p, w, h, rowVar);
-      double span = NoiseBandSnrFull - NoiseBandSnrLow;
-      for (int y = 0; y < h; y++) blend[y] = Math.Clamp((snr[y] - NoiseBandSnrLow) / span, 0.0, 1.0);
-      return blend;
+      for (int y = 0; y < h; y++) blend[y] = snr[y] >= NoiseBandSnr ? 1.0 : 0.0;
+
+      // Smooth the DECISION, not the threshold. A blend ramped over a span of SNR would have to reach
+      // far above 0.02 to be gradual, and would then hold back filtering over rows that are plainly
+      // picture; smoothing the 0/1 mask across rows instead keeps the threshold exactly where it was
+      // judged and makes only the TRANSITION gradual. An isolated dissenting row inside a picture band
+      // barely moves (weight ≈ 0.9), while a real band of tens of noise rows still reaches 0 in its
+      // middle and fades over its edges.
+      var smoothed = new double[h];
+      for (int y = 0; y < h; y++)
+      {
+        double sum = 0, weight = 0;
+        for (int d = -TransitionRows; d <= TransitionRows; d++)
+        {
+          int row = y + d;
+          if (row < 0 || row >= h) continue;
+          double tri = TransitionRows + 1 - Math.Abs(d);
+          sum += tri * blend[row];
+          weight += tri;
+        }
+        smoothed[y] = weight > 0 ? sum / weight : 1.0;
+      }
+      return smoothed;
     }
 
-    /// <summary>Foot and full-strength point of the noise-band cross-fade, in <see cref="RowSnr"/> units.
+    /// <summary>The row SNR below which a row is taken to carry no picture, and the half-width in rows
+    /// over which that decision is faded in.
     ///
-    /// <para>The foot is 0.02 because the threshold was swept down to there and no lower value helps:
-    /// below it the statistic is inside its own spread on pure noise (≈±0.16) and decides nothing. The
-    /// full point is 0.5 because that is comfortably above where the good bursts' weakest rows sit
-    /// (p05 = 0.13…1.35 across the probe subset) and far enough from the foot that the fade cannot
-    /// reintroduce the stripes a narrow transition caused.</para></summary>
-    public const double NoiseBandSnrLow = 0.02, NoiseBandSnrFull = 0.5;
+    /// <para>0.02 is where the threshold search stopped: below it the statistic is inside its own spread
+    /// on pure noise (≈±0.16) and decides nothing at all. It is not a tunable — see
+    /// <see cref="SstvDenoiseOptions.SkipNoiseOnlyBands"/>, which is why this is a switch.</para></summary>
+    public const double NoiseBandSnr = 0.02;
+    private const int TransitionRows = 6;
 
     /// <summary>The detector alone: the per-pixel gain, UNFLOORED, over the detection aperture.
     /// Its known bias is against thin strokes — over a 9×5 = 45-sample aperture a one-pixel stroke

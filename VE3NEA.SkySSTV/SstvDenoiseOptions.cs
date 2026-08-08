@@ -1,4 +1,4 @@
-namespace VE3NEA.SkySSTV
+﻿namespace VE3NEA.SkySSTV
 {
   /// <summary>Which post-filter runs on a reconstructed image (denoise plan §2 D2).</summary>
   public enum SstvDenoiseMethod
@@ -174,10 +174,11 @@ namespace VE3NEA.SkySSTV
     ///
     /// <para>The statistic is <see cref="SstvWienerFilter.RowSnr"/>: <c>var_row/σ²n − 1</c>, ≈0 in a
     /// noise-only band and well above it wherever a picture is present. It is measured on luma, applied
-    /// to all three planes, and drives a CROSS-FADE rather than a switch —
-    /// <see cref="SstvWienerFilter.NoiseBandSnrLow"/> to <see cref="SstvWienerFilter.NoiseBandSnrFull"/>
-    /// — because a hard per-row switch was tried first and struck horizontal stripes, the statistic's
-    /// own spread on pure noise being ≈±0.16.</para>
+    /// to all three planes, and thresholded at <see cref="SstvWienerFilter.NoiseBandSnr"/> = 0.02. The
+    /// DECISION is then smoothed across rows, because a bare per-row threshold struck horizontal
+    /// stripes — the statistic's own spread on pure noise being ≈±0.16, adjacent rows fall on opposite
+    /// sides of it arbitrarily. Smoothing the mask rather than ramping the threshold keeps the cut
+    /// exactly at 0.02 and makes only the transition gradual.</para>
     ///
     /// <para><b>A switch and not a slider, deliberately.</b> The threshold was swept down to 0.02 and
     /// even there it stands the filter down over areas with detail the eye can see — the two cases are

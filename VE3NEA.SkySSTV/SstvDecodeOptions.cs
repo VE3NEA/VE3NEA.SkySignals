@@ -259,6 +259,17 @@ namespace VE3NEA.SkySSTV
     /// <see cref="SstvImagePlanes.Denoise"/>, so the Wiener's tunables exist in exactly one place
     /// (denoise plan D11). Non-local means is never selected here: it costs 0.5–1.5 s and this runs
     /// on the thread pushing IQ, and its settings are image-dependent (D14).</para></summary>
+    /// <summary>Post-filter settings for the decode path (denoise plan D11).
+    ///
+    /// <para><b>Production leaves this at its defaults and must keep doing so</b> (D22): the progressive
+    /// display and the auto-saved PNG are the standard rendering, and any non-default value belongs to
+    /// the denoise dialog, which works on the raw <see cref="SstvImagePlanes"/> instead. SkyRoof
+    /// constructs <c>new SstvDecoder()</c> and never mentions this type, so the rule holds today —
+    /// it is written down here so it survives.</para>
+    ///
+    /// <para>It stays settable because the probes need it: <c>Method = None</c> is how a test obtains
+    /// an unfiltered reconstruction from the batch decoder, and the Wiener work-offs sweep its window
+    /// at decode time.</para></summary>
     public SstvDenoiseOptions Denoise { get; init; } = new();
 
   }
