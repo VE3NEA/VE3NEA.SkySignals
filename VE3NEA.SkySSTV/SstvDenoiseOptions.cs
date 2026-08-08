@@ -160,6 +160,24 @@ namespace VE3NEA.SkySSTV
     /// as a measurable arm.</para></summary>
     public bool NlmNativeChroma { get; init; } = true;
 
+    /// <summary>Chroma noise over-weight for the NLM, decoupled from the Wiener's
+    /// <see cref="WienerChromaK"/> because the same number does not mean the same thing in the two
+    /// filters.
+    ///
+    /// <para>In the Wiener, <c>k</c> raises the variance a pixel must beat to be judged signal — "smooth
+    /// colour speckle harder", bounded by gain 0. In the NLM it scales the noise map, and since
+    /// <c>s = Sig²·k·σ²</c> the effective strength goes as <b>√k</b>: <c>k = 4</c> silently runs chroma
+    /// at twice the luma <see cref="NlmSig"/>. Measured 2026-08-07, that puts chroma at flat-top shares
+    /// of <b>60–72 %</b> against luma's 0.1–0.9 % — the §5.6 degeneracy criterion outright, i.e. the
+    /// chroma planes are being 21×21 box-averaged while luma is filtered gently. It is the reason the
+    /// residual dash texture is so strongly coloured.</para>
+    ///
+    /// <para>Left at 4.0, which reproduces the behaviour measured on that date, until the sweep is
+    /// judged. Note the fix is NOT 1.0: at 1.0 the chroma speckle these captures carry is left almost
+    /// untouched and the picture is visibly worse. Chroma wants MORE smoothing than luma — just not
+    /// four times the variance.</para></summary>
+    public double NlmChromaK { get; init; } = 4.0;
+
     /// <summary>Row bands the accumulation is split into, one per thread; 0 (the default) picks
     /// <see cref="System.Environment.ProcessorCount"/> bands subject to a minimum band height, and 1
     /// forces the serial path.

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace VE3NEA.SkySSTV
 {
@@ -141,6 +141,15 @@ namespace VE3NEA.SkySSTV
     /// <summary>The diagnostic form: <paramref name="stats"/> collects the plan §5.6 degeneracy counters
     /// summed over the three planes, which is what the tuning probe reads instead of the picture.</summary>
     internal SstvImagePlanes Denoise(SstvDenoiseOptions? options, SstvNlmStats? stats)
+      => Denoise(options, stats, stats);
+
+    /// <summary>The per-plane diagnostic form. Luma and chroma do NOT sit at the same operating point —
+    /// chroma's noise map carries the <see cref="SstvDenoiseOptions.NlmChromaK"/> over-weight, and since
+    /// the map scales as <c>Sig²·k·σ²</c> the effective strength goes as √k, so the shipped k = 4 runs
+    /// chroma at twice the luma Sig. A combined counter hides that; these separate it, and separated
+    /// they showed chroma sitting at 60–72 % flat-top against luma's 0.1–0.9 %.</summary>
+    internal SstvImagePlanes Denoise(SstvDenoiseOptions? options, SstvNlmStats? lumaStats,
+      SstvNlmStats? chromaStats)
     {
       var o = options ?? new SstvDenoiseOptions();
       var result = new SstvImagePlanes(this);
@@ -162,9 +171,9 @@ namespace VE3NEA.SkySSTV
       {
         var valid = new bool[rows];
         Array.Copy(RowRendered, first, valid, 0, rows);
-        SstvNlmFilter.Apply(y, Width, rows, valid, 1.0, 1, o, stats);
-        DenoiseChroma(cr, valid, first, rows, o, stats);
-        DenoiseChroma(cb, valid, first, rows, o, stats);
+        SstvNlmFilter.Apply(y, Width, rows, valid, 1.0, 1, o, lumaStats);
+        DenoiseChroma(cr, valid, first, rows, o, chromaStats);
+        DenoiseChroma(cb, valid, first, rows, o, chromaStats);
       }
 
       Store(result.Y, y, first, rows);
@@ -194,7 +203,7 @@ namespace VE3NEA.SkySSTV
       if (!o.NlmNativeChroma || step <= 1)
       {
         // arm B: the duplicated rows are still present, so the noise estimator must step over them
-        SstvNlmFilter.Apply(plane, Width, rows, valid, o.WienerChromaK, step, o, stats);
+        SstvNlmFilter.Apply(plane, Width, rows, valid, o.NlmChromaK, step, o, stats);
         return;
       }
 
@@ -217,7 +226,7 @@ namespace VE3NEA.SkySSTV
       }
 
       // on the native grid adjacent rows are different transmitted lines again, so step 1 is correct
-      SstvNlmFilter.Apply(native, Width, nRows, nativeValid, o.WienerChromaK, 1, o, stats);
+      SstvNlmFilter.Apply(native, Width, nRows, nativeValid, o.NlmChromaK, 1, o, stats);
 
       for (int r = 0; r < rows; r++)
       {

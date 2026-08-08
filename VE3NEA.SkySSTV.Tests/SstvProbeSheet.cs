@@ -66,9 +66,17 @@ namespace VE3NEA.SkySSTV.Tests
     /// statistics are blind to how chroma was handled, so this is the only number that can separate the
     /// §9.2 arms; and it has to be the HORIZONTAL lag, because both arms duplicate chroma rows on output
     /// and the vertical lag therefore reads ≈1 by construction whatever the filter did.</summary>
-    public static double ChromaDx1(SstvImagePlanes planes)
+    public static double ChromaDx1(SstvImagePlanes planes) => ChromaAcf(planes, horizontal: true);
+
+    /// <summary>The vertical companion of <see cref="ChromaDx1"/>, at the CHROMA row step so the
+    /// duplicated rows do not make it read 1 by construction. Its ratio to the horizontal figure is what
+    /// says whether a chroma artifact is elongated along the scan line.</summary>
+    public static double ChromaDy1(SstvImagePlanes planes) => ChromaAcf(planes, horizontal: false);
+
+    private static double ChromaAcf(SstvImagePlanes planes, bool horizontal)
     {
       double sum = 0;
+      int lag = horizontal ? 1 : planes.ChromaRowStep;
       foreach (byte[] plane in new[] { planes.Cr, planes.Cb })
       {
         double mean = 0;
@@ -89,7 +97,12 @@ namespace VE3NEA.SkySSTV.Tests
           {
             double v = plane[row * planes.Width + x] - mean;
             den += v * v;
-            if (x + 1 < planes.Width) num += v * (plane[row * planes.Width + x + 1] - mean);
+            if (horizontal)
+            {
+              if (x + lag < planes.Width) num += v * (plane[row * planes.Width + x + lag] - mean);
+            }
+            else if (row + lag < planes.Height && planes.RowRendered[row + lag])
+              num += v * (plane[(row + lag) * planes.Width + x] - mean);
           }
         }
         if (den > 0) sum += num / den;

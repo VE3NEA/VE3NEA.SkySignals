@@ -177,15 +177,113 @@ namespace VE3NEA.SkySSTV.Tests
       + "acceptance case (§9 tier 3).")]
     public void WienerFloor()
     {
+      // the ladder runs to 1.0, which is the Wiener switched OFF: gain 1 makes the output mu + (p - mu),
+      // i.e. p. So if the eye keeps preferring higher floors, the finding is not "raise the default" but
+      // "the Wiener is not helping on this image", and the ladder is built to say so
       var arms = new[]
       {
-        new Arm("wiener_fl00", new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.0 }),
         new Arm("wiener_fl25", new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.25 }),
         new Arm("wiener_fl40", new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.40 }),
-        new Arm("nlm",         Nlm())
+        new Arm("wiener_fl55", new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.55 }),
+        new Arm("wiener_fl70", new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.70 }),
+        new Arm("wiener_fl85", new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 0.85 }),
+        new Arm("wiener_off",  new SstvDenoiseOptions { Method = SstvDenoiseMethod.Wiener, WienerGainFloor = 1.0 }),
+        new Arm("nlm_sig40",   Nlm() with { NlmSig = 0.4 }),
+        new Arm("nlm_sig60",   Nlm() with { NlmSig = 0.6 })
       };
       Run("floor", arms);
     }
+
+
+    [ManualFact("Not yet run. §9.2b — the chroma over-weight, once DashAnatomy showed k = 4 puts chroma "
+      + "at 60-72 % flat-top against luma's 0.1-0.9 %, i.e. box-averaged while luma is filtered gently. "
+      + "Because the noise map scales as Sig^2*k, effective chroma strength goes as sqrt(k): k = 4 is "
+      + "chroma running at 2x the luma Sig, k = 2 at 1.41x, k = 1 matched. The answer is NOT k = 1 — "
+      + "these captures carry heavy colour speckle and matched chroma leaves it nearly untouched, which "
+      + "looks worse. Chroma wants more smoothing than luma; the question this sweep settles is how much "
+      + "more, and it should be read on the COLOUR of the residual dash texture.")]
+    public void ChromaStrength()
+    {
+      var arms = new[] { 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 }
+        .Select(k => new Arm($"k{k:0.0}".Replace(".", ""), Nlm() with { NlmSig = 0.6, NlmChromaK = k }))
+        .ToArray();
+      Run("chromak", arms);
+    }
+
+    [ManualFact("Result 2026-08-07 — the ~10 px horizontal dashes are TWO things, one inherent and one a "
+      + "defect. INHERENT: heavy NLM builds structure at the scale of its SEARCH window, and this noise "
+      + "is horizontally correlated by the Stage-3 low-pass, so the blobs come out stretched. Verified "
+      + "against controlled noise in SstvNlmDashDiag — on WHITE noise the output is isotropic (h and v "
+      + "autocorrelation equal to two decimals) with a reach that tracks NlmSearchWing; on rho = 0.8 "
+      + "noise, which is what the raw captures measure (dx1 +0.70..+0.83 against dy1 +0.05..+0.12), the "
+      + "same blobs read h[1,2,5,10] = +0.97 +0.93 +0.74 +0.42 against v = +0.50 +0.53 +0.38 +0.29. "
+      + "Search wing 5 shortens them (lag-10 h +0.42 -> +0.27) at a cost in donors. DEFECT: the two "
+      + "planes were running at completely different operating points — chroma flat-top 60-72 % and "
+      + "rejection ~0.0 %, which IS the §5.6 degeneracy criterion, against luma's 0.1-0.9 % / 16-49 %. "
+      + "Cause: WienerChromaK = 4 carried into the NLM noise map, where s = Sig^2*k*sigma^2 makes it a 2x "
+      + "strength multiplier rather than a detection threshold. That is why the residue is so strongly "
+      + "COLOURED. Split out as NlmChromaK; k = 1 is not the fix (chroma speckle then dominates, visibly "
+      + "worse) — see the ChromaStrength sweep.")]
+    public void DashAnatomy()
+    {
+      string dir = Path.Combine(OutDir, "dashes");
+      Directory.CreateDirectory(dir);
+
+      foreach (var (relPath, _) in Corpus)
+      {
+        string wav = Path.Combine(RecordingsRoot, relPath);
+        if (!File.Exists(wav)) continue;
+        foreach (var burst in Load(wav).Bursts)
+        {
+          output.WriteLine($"=== {burst.Tag}");
+          output.WriteLine($"    {"arm",-16} {"dx1",7} {"dy1",7} {"cdx1",7} {"cdy1",7} "
+            + $"{"Yflat%",7} {"Yrej%",7} {"Cflat%",7} {"Crej%",7}");
+          Anatomy(burst, "raw", null, dir);
+          Anatomy(burst, "k4_both", Nlm() with { NlmSig = 0.6 }, dir);
+          Anatomy(burst, "k1_both", Nlm() with { NlmSig = 0.6, NlmChromaK = 1.0 }, dir);
+          Anatomy(burst, "k4_lumaonly", Nlm() with { NlmSig = 0.6 }, dir, lumaOnly: true);
+          Anatomy(burst, "k4_chromaonly", Nlm() with { NlmSig = 0.6 }, dir, chromaOnly: true);
+          Anatomy(burst, "k4_search5", Nlm() with { NlmSig = 0.6, NlmSearchWing = 5 }, dir);
+          output.WriteLine("");
+        }
+      }
+      output.WriteLine($"renderings in {dir}");
+    }
+
+    /// <summary>Render one decomposition and report both planes' statistics. <paramref name="lumaOnly"/>
+    /// and <paramref name="chromaOnly"/> splice a filtered plane back onto the raw others, which is the
+    /// direct test of which plane an artifact lives in.</summary>
+    private void Anatomy(Burst burst, string tag, SstvDenoiseOptions? options, string dir,
+      bool lumaOnly = false, bool chromaOnly = false)
+    {
+      SstvImagePlanes result;
+      var luma = new SstvNlmStats();
+      var chroma = new SstvNlmStats();
+
+      if (options == null) result = burst.Planes;
+      else
+      {
+        var full = burst.Planes.Denoise(options, luma, chroma);
+        result = full;
+        if (lumaOnly || chromaOnly)
+        {
+          result = burst.Planes.Denoise(new SstvDenoiseOptions { Method = SstvDenoiseMethod.None });
+          if (lumaOnly) Array.Copy(full.Y, result.Y, full.Y.Length);
+          else { Array.Copy(full.Cr, result.Cr, full.Cr.Length); Array.Copy(full.Cb, result.Cb, full.Cb.Length); }
+        }
+      }
+
+      var img = result.ToRgb();
+      var (dx1, dy1, _) = SstvProbeSheet.Texture(img);
+      output.WriteLine($"    {tag,-16} {dx1,7:+0.000} {dy1,7:+0.000} "
+        + $"{SstvProbeSheet.ChromaDx1(result),7:+0.000} {SstvProbeSheet.ChromaDy1(result),7:+0.000} "
+        + $"{Share(luma.FlatTopShare, luma),7} {Share(luma.RejectedShare, luma),7} "
+        + $"{Share(chroma.FlatTopShare, chroma),7} {Share(chroma.RejectedShare, chroma),7}");
+      img.SavePng(Path.Combine(dir, $"{burst.Tag}_{tag}.png"));
+    }
+
+    private static string Share(double value, SstvNlmStats stats)
+      => stats.Evaluated == 0 ? "-" : $"{100 * value:0.0}";
 
 
     // ----------------------------------------------------------------------------------------------------
