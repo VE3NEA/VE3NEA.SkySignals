@@ -4,18 +4,25 @@ using MathNet.Numerics;
 
 namespace VE3NEA.SkySSTV
 {
-  /// <summary>A progressive image notification from the streaming decoder (plan §5/§7 P7.5).
-  /// <paramref name="Image"/> carries the per-pixel Wiener-gain confidence in its alpha plane (§6.2);
-  /// rows at and beyond <paramref name="ValidRows"/> have not been received (alpha 0).</summary>
+  /// <summary>A progressive image notification from the streaming decoder (plan §5/§7 P7.5). Rows at and
+  /// beyond <paramref name="ValidRows"/> have not been received and are black.</summary>
   /// <param name="ImageId">Stable id of this image across its progressive updates.</param>
   /// <param name="Mode">The train's SSTV mode.</param>
   /// <param name="StartSeconds">Stream time of the image's first line sync onset.</param>
   /// <param name="FromVis">Whether the train was seeded by a decoded VIS header.</param>
-  /// <param name="Image">The current reconstruction (full mode geometry; unreceived rows black).</param>
-  /// <param name="ValidRows">Rows rendered so far.</param>
+  /// <param name="Image">The current reconstruction (full mode geometry; unreceived rows black), with
+  /// the decode-time filter of <see cref="SstvDecodeOptions.Denoise"/> already applied.</param>
+  /// <param name="Planes">The RAW Y/Cr/Cb reconstruction the denoise dialog re-filters — <b>only on the
+  /// final notification</b>, null on progressive ones. Not because a progressive image could not carry
+  /// them, but because nothing would read them: denoising is offered at completion (D2) and is never
+  /// automatic (D14), so building 3 B/px once per rendered line would be pure waste. The image cannot be
+  /// recomputed from these, since under D15 it is Wiener-filtered and so is not a pure function of the
+  /// planes — the event carries both.</param>
+  /// <param name="ValidRows">Rows rendered so far. A high-water mark; see
+  /// <see cref="SstvImagePlanes.RowRendered"/> for the per-row truth.</param>
   /// <param name="Final">True on the finalize notification (train retired / end of stream).</param>
   public sealed record SstvImageEvent(int ImageId, SstvMode Mode, double StartSeconds, bool FromVis,
-    RgbImage Image, int ValidRows, bool Final);
+    RgbImage Image, SstvImagePlanes? Planes, int ValidRows, bool Final);
 
   /// <summary>
   /// The push-based streaming decoder (plan §1.13/§6.0/§7 P7.5): feed consecutive IQ blocks of any size
@@ -270,7 +277,7 @@ namespace VE3NEA.SkySSTV
     {
       var evt = new SstvImageEvent(builder.ImageId, builder.Train.Format,
         builder.Train.Regr.GetPulseTime(0) / fs, builder.Train is SstvVisPulseTrain,
-        builder.Snapshot(), builder.ValidRows, final);
+        builder.Snapshot(), final ? builder.Planes() : null, builder.ValidRows, final);
       if (final) ImageCompleted?.Invoke(evt);
       else { builder.Emitted = true; ImageUpdated?.Invoke(evt); }
     }

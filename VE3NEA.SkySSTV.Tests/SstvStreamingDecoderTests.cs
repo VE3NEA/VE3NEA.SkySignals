@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using FluentAssertions;
 using MathNet.Numerics;
 using Xunit;
@@ -83,7 +84,16 @@ namespace VE3NEA.SkySSTV.Tests
       var final = finals[0];
       final.Mode.Should().Be(mode);
       final.ValidRows.Should().BeGreaterThan((int)(0.9 * spec.Height), "nearly every row must render");
-      final.Image.A.Should().NotBeNull("the §6.2 confidence plane rides in the alpha channel");
+      final.Image.A.Should().BeNull("the confidence plane is no longer written — it had no consumer, "
+        + "ToBitmap being 24bpp (denoise plan D16)");
+
+      // the raw planes ride along on the FINAL event only, because denoising is offered at completion
+      final.Planes.Should().NotBeNull("the denoise dialog re-filters the raw reconstruction");
+      final.Planes!.Coverage.Should().BeGreaterThan(0.9);
+      final.Planes.ChromaRowStep.Should().Be(mode == SstvMode.Robot72 ? 1 : 2);
+      final.Planes.FirstRenderedRow.Should().BeGreaterThanOrEqualTo(0);
+      final.Planes.RowRendered.Count(r => r).Should()
+        .BeLessThanOrEqualTo(final.ValidRows, "ValidRows is a high-water mark, so it bounds the count");
 
       double psnr = Psnr(src, final.Image, final.ValidRows);
       output.WriteLine($"{mode}: fromVis={final.FromVis} rows={final.ValidRows} PSNR={psnr:0.0} dB");
