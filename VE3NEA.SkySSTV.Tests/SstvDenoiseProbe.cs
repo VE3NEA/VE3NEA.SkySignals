@@ -92,18 +92,22 @@ namespace VE3NEA.SkySSTV.Tests
       Run("strength", arms);
     }
 
-    [ManualFact("Result 2026-08-07. THE CONTROL EARNED ITS PLACE: on these numbers the detector "
-      + "contributes a SCALE CHANGE and not selectivity, so D3 should be re-examined before the dialog is "
-      + "built. (1) Arm B is monotone in k and simply smooths harder — B_inflate3 at Sig 0.4 lands on top "
-      + "of arm A at Sig 0.8 (flat 49.9/rej 5.5 vs 50.5/1.9, dx1 +0.975 vs +0.987), i.e. it is confounded "
-      + "with the strength axis rather than orthogonal to it. (2) Arm D is arm B to within 0.003 dx1 in "
-      + "every burst, with flat%/rej% IDENTICAL by construction: once the distance is shaped, whether the "
-      + "inverse-variance weighting is also shaped is a second-order effect. (3) Arm C is degenerate at "
-      + "this Sig — rej 99.8-99.9 %, output = raw — because the gain is 0 over most pixels so s collapses "
-      + "to 0.05*sigma^2 and every donor overshoots the cutoff. That also means THE ARMS CANNOT BE "
-      + "COMPARED AT A FIXED Sig: each mapping law rescales the noise map, so a fair comparison needs each "
-      + "arm re-centred to the same flat%/rej% operating point first. Read the sheets for whether B's "
-      + "extra smoothing lands where the detector says noise (the point of the exercise) or everywhere.")]
+    [ManualFact("Result 2026-08-07, run TWICE — and the second run reverses the first. At a fixed Sig the "
+      + "sheet said the detector only rescales: arm B was monotone in k and B(k=3) at Sig 0.4 landed on "
+      + "top of the control at Sig 0.8, while arm C was an outright no-op (rej 99.9 %, output = raw, "
+      + "because g is 0 over most pixels so s collapses to 0.05*sigma^2). But that comparison was invalid "
+      + "— each law rescales the noise map, so at one Sig the arms sit at different points on the "
+      + "smoothing curve and the sheet compares STRENGTH, not law. RE-CENTRED to the control's flat-top "
+      + "share (the probe now bisects Sig per arm), the answer inverts: (1) ARM B IS GENTLER THAN THE "
+      + "CONTROL AT EQUAL SMOOTHING — dx1 +0.877 vs +0.905 and hf 5.4 % vs 3.7 % on VIZARD 21:43, the same "
+      + "way round on every burst — so the detector does concentrate the smoothing rather than merely add "
+      + "it, which is what D3 hoped for. It saturates at k=3; k=6 is within 0.002 dx1 of it, at a lower "
+      + "Sig. (2) ARM D IS ARM B to within 0.004 dx1 everywhere: the distance shaping carries the effect "
+      + "and shaping the inverse-variance weighting as well adds nothing. (3) ARM C IS OUT — matched on "
+      + "flat% it rejects almost nothing (rej 2.5 % against 36 %) and flattens the picture (dx1 +0.984, "
+      + "hf 0.3 %), which is the thin-stroke failure the plan predicted for it. Caveat on the method: C "
+      + "matching flat% while missing rej% by an order of magnitude shows flat-top share alone does not "
+      + "pin an operating point. Prefer B(k=3), pending the sheets.")]
     public void MappingLaw()
     {
       var arms = new[]
@@ -115,7 +119,7 @@ namespace VE3NEA.SkySSTV.Tests
         new Arm("C_deflate",   Nlm() with { NlmNoiseMap = SstvNlmNoiseMap.GainDeflate }),
         new Arm("D_distonly",  Nlm() with { NlmNoiseMap = SstvNlmNoiseMap.DistanceOnly, NlmGainK = 3.0 })
       };
-      Run("mapping", arms);
+      Run("mapping", arms, matchOperatingPoint: true);
     }
 
     [ManualFact("Result 2026-08-07. THE §5.2 LANDMINE IS REAL AND MEASURABLE. Leaving the duplicated "
@@ -200,12 +204,21 @@ namespace VE3NEA.SkySSTV.Tests
       NlmNativeChroma = true
     };
 
-    private void Run(string experiment, Arm[] arms)
+    /// <summary><paramref name="matchOperatingPoint"/> re-centres every arm to the FIRST arm's flat-top
+    /// share before rendering it, by searching its <c>Sig</c>. Without that the §9.1 sheet cannot be
+    /// read at all: each mapping law rescales the noise map, so at a fixed Sig the arms sit at wildly
+    /// different points on the smoothing curve and the sheet compares strength rather than law — which
+    /// is exactly how the 2026-08-07 run found arm B "confounded with the strength axis" and arm C an
+    /// outright no-op. Matched, the question becomes the one worth asking: given the same amount of
+    /// smoothing, does the detector put it in better places?</summary>
+    private void Run(string experiment, Arm[] arms, bool matchOperatingPoint = false)
     {
       string dir = Path.Combine(OutDir, experiment);
       Directory.CreateDirectory(dir);
       output.WriteLine("reference — MMSSTV noise on the reported capture: dx1=+0.489 dy1=+0.180 hf>0.2c/px=25.4%");
       output.WriteLine($"holding Sig={ProbeSig} where this experiment does not vary it");
+      if (matchOperatingPoint)
+        output.WriteLine($"arms re-centred to {arms[0].Tag}'s flat-top share; the Sig each needed is reported");
       output.WriteLine("");
 
       foreach (var (relPath, note) in Corpus)
@@ -219,20 +232,26 @@ namespace VE3NEA.SkySSTV.Tests
         foreach (var burst in capture.Bursts)
         {
           output.WriteLine($"=== {burst.Tag} {burst.Mode}");
-          output.WriteLine($"    {"arm",-14} {"dx1",7} {"dy1",7} {"hf%",6} {"cdx1",7} "
+          output.WriteLine($"    {"arm",-14} {"sig",5} {"dx1",7} {"dy1",7} {"hf%",6} {"cdx1",7} "
             + $"{"flat%",6} {"rej%",6} {"mask",7} {"ms",6}");
 
           var sheet = new List<(string, RgbImage)> { ("00_raw", burst.Planes.ToRgb()) };
-          Report("00_raw", sheet[0].Item2, burst.Planes, null, 0);
+          Report("00_raw", 0, sheet[0].Item2, burst.Planes, null, 0);
 
+          double target = -1;
           foreach (var arm in arms)
           {
+            var options = arm.Options;
+            if (matchOperatingPoint && target >= 0) options = MatchFlatTop(burst.Planes, options, target);
+
             var stats = new SstvNlmStats();
             var clock = Stopwatch.StartNew();
-            var filtered = burst.Planes.Denoise(arm.Options, stats);
+            var filtered = burst.Planes.Denoise(options, stats);
             clock.Stop();
+            if (matchOperatingPoint && target < 0) target = 100 * stats.FlatTopShare;
+
             var img = filtered.ToRgb();
-            Report(arm.Tag, img, filtered, stats, clock.ElapsedMilliseconds);
+            Report(arm.Tag, options.NlmSig, img, filtered, stats, clock.ElapsedMilliseconds);
             img.SavePng(Path.Combine(dir, $"{burst.Tag}_{arm.Tag}.png"));
             sheet.Add((arm.Tag, img));
           }
@@ -243,15 +262,44 @@ namespace VE3NEA.SkySSTV.Tests
       output.WriteLine($"contact sheets in {dir}");
     }
 
-    private void Report(string tag, RgbImage img, SstvImagePlanes planes, SstvNlmStats? stats, long ms)
+    private void Report(string tag, double sig, RgbImage img, SstvImagePlanes planes, SstvNlmStats? stats,
+      long ms)
     {
       var (dx1, dy1, hf) = SstvProbeSheet.Texture(img);
       double cdx1 = SstvProbeSheet.ChromaDx1(planes);
       string flat = stats == null || stats.Evaluated == 0 ? "-" : $"{100 * stats.FlatTopShare:0.0}";
       string rej = stats == null || stats.Evaluated == 0 ? "-" : $"{100 * stats.RejectedShare:0.0}";
       string mask = stats == null ? "-" : stats.MaskedPixels.ToString();
-      output.WriteLine($"    {tag,-14} {dx1,7:+0.000} {dy1,7:+0.000} {hf,5:0.0}% {cdx1,7:+0.000} "
-        + $"{flat,6} {rej,6} {mask,7} {ms,6}");
+      output.WriteLine($"    {tag,-14} {sig,5:0.00} {dx1,7:+0.000} {dy1,7:+0.000} {hf,5:0.0}% "
+        + $"{cdx1,7:+0.000} {flat,6} {rej,6} {mask,7} {ms,6}");
+    }
+
+    /// <summary>Find the <c>Sig</c> at which this arm reaches <paramref name="targetFlat"/> percent of
+    /// donors in the weight kernel's flat top — a bisection on log Sig, the flat-top share being
+    /// monotone in it. Flat-top share is the right thing to match because it is the direct measure of
+    /// how much of the search window is being averaged with full weight, i.e. of smoothing strength as
+    /// the filter itself sees it (§5.6). An arm that cannot reach the target inside the bracket comes
+    /// back at the bracket edge, and the reported flat% is what says so.</summary>
+    private static SstvDenoiseOptions MatchFlatTop(SstvImagePlanes planes, SstvDenoiseOptions arm,
+      double targetFlat)
+    {
+      double lo = 0.02, hi = 20.0;
+      var best = arm;
+      double bestErr = double.MaxValue;
+
+      for (int i = 0; i < 8; i++)
+      {
+        double sig = Math.Sqrt(lo * hi);
+        var candidate = arm with { NlmSig = sig };
+        var stats = new SstvNlmStats();
+        planes.Denoise(candidate, stats);
+
+        double flat = 100 * stats.FlatTopShare;
+        double err = Math.Abs(flat - targetFlat);
+        if (err < bestErr) { bestErr = err; best = candidate; }
+        if (flat < targetFlat) lo = sig; else hi = sig;
+      }
+      return best;
     }
 
 
