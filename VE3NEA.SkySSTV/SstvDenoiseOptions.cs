@@ -92,7 +92,10 @@
     /// the local mean — a <see cref="WienerWindowW"/>×<see cref="WienerWindowH"/> box blur, confirmed
     /// by matching the output's noise autocorrelation to that box to three decimals. The floor keeps
     /// some texture rather than a flat wash. It restores NOISE as a texture cue; it recovers nothing,
-    /// which is why NLM exists (plan §1).</para></summary>
+    /// which is why NLM exists (plan §1).</para>
+    ///
+    /// <para>Retained at 0.25 on 2026-08-08 after a 0.25/0.40/0.55/0.70/0.85/off ladder: raising it
+    /// buys texture the NLM supplies better, and NLM was judged to beat the Wiener at every floor.</para></summary>
     public double WienerGainFloor { get; init; } = 0.25;
 
     /// <summary>Chroma noise over-weight (plan §6.2). Chroma is smoothed harder than luma
@@ -118,12 +121,17 @@
     /// <summary>Strength: scales the measured noise variance as <c>s = Sig²·σ²</c>. Smaller ⇒ the
     /// filter assumes less noise ⇒ fewer donors qualify ⇒ gentler.
     ///
-    /// <para><b>PROVISIONAL — plan §9.3.</b> 0.4 is the reference UI's default and is NOT expected to
-    /// transfer: it is tuned against that implementation's own second-difference noise estimator,
-    /// which reads several× low on post-Stage-3 FM noise, whereas we use the vertical
-    /// first-difference median (plan §5.3). The value is chosen by a wide log-spaced sweep judged on
-    /// denoising quality, with the §5.6 degeneracy diagnostics as guard rails.</para></summary>
-    public double NlmSig { get; init; } = 0.4;
+    /// <para>0.6, the middle of the 0.40–0.80 band judged best 2026-08-07 over a log-spaced sweep of
+    /// 0.10–3.20; 1.60 and above is over-smoothed. NOT the reference UI's 0.4 by coincidence — its
+    /// default is tuned against that implementation's own second-difference noise estimator, which
+    /// reads several× low on post-Stage-3 FM noise, whereas we use the vertical first-difference
+    /// median (plan §5.3).</para>
+    ///
+    /// <para>The window has abrupt edges and it MOVES WITH SNR (the §5.6 degeneracy diagnostics put a
+    /// noisy burst's flat-top share at a given Sig several× a clean one's), which is why the value is
+    /// exposed in the dialog and why NLM is manual-only — no single number serves every image
+    /// (independent evidence for D14).</para></summary>
+    public double NlmSig { get; init; } = 0.6;
 
     /// <summary>Run the second pass over the pixels where pass 1 left residual impulses (plan §5.5).
     /// An isolated impulse has no similar patch anywhere, so no donor matches it and plain NLM
@@ -141,9 +149,15 @@
     /// reused for it unchanged (plan §5.3).</summary>
     public double NlmSecondPassPercentile { get; init; } = 0.998;
 
-    /// <summary>How the Wiener detector's gain becomes the per-pixel noise variance — an open
-    /// experiment (plan §9.1).</summary>
-    public SstvNlmNoiseMap NlmNoiseMap { get; init; } = SstvNlmNoiseMap.GainInflate;
+    /// <summary>How the Wiener detector's gain becomes the per-pixel noise variance (plan §9.1).
+    ///
+    /// <para><b>Settled 2026-08-08 on the control</b>: judged at matched smoothing, the control, the
+    /// inflate arm and the distance-only arm are visually indistinguishable, and only
+    /// <see cref="SstvNlmNoiseMap.GainDeflate"/> stands out — over-smoothed, exactly the failure its
+    /// doc predicted. So the detector contributes nothing the per-row σ does not already carry, and
+    /// the control also skips computing the gain map. D3 answered in the negative; the other arms are
+    /// retained as measurable arms in the dialog.</para></summary>
+    public SstvNlmNoiseMap NlmNoiseMap { get; init; } = SstvNlmNoiseMap.RowOnly;
 
     /// <summary>Inflation/deflation strength of <see cref="NlmNoiseMap"/>. Provisional.</summary>
     public double NlmGainK { get; init; } = 3.0;
@@ -160,9 +174,10 @@
     /// as a measurable arm.</para></summary>
     public bool NlmNativeChroma { get; init; } = true;
 
-    /// <summary>Below this per-row signal-to-noise ratio a row is treated as carrying no image and is
-    /// passed through UNFILTERED by both methods. 0 (the default) disables the gate, reproducing the
-    /// behaviour measured up to 2026-08-07.
+    /// <summary>Treat rows whose per-row SNR falls below <see cref="SstvWienerFilter.NoiseBandSnr"/> as
+    /// carrying no image: they are passed through UNFILTERED by both methods, are excluded from the
+    /// noise estimate, and — under NLM — are barred from donating patches. On by default since
+    /// 2026-08-08; off reproduces the behaviour measured up to 2026-08-07.
     ///
     /// <para>Aimed at a defect that no amount of tuning the shrinkage curve can reach: where the pass
     /// dropped below the FM threshold the image carries bands of pure noise at high RMS, both filters
@@ -173,20 +188,24 @@
     /// removable speckle.</para>
     ///
     /// <para>The statistic is <see cref="SstvWienerFilter.RowSnr"/>: <c>var_row/σ²n − 1</c>, ≈0 in a
-    /// noise-only band and well above it wherever a picture is present. It is measured on luma, applied
-    /// to all three planes, and thresholded at <see cref="SstvWienerFilter.NoiseBandSnr"/> = 0.02. The
-    /// DECISION is then smoothed across rows, because a bare per-row threshold struck horizontal
-    /// stripes — the statistic's own spread on pure noise being ≈±0.16, adjacent rows fall on opposite
-    /// sides of it arbitrarily. Smoothing the mask rather than ramping the threshold keeps the cut
-    /// exactly at 0.02 and makes only the transition gradual.</para>
+    /// noise-only band and well above it wherever a picture is present. It is measured on luma and
+    /// applied to all three planes — whether a band carries a picture is a property of the band, not of
+    /// a colour component — and thresholded at <see cref="SstvWienerFilter.NoiseBandSnr"/> = 0.02, the
+    /// statistic being median-of-9 smoothed first because its own spread on pure noise is ≈±0.16 and a
+    /// bare per-row threshold therefore struck horizontal stripes.</para>
     ///
     /// <para><b>A switch and not a slider, deliberately.</b> The threshold was swept down to 0.02 and
     /// even there it stands the filter down over areas with detail the eye can see — the two cases are
     /// not separable on a per-row variance, which is a local statistic, where what NLM recovers from a
     /// marginal burst is non-local structure that only appears once many similar patches are averaged.
     /// So there is no threshold to tune: the operator, who can see the image, decides whether this one
-    /// is a picture buried in noise or noise with nothing in it.</para></summary>
-    public bool SkipNoiseOnlyBands { get; init; } = false;
+    /// is a picture buried in noise or noise with nothing in it.</para>
+    ///
+    /// <para><b>Excluded, not faded.</b> The gate folds into row validity rather than blending a
+    /// filtered result back per row. Blending was tried and was much worse: it leaves the noise rows
+    /// filtered, hence still donating patches and still inflating σ, so it changes the PICTURE rows
+    /// too — 43 % of pixels moved (plan §9.8).</para></summary>
+    public bool SkipNoiseOnlyBands { get; init; } = true;
 
     /// <summary>Chroma noise over-weight for the NLM, decoupled from the Wiener's
     /// <see cref="WienerChromaK"/> because the same number does not mean the same thing in the two
