@@ -155,8 +155,18 @@ namespace VE3NEA.SkySSTV
     /// <para>Arm B is poison in principle: after <c>FillMissingChroma</c> half the chroma rows are
     /// byte-exact copies, so a chroma patch has a ZERO-distance twin one row away that draws full
     /// weight from the flat-topped kernel while carrying the identical noise sample — the average
-    /// gains nothing while the algorithm believes it found strong corroboration. It is retained only
+    /// gains nothing while the algorithm believes it found strong corroboration. Measured 2026-08-07
+    /// to put 2.4–2.7× more donors in the flat top, and to cost 1.6× the runtime. It is retained only
     /// as a measurable arm.</para></summary>
     public bool NlmNativeChroma { get; init; } = true;
+
+    /// <summary>Row bands the accumulation is split into, one per thread; 0 (the default) picks
+    /// <see cref="System.Environment.ProcessorCount"/> bands subject to a minimum band height, and 1
+    /// forces the serial path.
+    ///
+    /// <para>Present because the banded and serial forms sum each pixel's contributions in a DIFFERENT
+    /// ORDER (plan §6), and floating-point addition is not associative — so the equivalence test needs
+    /// to run both. It is not a user-facing setting.</para></summary>
+    public int NlmBands { get; init; } = 0;
   }
 }

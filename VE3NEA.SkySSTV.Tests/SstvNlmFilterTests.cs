@@ -102,6 +102,39 @@ namespace VE3NEA.SkySSTV.Tests
       planes.Y.Should().Equal(before, "Denoise must not modify the planes it reads");
     }
 
+    /// <summary>The §6 halo-band scheme against the serial sweep. It is NOT a bit-identity test, though
+    /// the plan said it would be: the banded form sums each pixel's contributions in a different order —
+    /// same-band donors interleaved by offset, previous-band donors arriving in one lump at the halo
+    /// reduction — and floating-point addition is not associative. What is asserted is that the
+    /// difference stays where it belongs, at the last bits of a double, and that the symmetry saving
+    /// survived: a band that forgot to credit its spill would lose whole donors, not last bits.</summary>
+    [Fact]
+    public void Nlm_BandedAccumulationMatchesSerial()
+    {
+      const int Tall = 120;                                  // enough rows for several bands at MinBandRows
+      var planes = new SstvImagePlanes(W, Tall, 2);
+      Array.Fill(planes.RowRendered, true);
+      var noisy = AddNoise(TallPattern(Tall), 12.0, seed: 23);
+      for (int i = 0; i < noisy.Length; i++)
+        planes.Y[i] = planes.Cr[i] = planes.Cb[i] = (byte)Math.Clamp(Math.Round(noisy[i]), 0, 255);
+
+      var opts = new SstvDenoiseOptions { Method = SstvDenoiseMethod.Nlm, NlmTwoPass = true };
+      var serial = planes.Denoise(opts with { NlmBands = 1 });
+      var banded = planes.Denoise(opts with { NlmBands = 5 });
+
+      int differing = 0, worst = 0;
+      for (int i = 0; i < serial.Y.Length; i++)
+      {
+        int delta = Math.Abs(serial.Y[i] - banded.Y[i]);
+        if (delta > 0) differing++;
+        worst = Math.Max(worst, delta);
+      }
+      output.WriteLine($"serial vs 5 bands: {differing} of {serial.Y.Length} px differ, worst {worst} LSB");
+
+      worst.Should().BeLessThanOrEqualTo(1, "only pixels sitting on a rounding boundary may move");
+      differing.Should().BeLessThan(serial.Y.Length / 100, "a reordering must not change the picture");
+    }
+
     [Fact]
     public void Nlm_ChromaRunsAtNativeResolution()
     {
@@ -154,6 +187,20 @@ namespace VE3NEA.SkySSTV.Tests
         {
           double v = 60 + 100.0 * x / W;
           if (x % 12 == 0 && y > 6 && y < H - 6) v = 235;            // repeated 1-px vertical strokes
+          img[y * W + x] = v;
+        }
+      return img;
+    }
+
+    /// <summary><see cref="Pattern"/> at an arbitrary height, so the band scheme has rows to split.</summary>
+    private static double[] TallPattern(int height)
+    {
+      var img = new double[W * height];
+      for (int y = 0; y < height; y++)
+        for (int x = 0; x < W; x++)
+        {
+          double v = 60 + 100.0 * x / W;
+          if (x % 12 == 0 && y > 6 && y < height - 6) v = 235;
           img[y * W + x] = v;
         }
       return img;

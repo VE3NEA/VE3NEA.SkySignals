@@ -63,6 +63,24 @@ namespace VE3NEA.SkySSTV
       RowRendered = (bool[])src.RowRendered.Clone();
     }
 
+    /// <summary>Wrap a reconstruction's working planes, rounding and clamping to bytes.
+    /// <paramref name="rowRendered"/> null means every row was drawn — true of the batch decoder, which
+    /// always walks the full line count.</summary>
+    internal static SstvImagePlanes FromValues(double[] y, double[] cr, double[] cb, int width,
+      int height, int chromaRowStep, bool[]? rowRendered = null)
+    {
+      var planes = new SstvImagePlanes(width, height, chromaRowStep);
+      for (int i = 0; i < planes.Y.Length; i++)
+      {
+        planes.Y[i] = (byte)Math.Clamp(Math.Round(y[i]), 0, 255);
+        planes.Cr[i] = (byte)Math.Clamp(Math.Round(cr[i]), 0, 255);
+        planes.Cb[i] = (byte)Math.Clamp(Math.Round(cb[i]), 0, 255);
+      }
+      if (rowRendered != null) Array.Copy(rowRendered, planes.RowRendered, height);
+      else Array.Fill(planes.RowRendered, true);
+      return planes;
+    }
+
     /// <summary>First rendered row, or −1 when nothing was rendered.</summary>
     public int FirstRenderedRow
     {
@@ -118,6 +136,11 @@ namespace VE3NEA.SkySSTV
     /// which is what lets the dialog re-apply at new parameters without compounding (plan §4.1).
     /// Only the rendered span is filtered; unrendered rows are copied through untouched.</summary>
     public SstvImagePlanes Denoise(SstvDenoiseOptions? options = null)
+      => Denoise(options, null);
+
+    /// <summary>The diagnostic form: <paramref name="stats"/> collects the plan §5.6 degeneracy counters
+    /// summed over the three planes, which is what the tuning probe reads instead of the picture.</summary>
+    internal SstvImagePlanes Denoise(SstvDenoiseOptions? options, SstvNlmStats? stats)
     {
       var o = options ?? new SstvDenoiseOptions();
       var result = new SstvImagePlanes(this);
@@ -139,9 +162,9 @@ namespace VE3NEA.SkySSTV
       {
         var valid = new bool[rows];
         Array.Copy(RowRendered, first, valid, 0, rows);
-        SstvNlmFilter.Apply(y, Width, rows, valid, 1.0, 1, o);
-        DenoiseChroma(cr, valid, first, rows, o);
-        DenoiseChroma(cb, valid, first, rows, o);
+        SstvNlmFilter.Apply(y, Width, rows, valid, 1.0, 1, o, stats);
+        DenoiseChroma(cr, valid, first, rows, o, stats);
+        DenoiseChroma(cb, valid, first, rows, o, stats);
       }
 
       Store(result.Y, y, first, rows);
@@ -164,13 +187,14 @@ namespace VE3NEA.SkySSTV
     /// <para>Collapsing is what makes the noise samples independent again: on the native grid,
     /// adjacent rows are different transmitted lines, so the vertical-difference noise estimator
     /// works without the step-2 correction the Wiener needs on the duplicated plane.</para></summary>
-    private void DenoiseChroma(double[] plane, bool[] valid, int first, int rows, SstvDenoiseOptions o)
+    private void DenoiseChroma(double[] plane, bool[] valid, int first, int rows, SstvDenoiseOptions o,
+      SstvNlmStats? stats)
     {
       int step = ChromaRowStep;
       if (!o.NlmNativeChroma || step <= 1)
       {
         // arm B: the duplicated rows are still present, so the noise estimator must step over them
-        SstvNlmFilter.Apply(plane, Width, rows, valid, o.WienerChromaK, step, o);
+        SstvNlmFilter.Apply(plane, Width, rows, valid, o.WienerChromaK, step, o, stats);
         return;
       }
 
@@ -193,7 +217,7 @@ namespace VE3NEA.SkySSTV
       }
 
       // on the native grid adjacent rows are different transmitted lines again, so step 1 is correct
-      SstvNlmFilter.Apply(native, Width, nRows, nativeValid, o.WienerChromaK, 1, o);
+      SstvNlmFilter.Apply(native, Width, nRows, nativeValid, o.WienerChromaK, 1, o, stats);
 
       for (int r = 0; r < rows; r++)
       {

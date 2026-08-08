@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -115,62 +115,17 @@ namespace VE3NEA.SkySSTV.Tests
           foreach (var v in Variants)
           {
             var img = SstvDecoder.Decode(seg, train.Format, v.Make(baseOpts));
-            var (dx1, dy1, hf) = Texture(img);
+            var (dx1, dy1, hf) = SstvProbeSheet.Texture(img);
             var (mg, z) = GainStats(seg, train.Format, v.Make(baseOpts));
             output.WriteLine($"    {v.Tag,-14} {dx1,7:+0.000} {dy1,7:+0.000} {hf,6:0.0}% {mg,7:0.000} {z,6:0.0}%");
             img.SavePng(Path.Combine(OutDir, $"{tag}_{v.Tag}.png"));
             sheet.Add((v.Tag, img));
           }
-          Montage(sheet, Path.Combine(OutDir, $"SHEET_{tag}.png"));
+          SstvProbeSheet.Montage(sheet, Path.Combine(OutDir, $"SHEET_{tag}.png"));
           output.WriteLine("");
         }
       }
       output.WriteLine($"contact sheets in {OutDir}");
-    }
-
-    /// <summary>The texture statistics the complaint is really about, measured on the decoded luma the same
-    /// way the reported PNGs were: horizontal/vertical lag-1 autocorrelation (how far a pixel's noise or
-    /// detail is smeared) and the share of horizontal power above 0.2 cycles/pixel.</summary>
-    private static (double dx1, double dy1, double hf) Texture(RgbImage img)
-    {
-      int w = img.Width, h = img.Height;
-      var y = new double[w * h];
-      for (int i = 0; i < w * h; i++) y[i] = 0.299 * img.R[i] + 0.587 * img.G[i] + 0.114 * img.B[i];
-
-      double mean = y.Average();
-      double num1 = 0, num2 = 0, den = 0;
-      for (int r = 0; r < h; r++)
-        for (int c = 0; c < w; c++)
-        {
-          double v = y[r * w + c] - mean;
-          den += v * v;
-          if (c + 1 < w) num1 += v * (y[r * w + c + 1] - mean);
-          if (r + 1 < h) num2 += v * (y[(r + 1) * w + c] - mean);
-        }
-      double dx1 = den > 0 ? num1 / den : 0, dy1 = den > 0 ? num2 / den : 0;
-
-      // share of horizontal power above 0.2 cycles/pixel, from the row-detrended luma
-      double hi = 0, tot = 0;
-      int nb = w / 2;
-      for (int r = 0; r < h; r++)
-      {
-        double rm = 0;
-        for (int c = 0; c < w; c++) rm += y[r * w + c];
-        rm /= w;
-        for (int kf = 1; kf <= nb; kf++)
-        {
-          double re = 0, im = 0;
-          for (int c = 0; c < w; c++)
-          {
-            double a = -2 * Math.PI * kf * c / w, v = y[r * w + c] - rm;
-            re += v * Math.Cos(a); im += v * Math.Sin(a);
-          }
-          double p = re * re + im * im;
-          tot += p;
-          if ((double)kf / w > 0.2) hi += p;
-        }
-      }
-      return (dx1, dy1, tot > 0 ? 100 * hi / tot : 0);
     }
 
     private static (double mean, double zero) GainStats(Complex32[] seg, SstvMode mode, SstvDecodeOptions o)
@@ -192,37 +147,5 @@ namespace VE3NEA.SkySSTV.Tests
       return (gain.Average(), 100.0 * gain.Count(v => v < 0.02) / gain.Length);
     }
 
-    /// <summary>Label-free grid montage — 5 variants per row at 1:1, in the declared variant order.</summary>
-    private static void Montage(List<(string tag, RgbImage img)> items, string path)
-    {
-      int cols = 5, pad = 4, labelH = 14;
-      int iw = items[0].img.Width, ih = items[0].img.Height;
-      int rows = (items.Count + cols - 1) / cols;
-      using var bmp = new Bitmap(cols * (iw + pad) + pad, rows * (ih + pad + labelH) + pad);
-      using var g = Graphics.FromImage(bmp);
-      g.Clear(Color.FromArgb(24, 24, 24));
-      using var font = new Font("Consolas", 8);
-      for (int i = 0; i < items.Count; i++)
-      {
-        int cx = i % cols, cy = i / cols;
-        int x = pad + cx * (iw + pad), yy = pad + cy * (ih + pad + labelH);
-        g.DrawString(items[i].tag, font, Brushes.White, x, yy);
-        using var tile = ToBitmap(items[i].img);
-        g.DrawImageUnscaled(tile, x, yy + labelH);
-      }
-      bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-    }
-
-    private static Bitmap ToBitmap(RgbImage img)
-    {
-      var bmp = new Bitmap(img.Width, img.Height);
-      for (int y = 0; y < img.Height; y++)
-        for (int x = 0; x < img.Width; x++)
-        {
-          var (r, gg, b) = img.Get(x, y);
-          bmp.SetPixel(x, y, Color.FromArgb(r, gg, b));
-        }
-      return bmp;
-    }
   }
 }

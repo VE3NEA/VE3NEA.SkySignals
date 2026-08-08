@@ -24,17 +24,62 @@ namespace VE3NEA.SkySSTV
     /// <see cref="SstvDecodeOptions.Acquire"/> false to decode at the fixed
     /// <see cref="SstvDecodeOptions.StartSample"/>.</summary>
     public static RgbImage Decode(Complex32[] iq, SstvMode mode, SstvDecodeOptions? options = null)
-    {
-      // the video/decode chain runs its own narrower Stage-1 channel (P6(c) lock, 2026-07-03): detection
-      // keeps ChannelBwHz, image quality wants VideoChannelBwHz + the blanker
-      var o = options ?? new SstvDecodeOptions();
-      return Decode(Discriminator(iq, o with { ChannelBwHz = o.VideoChannelBwHz }), mode, o);
-    }
+      => Reconstruction(iq, mode, options).ToRgb();
+
+    /// <summary>Decode to the Y/Cr/Cb planes rather than to RGB — the same reconstruction, stopped one
+    /// step short of the colour conversion, and quantized to bytes (denoise plan §4.1). The decode-time
+    /// filter selected by <see cref="SstvDecodeOptions.Denoise"/> has already been applied, so
+    /// <c>Method = None</c> is what yields the raw planes a post-filter should be measured on (plan §12,
+    /// "if both ever run, NLM must see the raw planes").</summary>
+    public static SstvImagePlanes DecodePlanes(Complex32[] iq, SstvMode mode,
+      SstvDecodeOptions? options = null)
+      => Reconstruction(iq, mode, options).ToPlanes();
 
     /// <summary>Decode from the discriminated audio (one <see cref="Discriminator"/> pass is shared between
     /// detection and decode — retro item O; every stage downstream of the outer FM demod consumes this
     /// array, so callers that already discriminated must not pay a second multi-hundred-MB pass).</summary>
     public static RgbImage Decode(double[] disc, SstvMode mode, SstvDecodeOptions? options = null)
+      => Reconstruction(disc, mode, options).ToRgb();
+
+    /// <summary>The plane-returning form of the shared-discriminator decode.</summary>
+    public static SstvImagePlanes DecodePlanes(double[] disc, SstvMode mode,
+      SstvDecodeOptions? options = null)
+      => Reconstruction(disc, mode, options).ToPlanes();
+
+    /// <summary>The reconstruction in its working form: unquantized planes plus the geometry. Kept
+    /// separate from <see cref="SstvImagePlanes"/> so the RGB path still converts from doubles and the
+    /// byte quantization is paid only by callers who asked for planes.</summary>
+    internal readonly record struct SstvReconstruction(double[] Y, double[] Cr, double[] Cb,
+      int Width, int Height, int ChromaRowStep)
+    {
+      public RgbImage ToRgb()
+      {
+        var img = new RgbImage(Width, Height);
+        for (int row = 0; row < Height; row++)
+          for (int x = 0; x < Width; x++)
+          {
+            int i = row * Width + x;
+            var (r, g, b) = YCrCb.ToRgb(Y[i], Cr[i], Cb[i]);
+            img.Set(x, row, (byte)Math.Round(r), (byte)Math.Round(g), (byte)Math.Round(b));
+          }
+        return img;
+      }
+
+      public SstvImagePlanes ToPlanes()
+        => SstvImagePlanes.FromValues(Y, Cr, Cb, Width, Height, ChromaRowStep);
+    }
+
+    private static SstvReconstruction Reconstruction(Complex32[] iq, SstvMode mode,
+      SstvDecodeOptions? options)
+    {
+      // the video/decode chain runs its own narrower Stage-1 channel (P6(c) lock, 2026-07-03): detection
+      // keeps ChannelBwHz, image quality wants VideoChannelBwHz + the blanker
+      var o = options ?? new SstvDecodeOptions();
+      return Reconstruction(Discriminator(iq, o with { ChannelBwHz = o.VideoChannelBwHz }), mode, o);
+    }
+
+    private static SstvReconstruction Reconstruction(double[] disc, SstvMode mode,
+      SstvDecodeOptions? options)
     {
       var o = options ?? new SstvDecodeOptions();
       var spec = SstvModes.Get(mode);
@@ -266,14 +311,14 @@ namespace VE3NEA.SkySSTV
     /// <summary><paramref name="corr"/> is the RLS slant/clock correction (period / nominal): it scales the
     /// intra-line segment and pixel widths so a sample-clock error does not shear pixels within a line
     /// (retro item F; Hopper's <c>TimeScale = samplesPerMs·CorrFactor</c>).</summary>
-    private static RgbImage Reconstruct(double[] brightness, double[]? wide, SstvModeSpec spec,
+    private static SstvReconstruction Reconstruct(double[] brightness, double[]? wide, SstvModeSpec spec,
       SstvDecodeOptions o, double[] lineOnset, double corr)
       => spec.Layout == SstvColorLayout.Pd
          ? ReconstructPd(brightness, wide, spec, o, lineOnset, corr)
          : ReconstructRobot(brightness, wide, spec, o, lineOnset, corr);
 
-    private static RgbImage ReconstructRobot(double[] brightness, double[]? wide, SstvModeSpec spec,
-      SstvDecodeOptions o, double[] lineOnset, double corr)
+    private static SstvReconstruction ReconstructRobot(double[] brightness, double[]? wide,
+      SstvModeSpec spec, SstvDecodeOptions o, double[] lineOnset, double corr)
     {
       int w = spec.Width, h = spec.Height;
       var bw = new BrightnessWindow(brightness, wide, 0, brightness.Length);
@@ -295,21 +340,13 @@ namespace VE3NEA.SkySSTV
       if (o.Denoise.Method == SstvDenoiseMethod.Wiener)
         SstvWienerFilter.Apply(y, cr, cb, w, h, null, o.Denoise);
 
-      var img = new RgbImage(w, h);
-      for (int row = 0; row < h; row++)
-        for (int x = 0; x < w; x++)
-        {
-          int i = row * w + x;
-          var (r, g, b) = YCrCb.ToRgb(y[i], cr[i], cb[i]);
-          img.Set(x, row, (byte)Math.Round(r), (byte)Math.Round(g), (byte)Math.Round(b));
-        }
-      return img;
+      return new SstvReconstruction(y, cr, cb, w, h, spec.ChromaRowStep);
     }
 
     /// <summary>PD layout: each transmitted line is sync → porch → Y(even row) → R-Y → B-Y → Y(odd row),
     /// no separators, and the one chroma pair is shared by the two luma rows (plan §1.8, §2).</summary>
-    private static RgbImage ReconstructPd(double[] brightness, double[]? wide, SstvModeSpec spec,
-      SstvDecodeOptions o, double[] lineOnset, double corr)
+    private static SstvReconstruction ReconstructPd(double[] brightness, double[]? wide,
+      SstvModeSpec spec, SstvDecodeOptions o, double[] lineOnset, double corr)
     {
       int w = spec.Width, h = spec.Height;
       var bw = new BrightnessWindow(brightness, wide, 0, brightness.Length);
@@ -327,15 +364,7 @@ namespace VE3NEA.SkySSTV
       if (o.Denoise.Method == SstvDenoiseMethod.Wiener)
         SstvWienerFilter.Apply(y, cr, cb, w, h, null, o.Denoise);
 
-      var img = new RgbImage(w, h);
-      for (int row = 0; row < h; row++)
-        for (int x = 0; x < w; x++)
-        {
-          int i = row * w + x;
-          var (r, g, b) = YCrCb.ToRgb(y[i], cr[i], cb[i]);
-          img.Set(x, row, (byte)Math.Round(r), (byte)Math.Round(g), (byte)Math.Round(b));
-        }
-      return img;
+      return new SstvReconstruction(y, cr, cb, w, h, spec.ChromaRowStep);
     }
 
     /// <summary>One transmitted Robot line rendered onto the Y/Cr/Cb planes at row <paramref name="line"/> —

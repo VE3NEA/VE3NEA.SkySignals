@@ -34,6 +34,13 @@ namespace VE3NEA.SkySSTV
     /// <summary>Number of transmitted lines in a full image.</summary>
     public int LineCount => Height / RowsPerLine;
 
+    /// <summary>Vertical duplication factor of the chroma planes once the reconstruction has filled the
+    /// gaps: Robot36 sends one chroma component per line and PD shares one chroma pair between two rows,
+    /// so both end up with each chroma row duplicated across a pair; Robot72 sends both components on
+    /// every line and needs no duplication. A filter that does not know half the chroma rows are exact
+    /// copies draws false confidence from them (denoise plan §5.2).</summary>
+    public int ChromaRowStep => Layout == SstvColorLayout.Robot72 ? 1 : 2;
+
     /// <summary>The 8-bit VIS byte actually transmitted: 7 data bits + even-parity bit in the MSB.</summary>
     public int VisByte => SstvModes.EvenParityByte(VisCode);
   }

@@ -32,6 +32,33 @@ namespace VE3NEA.SkySSTV
   /// <para><b>The constants here are provisional</b> and are settled by the plan's §9 visual
   /// experiments, not by matching the reference implementation (plan §5.6, D20).</para>
   /// </summary>
+  /// <summary>
+  /// The degeneracy diagnostics of one <see cref="SstvNlmFilter.Apply"/> run (denoise plan §5.6).
+  /// Neither failure mode announces itself in the picture, so the probe reads them rather than the
+  /// image: an <see cref="FlatTopShare"/> near 1 means every donor drew full weight and the filter has
+  /// become a 21×21 box average — smooth, plausible, and exactly the defect the plan exists to remove
+  /// — while a <see cref="RejectedShare"/> near 1 means every donor was refused and the run was an
+  /// expensive no-op.
+  /// </summary>
+  internal sealed class SstvNlmStats
+  {
+    /// <summary>Donor pairs whose distance was evaluated, over both passes.</summary>
+    public long Evaluated;
+
+    /// <summary>Of those, the ones inside the weight kernel's flat top (d̄ ≤ 1), which draw full weight.</summary>
+    public long FlatTop;
+
+    /// <summary>Of those, the ones past the cutoff, which contribute nothing.</summary>
+    public long Rejected;
+
+    /// <summary>Pixels the second pass recomputed, summed over the planes (plan §5.5): near zero means
+    /// the pass costs its ~2× runtime for nothing.</summary>
+    public int MaskedPixels;
+
+    public double FlatTopShare => Evaluated > 0 ? (double)FlatTop / Evaluated : 0;
+    public double RejectedShare => Evaluated > 0 ? (double)Rejected / Evaluated : 0;
+  }
+
   internal static class SstvNlmFilter
   {
     /// <summary>Distance past which a donor contributes nothing worth the arithmetic:
@@ -81,63 +108,73 @@ namespace VE3NEA.SkySSTV
     /// <param name="noiseRowStep">Row spacing of the vertical-difference noise estimator. 1 once
     /// chroma sits on its native grid; the chroma duplication factor when it does not.</param>
     public static void Apply(double[] plane, int w, int h, bool[] rowValid, double noiseK,
-      int noiseRowStep, SstvDenoiseOptions o)
+      int noiseRowStep, SstvDenoiseOptions o, SstvNlmStats? stats = null)
     {
       int patchWing = Math.Max(1, o.NlmPatchWing);
       int searchWing = Math.Max(1, o.NlmSearchWing);
       if (w < 2 * patchWing + 1 || h < 2 * patchWing + 1) return;
 
-      double[] noise = NoiseMap(plane, w, h, rowValid, noiseK, noiseRowStep, o);
-      var ctx = new Context(plane, noise, w, h, rowValid, patchWing, searchWing);
+      var (dist, weight) = NoiseMap(plane, w, h, rowValid, noiseK, noiseRowStep, o);
+      var ctx = new Context(plane, dist, weight, w, h, rowValid, patchWing, searchWing);
 
-      ctx.Accumulate(null);
+      ctx.Accumulate(null, stats, o.NlmBands);
       ctx.Resolve(null);
 
       if (o.NlmTwoPass)
       {
         bool[] mask = BuildMask(ctx.Output, w, h, rowValid, o.NlmSecondPassPercentile);
+        if (stats != null) foreach (bool m in mask) if (m) stats.MaskedPixels++;
         ctx.ScaleNoise(o.NlmSecondPassNoise);
-        ctx.Accumulate(mask);
+        ctx.Accumulate(mask, stats, o.NlmBands);
         ctx.Resolve(mask);
       }
 
       Array.Copy(ctx.Output, plane, plane.Length);
     }
 
-    /// <summary>Per-pixel noise variance: the plane's own per-row σ² (the estimator measured to be
-    /// right on this noise), scaled by the strength setting and shaped by the Wiener detector's gain
-    /// — plan §5.4/§9.1. The mapping is an open experiment; <see cref="SstvNlmNoiseMap.RowOnly"/> is
-    /// the control that leaves the detector out entirely.</summary>
-    private static double[] NoiseMap(double[] plane, int w, int h, bool[] rowValid, double noiseK,
-      int noiseRowStep, SstvDenoiseOptions o)
+    /// <summary>The two noise maps the filter needs: one normalizing the patch DISTANCE, one weighting
+    /// each donor's contribution (<c>w/s</c>). Both start from the plane's own per-row σ² — the
+    /// estimator measured to be right on this noise — scaled by the strength setting and then shaped
+    /// by the Wiener detector's gain according to the §9.1 arm:
+    ///
+    /// <list type="bullet">
+    /// <item><see cref="SstvNlmNoiseMap.RowOnly"/> — the control: the detector is unused, both maps are
+    /// the plain per-row σ².</item>
+    /// <item><see cref="SstvNlmNoiseMap.GainInflate"/> — inflate where the detector says noise. Its
+    /// failure mode is survivable: a misjudged pixel is merely averaged a little harder.</item>
+    /// <item><see cref="SstvNlmNoiseMap.GainDeflate"/> — deflate where the detector says signal. Riskier:
+    /// a thin stroke the detector missed is scaled down and never recovers.</item>
+    /// <item><see cref="SstvNlmNoiseMap.DistanceOnly"/> — the detector gates only the distance, so it
+    /// decides which donors qualify while the inverse-variance weighting stays purely per-row.</item>
+    /// </list>
+    ///
+    /// <para>The two returned arrays are the SAME instance whenever the arm does not separate them, and
+    /// the accumulator relies on that to skip a second padded copy.</para></summary>
+    private static (double[] dist, double[] weight) NoiseMap(double[] plane, int w, int h,
+      bool[] rowValid, double noiseK, int noiseRowStep, SstvDenoiseOptions o)
     {
       double[] rowVar = SstvWienerFilter.RowNoiseVar(plane, w, h, noiseRowStep, rowValid);
       double scale = o.NlmSig * o.NlmSig * noiseK;
 
-      double[]? gain = null;
-      if (o.NlmNoiseMap is SstvNlmNoiseMap.GainInflate or SstvNlmNoiseMap.GainDeflate)
-      {
-        int detW = o.WienerDetectW > 0 ? o.WienerDetectW : o.WienerWindowW;
-        int detH = o.WienerDetectH > 0 ? o.WienerDetectH : o.WienerWindowH;
-        gain = SstvWienerFilter.GainMap(plane, w, h, rowVar, noiseK, detW, detH);
-      }
-
-      var noise = new double[w * h];
+      var rowOnly = new double[w * h];
       for (int y = 0; y < h; y++)
       {
         double baseVar = Math.Max(Small, scale * rowVar[y]);
-        for (int x = 0; x < w; x++)
-        {
-          int i = y * w + x;
-          double v = baseVar;
-          if (gain != null)
-            v = o.NlmNoiseMap == SstvNlmNoiseMap.GainInflate
-              ? baseVar * (1.0 + o.NlmGainK * (1.0 - gain[i]))
-              : baseVar * Math.Max(0.05, gain[i]);
-          noise[i] = Math.Max(Small, v);
-        }
+        for (int x = 0; x < w; x++) rowOnly[y * w + x] = baseVar;
       }
-      return noise;
+      if (o.NlmNoiseMap == SstvNlmNoiseMap.RowOnly) return (rowOnly, rowOnly);
+
+      int detW = o.WienerDetectW > 0 ? o.WienerDetectW : o.WienerWindowW;
+      int detH = o.WienerDetectH > 0 ? o.WienerDetectH : o.WienerWindowH;
+      double[] gain = SstvWienerFilter.GainMap(plane, w, h, rowVar, noiseK, detW, detH);
+
+      var shaped = new double[w * h];
+      for (int i = 0; i < shaped.Length; i++)
+        shaped[i] = Math.Max(Small, o.NlmNoiseMap == SstvNlmNoiseMap.GainDeflate
+          ? rowOnly[i] * Math.Max(0.05, gain[i])
+          : rowOnly[i] * (1.0 + o.NlmGainK * (1.0 - gain[i])));
+
+      return o.NlmNoiseMap == SstvNlmNoiseMap.DistanceOnly ? (shaped, rowOnly) : (shaped, shaped);
     }
 
     /// <summary>Mark the pixels where pass 1 left residual noise, for a stronger second pass. The
@@ -205,21 +242,20 @@ namespace VE3NEA.SkySSTV
     {
       private readonly int w, h, patchWing, searchWing, marg, pw, ph, patchSize;
       private readonly double invPatchArea;
-      private readonly double[] pIn, pS, acc, wsum;
+      private readonly double[] pIn, pS, pSw, acc, wsum;
       private readonly bool[] pRowValid;
       private readonly bool[] rowValid;
+      private readonly bool separateWeightNoise;
 
-      // sliding patch-distance state (one offset at a time)
-      private readonly double[] sqrDiffs;
-      private readonly double[][] avgX;
-      private readonly double[] avgXY;
-      private int newPos, oldPos;
-      private int nx, ny;
+      /// <summary>Rows below which a band is not worth its own thread: each band re-warms the sliding
+      /// sums over <c>patchWing</c> rows at its start, which is ~10 % overhead at 30 rows and grows as
+      /// the band shrinks.</summary>
+      private const int MinBandRows = 24;
 
       public double[] Output { get; }
 
-      public Context(double[] plane, double[] noise, int w, int h, bool[] rowValid,
-        int patchWing, int searchWing)
+      public Context(double[] plane, double[] noiseDist, double[] noiseWeight, int w, int h,
+        bool[] rowValid, int patchWing, int searchWing)
       {
         this.w = w; this.h = h; this.rowValid = rowValid;
         this.patchWing = patchWing; this.searchWing = searchWing;
@@ -230,22 +266,19 @@ namespace VE3NEA.SkySSTV
 
         pIn = new double[pw * ph];
         pS = new double[pw * ph];
+        separateWeightNoise = !ReferenceEquals(noiseDist, noiseWeight);
+        pSw = separateWeightNoise ? new double[pw * ph] : pS;
         pRowValid = new bool[ph];
         acc = new double[pw * ph];
         wsum = new double[pw * ph];
         Output = new double[w * h];
 
-        Pad(plane, noise);
-
-        sqrDiffs = new double[w + 2 * patchWing];
-        avgX = new double[patchSize + 1][];
-        for (int i = 0; i <= patchSize; i++) avgX[i] = new double[w];
-        avgXY = new double[w];
+        Pad(plane, noiseDist, noiseWeight);
       }
 
       /// <summary>Mirror the image, its noise map and its row validity into the margins (reflection
       /// about the edge, not edge repetition).</summary>
-      private void Pad(double[] plane, double[] noise)
+      private void Pad(double[] plane, double[] noiseDist, double[] noiseWeight)
       {
         for (int y = 0; y < h; y++)
         {
@@ -254,7 +287,8 @@ namespace VE3NEA.SkySSTV
           {
             int p = (marg + y) * pw + marg + x, i = y * w + x;
             pIn[p] = plane[i];
-            pS[p] = Math.Max(Small, noise[i]);
+            pS[p] = Math.Max(Small, noiseDist[i]);
+            if (separateWeightNoise) pSw[p] = Math.Max(Small, noiseWeight[i]);
           }
         }
 
@@ -267,6 +301,11 @@ namespace VE3NEA.SkySSTV
           Array.Copy(pS, (marg + loSrc) * pw, pS, (marg - d) * pw, pw);
           Array.Copy(pIn, (marg + hiSrc) * pw, pIn, (marg + h - 1 + d) * pw, pw);
           Array.Copy(pS, (marg + hiSrc) * pw, pS, (marg + h - 1 + d) * pw, pw);
+          if (separateWeightNoise)
+          {
+            Array.Copy(pSw, (marg + loSrc) * pw, pSw, (marg - d) * pw, pw);
+            Array.Copy(pSw, (marg + hiSrc) * pw, pSw, (marg + h - 1 + d) * pw, pw);
+          }
         }
 
         for (int by = 0; by < ph; by++)
@@ -278,64 +317,48 @@ namespace VE3NEA.SkySSTV
             pS[row + marg - d] = pS[loSrc];
             pIn[row + marg + w - 1 + d] = pIn[hiSrc];
             pS[row + marg + w - 1 + d] = pS[hiSrc];
+            if (separateWeightNoise)
+            {
+              pSw[row + marg - d] = pSw[loSrc];
+              pSw[row + marg + w - 1 + d] = pSw[hiSrc];
+            }
           }
       }
 
       public void ScaleNoise(double factor)
       {
         for (int i = 0; i < pS.Length; i++) pS[i] = Math.Max(Small, pS[i] * factor);
+        if (separateWeightNoise)
+          for (int i = 0; i < pSw.Length; i++) pSw[i] = Math.Max(Small, pSw[i] * factor);
       }
 
       /// <summary>Sweep every half-plane offset, crediting both partners of each similar pair.
       /// <paramref name="mask"/> null means "every pixel" (pass 1); otherwise only masked pixels are
       /// credited, which is what makes the second pass a targeted repair.</summary>
-      public void Accumulate(bool[]? mask)
+      public void Accumulate(bool[]? mask, SstvNlmStats? stats, int bands)
       {
         Array.Clear(acc);
         Array.Clear(wsum);
 
-        for (int dy = 0; dy <= searchWing; dy++)
-          for (int dx = -searchWing; dx <= searchWing; dx++)
-          {
-            if (dy == 0 && dx <= 0) continue;               // the centre, and the mirrored half
-            ny = dy; nx = dx;
-            SweepOffset(mask);
-          }
-      }
+        int n = bands > 0 ? bands : Environment.ProcessorCount;
+        n = Math.Clamp(n, 1, Math.Max(1, h / MinBandRows));
 
-      private void SweepOffset(bool[]? mask)
-      {
-        InitAvg();
-        for (int y = 0; y < h; y++)
-        {
-          int by = marg + y;
-          if (pRowValid[by] && pRowValid[by + ny])
-          {
-            int rowP = by * pw + marg, rowQ = (by + ny) * pw + marg + nx;
-            for (int x = 0; x < w; x++)
-            {
-              double dbar = avgXY[x] * invPatchArea;
-              if (dbar >= Cutoff) continue;
-              double wt = Weight(dbar < 0 ? 0 : dbar);
+        var sweepers = new BandSweeper[n];
+        for (int b = 0; b < n; b++) sweepers[b] = new BandSweeper(this, h * b / n, h * (b + 1) / n);
 
-              int p = rowP + x, q = rowQ + x;
-              // the pair is credited in both directions: P gains a donor at Q and vice versa
-              if (mask == null || Masked(mask, by, marg + x))
-              {
-                double cw = wt / pS[q];
-                acc[p] += pIn[q] * cw;
-                wsum[p] += cw;
-              }
-              if (mask == null || Masked(mask, by + ny, marg + x + nx))
-              {
-                double cw = wt / pS[p];
-                acc[q] += pIn[p] * cw;
-                wsum[q] += cw;
-              }
-            }
+        if (n == 1) sweepers[0].Run(mask, stats != null);
+        else System.Threading.Tasks.Parallel.For(0, n, b => sweepers[b].Run(mask, stats != null));
+
+        // folded back in BAND order, never in completion order, so a given options record always
+        // produces the same image however the threads happened to interleave
+        foreach (var sweeper in sweepers) sweeper.ReduceHalo(acc, wsum);
+        if (stats != null)
+          foreach (var sweeper in sweepers)
+          {
+            stats.Evaluated += sweeper.Evaluated;
+            stats.FlatTop += sweeper.FlatTop;
+            stats.Rejected += sweeper.Rejected;
           }
-          if (y < h - 1) UpdateAvg(y + patchWing + 1);
-        }
       }
 
       /// <summary>Is a padded coordinate a masked IMAGE pixel? Mirror pixels are never masked — their
@@ -346,49 +369,188 @@ namespace VE3NEA.SkySSTV
         return (uint)y < (uint)h && (uint)x < (uint)w && mask[y * w + x];
       }
 
-      /// <summary>Prime the vertical sliding sum with the <c>patchSize</c> rows centred on row 0.</summary>
-      private void InitAvg()
-      {
-        foreach (var row in avgX) Array.Clear(row);
-        Array.Clear(avgXY);
-        newPos = 0; oldPos = 1;
-        for (int y = -patchWing; y <= patchWing; y++) UpdateAvg(y);
-      }
 
-      /// <summary>Fold row <paramref name="y"/> into the sliding sums: squared differences along the
-      /// row, a sliding sum over x into a ring slot, then the ring's oldest slot swapped out of the
-      /// vertical sum. The ring holds <c>patchSize + 1</c> rows so the slot being retired is still
-      /// intact when the new one is written.</summary>
-      private void UpdateAvg(int y)
+      // ----------------------------------------------------------------------------------------------------
+      //                                         one row band
+      // ----------------------------------------------------------------------------------------------------
+
+
+      /// <summary>
+      /// One thread's share of the accumulation: the image rows <c>[r0, r1)</c>, swept over every
+      /// half-plane offset, carrying its own sliding-sum state (plan §6).
+      ///
+      /// <para>The scheme rests on one structural fact: <b>the offset's row component is never
+      /// negative</b>, so the mirror write that makes the symmetry saving possible always lands at a row
+      /// at or below the source row, and never more than <c>searchWing</c> rows below it. A band
+      /// therefore writes only into <c>[r0, r1 + searchWing)</c>: its own rows go straight into the
+      /// shared accumulators, which no other band touches, and the bounded spill past <c>r1</c> goes to
+      /// a private halo that is folded in once every band has finished. Both the 2× symmetry saving and
+      /// linear speedup, rather than one or the other.</para>
+      ///
+      /// <para><b>Not bit-identical to the serial form.</b> The plan claimed it would be; that was
+      /// wrong. Each output pixel's contributions are summed in a different ORDER here — its
+      /// same-band donors interleaved by offset, its previous-band donors arriving in one lump at the
+      /// reduction — and floating-point addition is not associative. The difference is at the last bits
+      /// of a double and vanishes in the rounding to bytes, but the equivalence test has to be written
+      /// as a tolerance, not an equality.</para>
+      /// </summary>
+      private sealed class BandSweeper
       {
-        int by = marg + y;
-        bool ok = pRowValid[by] && pRowValid[by + ny];
-        if (!ok)
+        private readonly Context c;
+        private readonly int r0, r1;
+
+        // sliding patch-distance state (one offset at a time)
+        private readonly double[] sqrDiffs;
+        private readonly double[][] avgX;
+        private readonly double[] avgXY;
+        private int newPos, oldPos;
+        private int nx, ny;
+
+        // the spill into [r1, r1 + searchWing), full padded width; ~1 MB total for PD290 at 8 threads
+        private readonly double[] haloAcc, haloWsum;
+
+        public long Evaluated, FlatTop, Rejected;
+
+        public BandSweeper(Context c, int r0, int r1)
         {
-          for (int i = 0; i < sqrDiffs.Length; i++) sqrDiffs[i] = InvalidDist;
+          this.c = c; this.r0 = r0; this.r1 = r1;
+          sqrDiffs = new double[c.w + 2 * c.patchWing];
+          avgX = new double[c.patchSize + 1][];
+          for (int i = 0; i <= c.patchSize; i++) avgX[i] = new double[c.w];
+          avgXY = new double[c.w];
+          haloAcc = new double[c.searchWing * c.pw];
+          haloWsum = new double[c.searchWing * c.pw];
         }
-        else
+
+        /// <summary>Sweep every half-plane offset over this band, crediting both partners of each
+        /// similar pair — 220 pair-offsets rather than 440 gather-offsets. <paramref name="mask"/> null
+        /// means "every pixel" (pass 1); otherwise only masked pixels are credited, which is what makes
+        /// the second pass a targeted repair.</summary>
+        public void Run(bool[]? mask, bool count)
         {
-          int rowP = by * pw + marg - patchWing, rowQ = (by + ny) * pw + marg - patchWing + nx;
-          for (int i = 0; i < sqrDiffs.Length; i++)
+          for (int dy = 0; dy <= c.searchWing; dy++)
+            for (int dx = -c.searchWing; dx <= c.searchWing; dx++)
+            {
+              if (dy == 0 && dx <= 0) continue;             // the centre, and the mirrored half
+              ny = dy; nx = dx;
+              SweepOffset(mask, count);
+            }
+        }
+
+        private void SweepOffset(bool[]? mask, bool count)
+        {
+          InitAvg();
+          int w = c.w, marg = c.marg, pw = c.pw;
+          for (int y = r0; y < r1; y++)
           {
-            int p = rowP + i, q = rowQ + i;
-            double d = pIn[q] - pIn[p];
-            sqrDiffs[i] = d * d / (pS[p] + pS[q]);
+            int by = marg + y;
+            if (c.pRowValid[by] && c.pRowValid[by + ny])
+            {
+              // whether the mirror write leaves the band is decided by the offset and the row, so it is
+              // resolved out here and costs nothing in the inner loop
+              bool spill = y + ny >= r1;
+              double[] qAcc = spill ? haloAcc : c.acc, qWsum = spill ? haloWsum : c.wsum;
+              int rowP = by * pw + marg;
+              int rowQPad = (by + ny) * pw + marg + nx;
+              int rowQOut = spill ? (y + ny - r1) * pw + marg + nx : rowQPad;
+
+              for (int x = 0; x < w; x++)
+              {
+                double dbar = avgXY[x] * c.invPatchArea;
+                if (count)
+                {
+                  Evaluated++;
+                  if (dbar <= 1.0) FlatTop++;               // inside the kernel's flat top: full weight
+                  else if (dbar >= Cutoff) Rejected++;
+                }
+                if (dbar >= Cutoff) continue;
+                double wt = Weight(dbar < 0 ? 0 : dbar);
+
+                int p = rowP + x, q = rowQPad + x;
+                // the pair is credited in both directions: P gains a donor at Q and vice versa
+                if (mask == null || c.Masked(mask, by, marg + x))
+                {
+                  double cw = wt / c.pSw[q];
+                  c.acc[p] += c.pIn[q] * cw;
+                  c.wsum[p] += cw;
+                }
+                if (mask == null || c.Masked(mask, by + ny, marg + x + nx))
+                {
+                  double cw = wt / c.pSw[p];
+                  qAcc[rowQOut + x] += c.pIn[p] * cw;
+                  qWsum[rowQOut + x] += cw;
+                }
+              }
+            }
+            if (y < r1 - 1) UpdateAvg(y + c.patchWing + 1);
           }
         }
 
-        double[] dest = avgX[newPos];
-        double sum = 0;
-        for (int i = 0; i < patchSize; i++) sum += sqrDiffs[i];
-        dest[0] = sum;
-        for (int x = 0; x < w - 1; x++) dest[x + 1] = dest[x] - sqrDiffs[x] + sqrDiffs[x + patchSize];
+        /// <summary>Fold the spill into the shared accumulators. Halo rows past the bottom of the image
+        /// are dropped, exactly as the serial form drops them: they land in the padded margin, which
+        /// <see cref="Resolve"/> never reads.</summary>
+        public void ReduceHalo(double[] acc, double[] wsum)
+        {
+          for (int k = 0; k < c.searchWing; k++)
+          {
+            int row = r1 + k;
+            if (row >= c.h) break;
+            int dst = (c.marg + row) * c.pw, src = k * c.pw;
+            for (int i = 0; i < c.pw; i++)
+            {
+              acc[dst + i] += haloAcc[src + i];
+              wsum[dst + i] += haloWsum[src + i];
+            }
+          }
+        }
 
-        double[] drop = avgX[oldPos];
-        for (int x = 0; x < w; x++) avgXY[x] += dest[x] - drop[x];
+        /// <summary>Prime the vertical sliding sum with the <c>patchSize</c> rows centred on the band's
+        /// first row. This re-warm is the whole cost of banding — <c>patchWing</c> extra rows per offset
+        /// per band, about 10 % at 30-row bands.</summary>
+        private void InitAvg()
+        {
+          foreach (var row in avgX) Array.Clear(row);
+          Array.Clear(avgXY);
+          newPos = 0; oldPos = 1;
+          for (int y = r0 - c.patchWing; y <= r0 + c.patchWing; y++) UpdateAvg(y);
+        }
 
-        newPos = oldPos;
-        if (++oldPos > patchSize) oldPos = 0;
+        /// <summary>Fold row <paramref name="y"/> into the sliding sums: squared differences along the
+        /// row, a sliding sum over x into a ring slot, then the ring's oldest slot swapped out of the
+        /// vertical sum. The ring holds <c>patchSize + 1</c> rows so the slot being retired is still
+        /// intact when the new one is written.</summary>
+        private void UpdateAvg(int y)
+        {
+          int w = c.w, marg = c.marg, pw = c.pw, patchWing = c.patchWing, patchSize = c.patchSize;
+          int by = marg + y;
+          bool ok = c.pRowValid[by] && c.pRowValid[by + ny];
+          if (!ok)
+          {
+            for (int i = 0; i < sqrDiffs.Length; i++) sqrDiffs[i] = InvalidDist;
+          }
+          else
+          {
+            int rowP = by * pw + marg - patchWing, rowQ = (by + ny) * pw + marg - patchWing + nx;
+            for (int i = 0; i < sqrDiffs.Length; i++)
+            {
+              int p = rowP + i, q = rowQ + i;
+              double d = c.pIn[q] - c.pIn[p];
+              sqrDiffs[i] = d * d / (c.pS[p] + c.pS[q]);
+            }
+          }
+
+          double[] dest = avgX[newPos];
+          double sum = 0;
+          for (int i = 0; i < patchSize; i++) sum += sqrDiffs[i];
+          dest[0] = sum;
+          for (int x = 0; x < w - 1; x++) dest[x + 1] = dest[x] - sqrDiffs[x] + sqrDiffs[x + patchSize];
+
+          double[] drop = avgX[oldPos];
+          for (int x = 0; x < w; x++) avgXY[x] += dest[x] - drop[x];
+
+          newPos = oldPos;
+          if (++oldPos > patchSize) oldPos = 0;
+        }
       }
 
       /// <summary>Add the pixel's own contribution and normalize. The centre enters at half the
@@ -407,7 +569,7 @@ namespace VE3NEA.SkySSTV
           {
             int i = y * w + x, p = (marg + y) * pw + marg + x;
             if (mask != null && !mask[i]) continue;          // second pass: leave pass-1 result
-            double cw = 0.5 / pS[p];
+            double cw = 0.5 / pSw[p];
             Output[i] = (acc[p] + pIn[p] * cw) / (Small + wsum[p] + cw);
           }
         }
