@@ -26,9 +26,12 @@ namespace VE3NEA.SkyTlm.Discovery
   /// bursts the live pipeline already segmented, which is what removes every hazard of running N hypotheses
   /// live (§2.1) — no shared detector, no cross-hypothesis duplicate frames, no second decode path.
   ///
-  /// <b>Nothing produced here is ever published.</b> The pipeline instances built below have no sinks wired
-  /// to them at all — the frames exist only to score hypotheses (§4.6). That is a structural guarantee, not
-  /// a convention: there is no code path from this class to KISS output, SatNOGS upload or the frame tree.
+  /// <b>Discovery wires no sinks.</b> The pipeline instances built below have none at all, and there is no
+  /// code path from this class to KISS output, to the archive file or to a SatNOGS upload: what becomes of
+  /// the frames a candidate carries back is entirely the caller's decision (§4.6). SkyRoof shows them in the
+  /// frame tree, logs them and serves them over KISS like any other frame, and holds only the SatNOGS
+  /// submission until the operator saves the parameters they were decoded with
+  /// (discover_for_all_users_plan.md §4.4).
   /// </summary>
   public static class BurstDiscovery
   {
@@ -78,9 +81,9 @@ namespace VE3NEA.SkyTlm.Discovery
 
         var demodulated = Demodulate(segment, sampleRate, h.Params, o, snrDb);
         if (demodulated == null) continue;
-        var (soft, resolved) = demodulated.Value;
+        var (soft, resolved, cfoHz) = demodulated.Value;
 
-        var found = TryFramings(soft, h, resolved, framings, o, cancel);
+        var found = TryFramings(soft, h, resolved, framings, o, cancel, cfoHz, snrDb);
         if (found != null) qualified.Add(found);
       }
 
@@ -111,11 +114,12 @@ namespace VE3NEA.SkyTlm.Discovery
     /// the pipeline does — that estimation is what makes the deviation axis of §4.2 implicit rather than a
     /// ladder of guesses.
     /// </summary>
-    /// <returns>The soft symbols and the parameters they were actually demodulated under — which for a
+    /// <returns>The soft symbols, the parameters they were actually demodulated under — which for a
     /// blind hypothesis carries the deviation estimated from this burst, not the <c>null</c> it started
-    /// with. That resolved set is what a successful hypothesis reports, so the operator sees the deviation
-    /// the decode used rather than "unknown".</returns>
-    private static (SoftSymbols Soft, SignalParams Resolved)? Demodulate(Complex32[] segment,
+    /// with — and the carrier offset this burst was corrected by. That resolved set is what a successful
+    /// hypothesis reports, so the operator sees the deviation the decode used rather than "unknown", and
+    /// the offset is what <see cref="Score"/> stamps onto the frames it hands back.</returns>
+    private static (SoftSymbols Soft, SignalParams Resolved, double CfoHz)? Demodulate(Complex32[] segment,
       double sampleRate, SignalParams p, DiscoveryOptions o, double snrDb)
     {
       try
@@ -144,7 +148,7 @@ namespace VE3NEA.SkyTlm.Discovery
 
         var burst = new Burst(0, segment.Length, sampleRate, cfoHz, snrDb);
         var soft = demod.Demodulate(segment, burst, pe);
-        return soft.Count > 0 ? (soft, pe) : null;
+        return soft.Count > 0 ? (soft, pe, cfoHz) : null;
       }
       catch (OperationCanceledException) { throw; }
       // a geometry the sample rate cannot carry, a malformed hypothesis: one hypothesis out of many.
@@ -220,7 +224,8 @@ namespace VE3NEA.SkyTlm.Discovery
     /// the whole framing sweep runs on the soft bits demodulation already produced.
     /// </summary>
     private static DiscoveryCandidate? TryFramings(SoftSymbols soft, DemodHypothesis h,
-      SignalParams resolved, IReadOnlyList<Framing> framings, DiscoveryOptions o, CancellationToken cancel)
+      SignalParams resolved, IReadOnlyList<Framing> framings, DiscoveryOptions o, CancellationToken cancel,
+      double cfoHz, double snrDb)
     {
       foreach (var framing in framings)
       {
@@ -229,7 +234,7 @@ namespace VE3NEA.SkyTlm.Discovery
 
         // the DB's own CCSDS option set first — it may well be right, and 62 blind configurations are too
         // many to try before the values the DB actually supplied (§4.3).
-        var found = Score(soft, p, h);
+        var found = Score(soft, p, h, cfoHz, snrDb);
         if (found != null) return found;
 
         if (framing != Framing.CCSDS || o.MaxCcsdsConfigurations <= 0) continue;
@@ -241,16 +246,26 @@ namespace VE3NEA.SkyTlm.Discovery
         {
           cancel.ThrowIfCancellationRequested();
           if (++tried > o.MaxCcsdsConfigurations) break;
-          found = Score(soft, variant, h);
+          found = Score(soft, variant, h, cfoHz, snrDb);
           if (found != null) return found;
         }
       }
       return null;
     }
 
-    /// <summary>Deframe under one fully-specified parameter set and, if a CRC-valid frame comes out, package
-    /// the evidence §4.5 ranks on. A hypothesis qualifies on <b>one</b> CRC-valid frame.</summary>
-    private static DiscoveryCandidate? Score(SoftSymbols soft, SignalParams p, DemodHypothesis h)
+    /// <summary>
+    /// Deframe under one fully-specified parameter set and, if a CRC-valid frame comes out, package the
+    /// evidence §4.5 ranks on. A hypothesis qualifies on <b>one</b> CRC-valid frame.
+    ///
+    /// The qualifying frames are stamped with this burst's carrier offset and SNR before they go out.
+    /// <see cref="Frame"/>'s acquisition metadata is normally the streaming pipeline's to fill in, and
+    /// discovery is not that pipeline — but these frames are shown to the operator as the evidence for the
+    /// answer (discover_for_all_users_plan.md §4.4), and unstamped they would report a 0.0 Hz offset and a
+    /// 0.0 dB SNR for the one frame the whole result rests on. <c>TimeSeconds</c> and <c>BurstIndex</c> are
+    /// left alone: the caller has neither from here, and nothing displays them.
+    /// </summary>
+    private static DiscoveryCandidate? Score(SoftSymbols soft, SignalParams p, DemodHypothesis h,
+      double cfoHz, double snrDb)
     {
       var deframer = DeframerFactory.Create(p);
       if (deframer == null) return null;
@@ -259,7 +274,9 @@ namespace VE3NEA.SkyTlm.Discovery
       try { frames = deframer.Deframe(soft, p).ToList(); }
       catch { return null; }   // a malformed configuration is one hypothesis out of many, never fatal
 
-      var valid = frames.Where(f => f.CrcValid == true).ToList();
+      var valid = frames.Where(f => f.CrcValid == true)
+        .Select(f => f with { CfoHz = cfoHz, SnrDb = snrDb })
+        .ToList();
       if (valid.Count == 0) return null;
 
       int fecWork = valid.Sum(f => f.CorrectedBits + f.ErasedBytes);
