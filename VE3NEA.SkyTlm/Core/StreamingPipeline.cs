@@ -1386,24 +1386,27 @@ namespace VE3NEA.SkyTlm.Core
         var (soft, trace, burstFrames) = decodeWith(activeDemod, pEffective, info.CfoHz);
 
         // the curated label produced a CRC-valid frame before any fallback lock — the label is proven, so
-        // the blind-fallback trials below stop considering this session's bursts.
-        if (!p.IsBlind && fallbackParams == null && burstFrames.Any(f => f.CrcValid == true))
+        // the blind-fallback trials below stop considering this session's bursts. IsProof, not a bare CRC:
+        // a Chase-manufactured frame proves nothing about the label either way.
+        if (!p.IsBlind && fallbackParams == null && burstFrames.Any(IsProof))
           curatedCrcSeen = true;
 
         // a CRC-valid frame from the active BPSK submode proves it — the coherent-vs-differential trial
-        // below stops considering this session's bursts.
-        if (bpskCoherent != null && burstFrames.Any(f => f.CrcValid == true))
+        // below stops considering this session's bursts. IsProof, not a bare CRC: BPSK deframes AX.25 over
+        // FOUR chains (descrambled/plain × both differential polarities), so it is the most Chase-exposed
+        // path there is, and a manufactured frame says nothing about which submode is on air.
+        if (bpskCoherent != null && burstFrames.Any(IsProof))
           bpskSubmodeProven = true;
 
         // promotion on the first CRC-valid blind frame: gate strictly on CRC-valid, not blind
         // confidence — a frame that passes CRC proves the deviation it used actually works. Guarded on
         // p.IsBlind because the blind-fallback path also sets burstBlindDevHz — its lock is fallbackParams,
         // not the blind-path learnedDeviationHz.
-        if (p.IsBlind && burstBlindDevHz.HasValue && !learnedDeviationHz.HasValue && burstFrames.Any(f => f.CrcValid == true))
+        if (p.IsBlind && burstBlindDevHz.HasValue && !learnedDeviationHz.HasValue && burstFrames.Any(IsProof))
         {
           learnedDeviationHz = burstBlindDevHz.Value;
           learnedDemod = Demodulators.Create(p with { Deviation = burstBlindDevHz.Value }, o.GmskOptions) ?? this.demod!;
-          resolvedTarget.ResolvedDeviation = burstBlindDevHz.Value;   // surface the actual deviation to the caller's UI
+          resolvedTarget.ResolvedDeviation = SignalParams.RoundDeviation(burstBlindDevHz.Value);   // surface the actual deviation to the caller's UI
           Log.Information("Blind FSK: locked deviation {Dev:F0} Hz from first CRC-valid frame", burstBlindDevHz.Value);
         }
 
@@ -1579,7 +1582,10 @@ namespace VE3NEA.SkyTlm.Core
               restoreFrames(preRetryFrames);
             }
             var (tSoft, tTrace, tFrames) = decodeWith(trialDemod, pTrial, est.CfoHz);
-            if (tFrames.Count(f => f.CrcValid == true) <= retryCrc)
+            // beating the incumbent's CRC count is not enough on its own: on an FCS-only framing the winning
+            // frame may be one the Chase search manufactured out of noise, and adopting on it is what put
+            // 4800 and 19200 Bd on a 9600 Bd TIGRISAT pass. At least one frame must be real proof (IsProof).
+            if (!tFrames.Any(IsProof) || tFrames.Count(f => f.CrcValid == true) <= retryCrc)
             {
               if (retryRegistry != null) restoreFrames(retryRegistry);
               continue;
@@ -1588,7 +1594,7 @@ namespace VE3NEA.SkyTlm.Core
             // surface the baud/deviation this burst actually decoded at so the UI shows the value used to
             // recover the frame instead of the distrusted label — including when the trial rate is BELOW the
             // label (a different transmitter's rate on the same frequency), independent of the session-lock below.
-            resolvedTarget.ResolvedDeviation = trialDevHz;
+            resolvedTarget.ResolvedDeviation = SignalParams.RoundDeviation(trialDevHz);
             resolvedTarget.ResolvedBaud = b;
             if (b >= p.Baud && retryCrc == 0)
             {
@@ -1604,7 +1610,7 @@ namespace VE3NEA.SkyTlm.Core
             else
               Log.Information("Blind fallback: trial decoded this burst at {Baud:F0} Bd (deviation {Dev:F0} Hz) — adopted without locking the session",
                 b, trialDevHz ?? 0);
-            // adopt the trial decode for this burst. The CRC-valid trial frame is absolute proof of a real
+            // adopt the trial decode for this burst. The trial's proof frame is absolute proof of a real
             // digital burst, so a rejected-trigger burst flips to validated and passes the gate below.
             soft = tSoft;
             trace = tTrace;
@@ -1669,7 +1675,10 @@ namespace VE3NEA.SkyTlm.Core
         {
           var trialDemod = ReferenceEquals(activeDemod, bpskDifferential) ? bpskCoherent : bpskDifferential!;
           var (tSoft, tTrace, tFrames) = decodeWith(trialDemod, pEffective, info.CfoHz);
-          if (tFrames.Any(f => f.CrcValid == true))
+          // IsProof for the same reason the blind-baud trial uses it: this writes a finding into the caller's
+          // params (Differential, shown in the dialog) and locks the submode for the session, so a
+          // Chase-manufactured frame must not be what decides it.
+          if (tFrames.Any(IsProof))
           {
             bool diff = ReferenceEquals(trialDemod, bpskDifferential);
             resolvedTarget.Differential = diff;   // lock the proven submode for the session (and the caller's UI)
@@ -1850,6 +1859,19 @@ namespace VE3NEA.SkyTlm.Core
         trialCfoCache[pBlind.Baud] = est = new CfoEstimator(fs, o.CfoMaxHz, pBlind, fftSize: Fft);
       return est;
     }
+
+    /// <summary>True when this frame proves the hypothesis that decoded it — the baud a blind trial ran at, the
+    /// deviation the blind estimator locked, the correctness of the curated label. A CRC-valid frame normally is
+    /// that proof, but the FCS-only framings (AX.25 G3RUH, HADES) reach "CRC-valid" through a Chase bit-flip
+    /// search that tries ~137 flip patterns against a 16-bit FCS, which noise clears a few times per pass; one
+    /// such frame locked TIGRISAT's session onto 19200 Bd on a 9600 Bd link. So from those framings only an
+    /// UNCORRECTED frame is proof. The FEC framings (USP/AX100/CCSDS/AO-40 RS) keep counting corrected frames:
+    /// there the correction is the code's own work, not a search for something the check will accept.</summary>
+    private static bool IsProof(Frame f) =>
+      f.CrcValid == true && (f.CorrectedBits == 0 || !IsChaseFramed(f.Framing));
+
+    /// <summary>Framings whose integrity check is a bare CRC backed by a Chase bit-flip search rather than FEC.</summary>
+    private static bool IsChaseFramed(Framing framing) => framing is Framing.AX25G3RUH or Framing.HADES;
 
     /// <summary>An emitted frame, kept for overlap dedup: its bytes/time and — when the deframer reported the
     /// frame's on-air span — its absolute start/end sample (StartAbs < 0 when unknown).</summary>

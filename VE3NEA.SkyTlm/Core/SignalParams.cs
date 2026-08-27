@@ -87,6 +87,15 @@ namespace VE3NEA.SkyTlm.Core
     public double? ResolvedDeviation { get; set; }
 
     /// <summary>
+    /// Rounds a measured deviation to the 10 Hz grid it is reported on. A blind estimate is good to about a
+    /// percent, not to the Hz, so surfacing 2438 Hz claims a precision the estimator does not have — and
+    /// that number goes on to be read in a dialog, written into an override file and compared against a
+    /// curated value. Applied only where <see cref="ResolvedDeviation"/> is <b>surfaced</b>: the demodulator
+    /// keeps working from the unrounded estimate it actually locked.
+    /// </summary>
+    public static double? RoundDeviation(double? hz) => hz is double v && v > 0 ? Math.Round(v / 10) * 10 : hz;
+
+    /// <summary>
     /// The baud rate the streaming decoder actually locked when the curated <see cref="Baud"/> label was
     /// distrusted and a blind-fallback trial at a different rate produced the first CRC-valid frame (see
     /// <c>StreamingPipeline</c> blind fallback) — the run-time counterpart to the curated <see cref="Baud"/>.

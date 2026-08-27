@@ -158,10 +158,20 @@ namespace VE3NEA.SkyTlm.Deframing
         if (opt.ChaseFlipBits <= 0 || !Chase(bytes, rb, rl.ToArray(), out corrected)) return null;
       }
 
+      var payload = bytes[..(nbytes - 2)];
+
+      // a Chase-corrected frame rests on a 16-bit FCS that the flip search itself tried ~137 ways to satisfy,
+      // so noise clears it a few times per pass of decoding — and one such frame is enough for the streaming
+      // pipeline to adopt a wrong blind-fallback baud (TIGRISAT: 4800 and 19200 Bd adopted off Corrections:2
+      // junk on a 9600 Bd link). Every AX.25 frame opens with a callsign address field, and a genuinely
+      // corrected frame carries the TRUE bytes there — the FCS would not pass otherwise — so requiring the
+      // address to parse costs no real frame. An uncorrected FCS match still stands on its own.
+      if (corrected > 0 && Ax25Address.Describe(payload) == null) return null;
+
       ushort fcs = (ushort)(bytes[nbytes - 2] | (bytes[nbytes - 1] << 8));
       return new Frame
       {
-        Bytes = bytes[..(nbytes - 2)],
+        Bytes = payload,
         CrcValid = true,
         Fcs = fcs,
         Framing = Framing.AX25G3RUH,

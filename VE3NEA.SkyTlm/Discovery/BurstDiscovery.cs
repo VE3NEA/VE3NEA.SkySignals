@@ -137,7 +137,8 @@ namespace VE3NEA.SkyTlm.Discovery
             var est = BlindFskEstimator.Estimate(avgQ, cfo.CenterBin, cfo.BinHz, pe.Baud, o.Analysis.CfoMaxHz);
             cfoHz = est.CfoHz;
             if (est.DeviationHz > 0)
-              pe = pe with { Deviation = est.DeviationHz, ResolvedDeviation = est.DeviationHz };
+              // the demod runs on the raw estimate; only the value the caller displays and saves is rounded
+              pe = pe with { Deviation = est.DeviationHz, ResolvedDeviation = SignalParams.RoundDeviation(est.DeviationHz) };
           }
           else
             cfoHz = cfo.AnalyzeSpectrum(avgQ).CfoHz;
