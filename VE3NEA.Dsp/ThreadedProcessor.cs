@@ -86,8 +86,21 @@ namespace VE3NEA
           while (Queue.Any())
           {
             Queue.TryDequeue(out DataEventArgs<T> args);
-            Process(args);
-            ArgsPool.Return(args);
+
+            // catch per block, not per batch: a failure in one block must not abandon the blocks
+            // queued behind it, and its buffer goes back to the pool either way
+            try
+            {
+              Process(args);
+            }
+            catch (Exception ex)
+            {
+              Log.Error(ex, $"Error in {GetType().Name}");
+            }
+            finally
+            {
+              ArgsPool.Return(args);
+            }
           }
         }
         catch (Exception e)
