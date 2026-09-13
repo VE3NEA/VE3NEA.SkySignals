@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -316,8 +316,12 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     }
 
     [Fact]
-    public void ALostBlock_TruncatesAtTheGap()
+    public void ALostBlock_LeavesAHoleRatherThanTruncatingTheFile()
     {
+      // The policy changed on 2026-09-13 with the first real imaging capture: a baseline JPEG survives
+      // a hole, which costs a colour shift below it and nothing else, and truncating at the first gap
+      // threw away most of a nearly complete picture to avoid that. FirstGapOffset stays as the honesty
+      // metric the UI shows; it is no longer where the file is cut.
       var jpeg = KnownJpeg();
       var frames = Transfer(jpeg);
       var (a, _, done) = Assembler();
@@ -327,8 +331,11 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
       var final = done.Should().ContainSingle().Subject;
       final.Complete.Should().BeFalse();
-      final.FirstGapOffset.Should().Be(5 * BlockLen);
-      final.Jpeg.Length.Should().Be(5 * BlockLen + 2, "the trusted prefix plus a synthetic EOI");
+      final.FirstGapOffset.Should().Be(5 * BlockLen, "that is still where truth stops");
+      final.Jpeg.Length.Should().Be(jpeg.Length, "but the whole file is emitted, EOI already in place");
+      final.Jpeg.Take(5 * BlockLen).Should().Equal(jpeg.Take(5 * BlockLen));
+      final.Jpeg.Skip(5 * BlockLen).Take(BlockLen).Should().OnlyContain(b => b == 0, "the hole reads as zero");
+      final.Jpeg.Skip(6 * BlockLen).Should().Equal(jpeg.Skip(6 * BlockLen), "and the rest is where it belongs");
     }
 
     [Fact]

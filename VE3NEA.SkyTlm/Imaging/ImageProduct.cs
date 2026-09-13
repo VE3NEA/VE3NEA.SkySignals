@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using VE3NEA.SkyTlm.Core;
 
@@ -9,7 +9,8 @@ namespace VE3NEA.SkyTlm.Imaging
   /// hand it back later. This is what makes an image survive the pass it arrived in: a picture heard
   /// across several passes can only be assembled if the earlier passes' fragments were written down.
   /// </summary>
-  /// <param name="Id">Position of the fragment within the image — an SSDV packet ID.</param>
+  /// <param name="Id">Position of the fragment within the image — an SSDV packet ID, or for the
+  /// raw-JPEG family the fragment's byte offset in the file, which is the only identity it has.</param>
   /// <param name="Bytes">The canonical fragment as validated, i.e. after any FEC repair. Re-parsing
   /// these bytes reproduces the fragment exactly, and on a family with a CRC it also re-checks it, so a
   /// stored fragment that was edited or truncated is rejected rather than trusted.</param>
@@ -44,14 +45,25 @@ namespace VE3NEA.SkyTlm.Imaging
   /// <param name="Fragments">The fragments this reconstruction was built from, ascending by ID. Empty
   /// when the family cannot hand them out in an archivable form.</param>
   /// <param name="FragmentFormat">Name of the format <see cref="Fragments"/> are in — an
-  /// <see cref="Ssdv.SsdvVariant.Name"/> — or null when they must not be archived. Null means one of two
-  /// things, and the caller need not tell them apart: the family yields no fragments at all, or its
-  /// fragments carry no integrity check of their own and so cannot be trusted once they leave the pass
-  /// that heard them. Only a named format may be written to an archive and read back.</param>
+  /// <see cref="Ssdv.SsdvVariant.Name"/>, or <see cref="RawJpeg.RawJpegMerge.Format"/> — or null when
+  /// they must not be archived, which means the family yields no fragments at all. Only a named format
+  /// may be written to an archive and read back.
+  /// <para>
+  /// The name means <b>these fragments can be re-identified and re-validated on read-back</b>, which is
+  /// weaker than it once was: it used to mean "these fragments carry their own integrity check", and
+  /// that ruled out a family with no CRC. It was relaxed on 2026-09-13 because validation does not have
+  /// to be a checksum. A Geoscan v2 fragment is identified by its file offset and validated by agreeing,
+  /// byte for byte, with every other reception of that offset — the merge refuses a reception that
+  /// disagrees instead of trusting a checksum. A caller that cares which kind of validation it is
+  /// getting compares the name.
+  /// </para></param>
+  /// <param name="Text">The transfer read as text, when it is text rather than a picture: the Geoscan
+  /// playlist interleaves photographs with one-fragment ASCII slides. Null for an image, which is the
+  /// normal case, and <paramref name="Jpeg"/> is then empty because there is no picture to show.</param>
   public sealed record ImageProduct(
     int ImageId, string? Source, byte[] Jpeg, int Width, int Height,
     int FragmentsReceived, int FragmentsExpected, int FirstGapOffset, bool Complete,
-    IReadOnlyList<ImageFragment> Fragments, string? FragmentFormat);
+    IReadOnlyList<ImageFragment> Fragments, string? FragmentFormat, string? Text = null);
 
 
   /// <summary>

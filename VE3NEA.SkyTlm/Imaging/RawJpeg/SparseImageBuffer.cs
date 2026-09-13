@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace VE3NEA.SkyTlm.Imaging.RawJpeg
@@ -60,6 +60,40 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
 
     /// <summary>The part that can be believed — the run from byte 0 to the first gap.</summary>
     public ReadOnlySpan<byte> TrustedSpan => bytes.AsSpan(0, FirstGapOffset);
+
+    /// <summary>
+    /// How many bytes in [<paramref name="start"/>, <paramref name="end"/>) were actually received, as
+    /// opposed to reading as zero because nothing was written there. This is what makes a coverage
+    /// fraction per JPEG scan possible, and so what lets a progressive file be cut in the right place.
+    /// </summary>
+    public int CoveredBytes(int start, int end)
+    {
+      int n = 0;
+      foreach (var (s, e) in spans) n += Math.Max(0, Math.Min(e, end) - Math.Max(s, start));
+      return n;
+    }
+
+    /// <summary>
+    /// Whether writing <paramref name="data"/> at <paramref name="offset"/> would contradict a byte
+    /// already held. Bytes not yet written cannot contradict anything, so a fragment landing entirely in
+    /// empty space never conflicts.
+    /// <para>
+    /// This is the integrity check a raw-JPEG fragment does not carry. Two receptions of the same byte
+    /// range must agree — across 254 repeat receptions in the 2026-09-12/13 Geoscan capture they always
+    /// did — so disagreement means one of the two is not what it claims, and a merge can refuse it
+    /// rather than guess which.
+    /// </para>
+    /// </summary>
+    public bool Conflicts(int offset, ReadOnlySpan<byte> data)
+    {
+      foreach (var (s, e) in spans)
+      {
+        int from = Math.Max(s, offset), to = Math.Min(e, offset + data.Length);
+        for (int at = from; at < to; at++)
+          if (bytes[at] != data[at - offset]) return true;
+      }
+      return false;
+    }
 
     /// <summary>
     /// Seek and write. Returns false when the fragment would put the image past <see cref="MaxLength"/>,

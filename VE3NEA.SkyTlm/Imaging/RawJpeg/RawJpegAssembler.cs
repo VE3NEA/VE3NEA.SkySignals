@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using VE3NEA.SkyTlm.Core;
 
@@ -105,6 +105,9 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
 
       FragmentsAccepted++;
       current.Fragments++;
+      // Kept only where a fragment can be re-identified later — see Image.Archivable. The bytes are the
+      // fragment's own array, cut out of the frame by the source and owned by nobody else.
+      if (current.Archivable) current.Archive[at] = new ImageFragment(at, fragment.Data, CorrectedBytes: 0);
       current.LargestFragment = Math.Max(current.LargestFragment, fragment.Data.Length);
       if (fragment.HasEoi) current.HasEoi = true;
 
@@ -130,7 +133,11 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         // otherwise it keeps the buffer small instead of honouring an address-space offset of millions.
         BaseOffset = fragment.Offset,
         HasSoi = fragment.HasSoi,
-        Id = imagesSeen++
+        Id = imagesSeen++,
+        // Geoscan v2, and nothing else: it is the only layout here whose offsets are already file
+        // offsets AND whose frames carry an explicit picture number, which is what a fragment needs
+        // before it can be written down and later be known to belong to this picture.
+        Archivable = fragment.FileRelative && fragment.Key.Sequence >= 0
       };
 
       // A name announced for this identity earlier in the pass still applies: USP sends INIT once and
@@ -151,14 +158,21 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
 
     private ImageProduct Product(Image image)
     {
-      var jpeg = image.ToJpeg();
+      // A transfer that is text is not a picture and must not be offered as one: the fleet's playlist
+      // interleaves photographs with one-fragment ASCII slides, which used to assemble into 56-byte
+      // "JPEGs" that no decoder would open.
+      var text = RawJpegEmitter.ToText(image.Buffer);
+      byte[] jpeg = text != null ? [] : image.ToJpeg();
       JpegHeader.ReadSize(jpeg, out int width, out int height);
 
       return new ImageProduct(
-        // No raw-JPEG protocol numbers its pictures, so this counts them within the pass. Geoscan v2
-        // does have fnum, which is in the key and is what separates its images; it is not an ID either,
-        // being a slot number the satellite reuses.
-        ImageId: image.Id,
+        // The picture number the protocol sends, where it sends one. Geoscan v2's fnum is a slot number
+        // the satellite reuses — but so is SSDV's 8-bit image ID, which is already used this way, and
+        // reuse is what the caller's 30-day combine window exists to bound. The alternative, a counter
+        // that restarts every session, cannot match an archived reception of the same picture at all,
+        // which is the whole point of having an ID. Where the protocol numbers nothing (Geoscan v1,
+        // USP) this still counts pictures within the pass.
+        ImageId: image.Key.Sequence >= 0 ? image.Key.Sequence : image.Id,
         // Geoscan's sat_num names the satellite; USP's session number names nothing, and its file name
         // is the useful label — it is what the operator called the picture.
         Source: source.HasSenderId ? SenderName(image.Key.Sender) : NullIfEmpty(image.Name),
@@ -169,11 +183,14 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         FragmentsExpected: image.FragmentsExpected,
         FirstGapOffset: image.Buffer.FirstGapOffset,
         Complete: image.IsComplete,
-        // A raw-JPEG fragment is a byte range with no identity, no length of its own and no check of its
-        // own — the framing's CRC below is the only one, and it is spent by the time the range is cut out.
-        // There is nothing here that could be stored and later be known to belong to this picture.
-        Fragments: [],
-        FragmentFormat: null);
+        // A Geoscan v2 fragment does have a durable identity — (sat_num, fnum, file offset), all three
+        // explicit in the frame and the offset already file-relative — so it can be archived and later
+        // be known to belong to this picture. What it has no substitute for is a CRC, and the substitute
+        // is cross-reception agreement: see SparseImageBuffer.Conflicts and RawJpegMerge. Every other
+        // layout here yields a byte range with no identity at all and archives nothing.
+        Fragments: image.Archivable ? [.. image.Archive.Values] : [],
+        FragmentFormat: image.Archivable ? RawJpegMerge.Format : null,
+        Text: text);
     }
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
@@ -203,8 +220,17 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
     {
       public readonly SparseImageBuffer Buffer = new();
 
+      /// <summary>Every distinct fragment written, by its file offset, which is also its identity — see
+      /// <see cref="Archivable"/>. Sorted so the sidecar it is written to reads in file order.</summary>
+      public readonly SortedDictionary<int, ImageFragment> Archive = [];
+
       public RawJpegImageKey Key { get; init; }
       public int Id { get; init; }
+
+      /// <summary>Whether this transfer's fragments can be written down and recognised again on a later
+      /// pass, which needs a file-relative offset and an explicit picture number. True for Geoscan v2
+      /// alone.</summary>
+      public bool Archivable { get; init; }
 
       /// <summary>Offset in the satellite's address space that corresponds to byte 0 of the file.</summary>
       public int BaseOffset { get; set; }
@@ -252,22 +278,9 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         ? 0
         : Math.Max(Fragments, (Buffer.Length + LargestFragment - 1) / LargestFragment);
 
-      /// <summary>
-      /// The file as far as it can be believed: everything up to the first gap, closed with an EOI so a
-      /// decoder will accept it. Nothing is filled in — a raw JPEG has no structure to align a filler to,
-      /// and a plausible-looking wrong picture is worse than a short one.
-      /// </summary>
-      public byte[] ToJpeg()
-      {
-        var trusted = Buffer.TrustedSpan;
-        if (trusted.Length < 2) return [];
-
-        bool closed = trusted[^2] == 0xFF && trusted[^1] == 0xD9;
-        var jpeg = new byte[trusted.Length + (closed ? 0 : 2)];
-        trusted.CopyTo(jpeg);
-        if (!closed) { jpeg[^2] = 0xFF; jpeg[^1] = 0xD9; }
-        return jpeg;
-      }
+      /// <summary>The file as far as it can be believed — the policy lives in
+      /// <see cref="RawJpegEmitter"/>, because the merge across passes has to answer this identically.</summary>
+      public byte[] ToJpeg() => RawJpegEmitter.ToJpeg(Buffer);
     }
   }
 }

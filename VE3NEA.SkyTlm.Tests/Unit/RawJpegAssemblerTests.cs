@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -158,10 +158,14 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     // ---- loss --------------------------------------------------------------------------------------
 
     [Fact]
-    public void ALostFragment_TruncatesTheFileAtTheGap()
+    public void ALostFragment_BecomesAHoleRatherThanTheEndOfTheFile()
     {
-      // the property that separates this family from SSDV: a hole costs everything after it, so the
-      // product stops at the hole rather than pretending the rest is a picture.
+      // This assembler used to stop at the first hole, on the reasoning that a raw JPEG cannot survive
+      // one. The first real imaging capture (2026-09-12/13, see design-docs/ssdv-geoscan-fix-plan.md)
+      // refutes that for baseline JPEG: a 92.5 %-complete photograph was fourteen gaps, and zero-filling
+      // every one of them renders the whole picture, each hole costing a colour shift below it and
+      // nothing more. Truncating cost 73 % of that picture. FirstGapOffset survives as the honesty
+      // metric the UI reports; it is no longer where the file is cut.
       var jpeg = KnownJpeg();
       var frames = Stream(jpeg);
       var (a, _, done) = Assembler();
@@ -171,9 +175,11 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
       var final = done.Should().ContainSingle().Subject;
       final.Complete.Should().BeFalse();
-      final.FirstGapOffset.Should().Be(10 * FragmentLen);
-      final.Jpeg.Length.Should().Be(10 * FragmentLen + 2, "the trusted prefix, closed with a synthetic EOI");
+      final.FirstGapOffset.Should().Be(10 * FragmentLen, "that is still where truth stops");
+      final.Jpeg.Length.Should().Be(jpeg.Length, "and everything after the hole is still emitted");
       final.Jpeg.Take(10 * FragmentLen).Should().Equal(jpeg.Take(10 * FragmentLen));
+      final.Jpeg.Skip(10 * FragmentLen).Take(FragmentLen).Should().OnlyContain(b => b == 0);
+      final.Jpeg.Skip(11 * FragmentLen).Should().Equal(jpeg.Skip(11 * FragmentLen));
       final.FragmentsExpected.Should().BeGreaterThan(final.FragmentsReceived);
     }
 
