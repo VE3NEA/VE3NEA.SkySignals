@@ -26,6 +26,9 @@ namespace VE3NEA.SkyTlm.Tests.Unit
   {
     private const int FragmentLen = 64;         // Geoscan v1 with dlen = 70, the only value seen off air
     private const int AddressBase = 0x02_4000;  // absolute offsets are in the satellite's address space
+    // where the entropy data starts in every Data/Ssdv reference file — they share an encoder, so they
+    // share a 623-byte header. Below this offset a gap is header loss, which emits nothing at all.
+    internal const int FirstScanStart = 623;
 
     private static byte[] KnownJpeg(string name = "jy1sat_img9") =>
       File.ReadAllBytes(Path.Combine(TestPaths.DataDir, "Ssdv", name + ".ref.jpg"));
@@ -113,8 +116,16 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
       foreach (var f in Stream(jpeg)) a.Push(f);
 
-      updates.Should().OnlyContain(p => p.Jpeg.Length >= 2);
-      foreach (var p in updates)
+      // Until the header is whole there is nothing a decoder can be shown, and since 2026-09-13 emission
+      // says so rather than handing over a stub — see RawJpegEmitter.TrustedEnd. The reference files put
+      // their first scan at byte 623, so the early 64-byte updates are deliberately empty.
+      var shown = updates.SkipWhile(p => p.Jpeg.Length == 0).ToList();
+      shown.Should().NotBeEmpty("the whole file arrives in the end");
+      updates.Take(updates.Count - shown.Count).Should()
+        .OnlyContain(p => p.FirstGapOffset < FirstScanStart, "only a partial header is withheld");
+
+      shown.Should().OnlyContain(p => p.Jpeg.Length >= 2);
+      foreach (var p in shown)
       {
         p.Jpeg.Take(2).Should().Equal([0xFF, 0xD8], "a progressive view still has to open with SOI");
         p.Jpeg.TakeLast(2).Should().Equal([0xFF, 0xD9], "and be closed, synthetically if need be");
@@ -176,10 +187,15 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       var final = done.Should().ContainSingle().Subject;
       final.Complete.Should().BeFalse();
       final.FirstGapOffset.Should().Be(10 * FragmentLen, "that is still where truth stops");
-      final.Jpeg.Length.Should().Be(jpeg.Length, "and everything after the hole is still emitted");
-      final.Jpeg.Take(10 * FragmentLen).Should().Equal(jpeg.Take(10 * FragmentLen));
-      final.Jpeg.Skip(10 * FragmentLen).Take(FragmentLen).Should().OnlyContain(b => b == 0);
-      final.Jpeg.Skip(11 * FragmentLen).Should().Equal(jpeg.Skip(11 * FragmentLen));
+      // Superseded on 2026-09-14 by the entropy repair (design-docs/imaging-improvement-plan.md, B5).
+      // The emission is no longer the buffer's bytes with the hole reading as zero: the scan is decoded
+      // and re-encoded with the file's own tables, so the MCUs below the hole come back at the MCU index
+      // the encoder wrote them at instead of one short of it, and the hole itself comes back as neutral
+      // gray rather than as noise. The tail is therefore the same picture and not the same bytes — that
+      // it is the same picture is asserted coefficient for coefficient in JpegEntropyWalkerTests. What
+      // this test still owns is that the file does not stop at the hole.
+      final.Jpeg.Length.Should().BeGreaterThan(10 * FragmentLen, "everything after the hole is still emitted");
+      final.Jpeg.Take(FirstScanStart).Should().Equal(jpeg.Take(FirstScanStart), "the header is the file's own");
       final.FragmentsExpected.Should().BeGreaterThan(final.FragmentsReceived);
     }
 

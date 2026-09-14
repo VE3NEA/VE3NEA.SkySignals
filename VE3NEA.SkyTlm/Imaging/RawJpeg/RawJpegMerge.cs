@@ -45,8 +45,12 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
     /// the caller — which decided these receptions are the same picture — has to supply it.</param>
     /// <param name="source">Sender label for the resulting <see cref="ImageProduct"/>, for the same
     /// reason: it is not in the fragments.</param>
+    /// <param name="repair">Whether to run the entropy repair on the emitted file. On by default, which
+    /// is what every automatic path wants; the operator's "Repair Damaged Image" switch is the one caller
+    /// that passes false, and it does so by rebuilding rather than by altering what it already has — the
+    /// fragments are the record, so either answer can be produced from them at any time.</param>
     public static ImageProduct? Build(IEnumerable<IReadOnlyList<ImageFragment>> receptions, string? format,
-      int imageId, string? source)
+      int imageId, string? source, bool repair = true)
     {
       if (format != Format) return null;
 
@@ -71,7 +75,8 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       if (kept.Count == 0) return null;
 
       var text = RawJpegEmitter.ToText(buffer);
-      byte[] jpeg = text != null ? [] : RawJpegEmitter.ToJpeg(buffer);
+      JpegRepair? repaired = null;
+      byte[] jpeg = text != null ? [] : RawJpegEmitter.ToJpeg(buffer, repair, out repaired);
       JpegHeader.ReadSize(jpeg, out int width, out int height);
 
       return new ImageProduct(
@@ -92,7 +97,8 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         // refused contributed nothing and must not be counted or handed back as if it had
         Fragments: [.. kept.Values],
         FragmentFormat: Format,
-        Text: text);
+        Text: text,
+        Repair: repaired);
     }
 
     /// <summary>Whether any fragment of this reception contradicts a byte already assembled.</summary>

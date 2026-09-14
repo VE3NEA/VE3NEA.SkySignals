@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using FluentAssertions;
 using VE3NEA.SkyTlm.Core;
 using VE3NEA.SkyTlm.Imaging;
@@ -76,7 +77,7 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       for (int i = 0; i < 12; i++) header[i] = (byte)('A' << 1);
       header[6] = 0x60;                       // destination SSID, end-of-address clear
       header[13] = 0x61;                      // source SSID with the end-of-address bit set
-      header[14] = 0x03;                      // UI
+      header[14] = 0x00;                      // control, as every real USP frame carries it — not 0x03
       header[15] = 0xF0;                      // no layer 3
       return new Frame
       {
@@ -183,13 +184,18 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
     // ---- the gate ----------------------------------------------------------------------------------
 
-    [Fact]
-    public void AFrameThatIsNotUnnumberedInformation_IsIgnored()
+    [Theory]
+    [InlineData(0x00)]   // what all seven real frames carry
+    [InlineData(0x03)]   // the AX.25 UI value the gate used to demand
+    [InlineData(0x13)]   // and anything else a future build might emit
+    public void TheControlByte_IsNotChecked(byte control)
     {
+      // Requiring 0x03 here rejected every USP frame ever received. The octet is filler on this downlink,
+      // so the PID and the exact-consumption walk do the gating instead.
       var frame = Ax25(Data(3, 0, [1, 2, 3]));
-      frame.Bytes[14] = 0x00;   // not UI
+      frame.Bytes[14] = control;
 
-      RawJpegSource.Usp.Extract(frame).Should().BeEmpty();
+      RawJpegSource.Usp.Extract(frame).Should().ContainSingle();
     }
 
     [Fact]
@@ -221,6 +227,52 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [Fact]
     public void AnEmptyDataMessage_IsNotAFragment() =>
       RawJpegSource.Usp.Extract(Ax25(Data(3, 0, []))).Should().BeEmpty("there are no file bytes in it");
+
+    [Fact]
+    public void ATrailingPartialMessage_RejectsTheWholeFrame()
+    {
+      // The structural check that took the control byte's place: a real info field is a whole number of
+      // messages, so a few octets left dangling mean this was never one, and the walk is not evidence.
+      var good = Ax25(Data(3, 0, [1, 2, 3]));
+      var padded = good with { Bytes = [.. good.Bytes, (byte)0, (byte)0, (byte)0] };
+
+      RawJpegSource.Usp.Extract(padded).Should().BeEmpty();
+    }
+
+
+    // ---- real off-air frames -----------------------------------------------------------------------
+
+    /// <summary>The pinned CRC-OK frames from <c>Data/usp_telemetry_regression.json</c> — all telemetry,
+    /// and the only USP frames anyone has ever captured.</summary>
+    private static List<byte[]> RealUspFrames()
+    {
+      string path = Path.Combine(TestPaths.ProjectRoot, "Data", "usp_telemetry_regression.json");
+      using var doc = JsonDocument.Parse(File.ReadAllText(path));
+      return [.. doc.RootElement.GetProperty("frames").EnumerateArray()
+                  .Select(f => Convert.FromHexString(f.GetProperty("hex").GetString()!))];
+    }
+
+    [Fact]
+    public void EveryRealFrame_YieldsNoFragmentsAndIsConsumedExactly()
+    {
+      var frames = RealUspFrames();
+      frames.Should().HaveCountGreaterThanOrEqualTo(6);
+
+      foreach (var bytes in frames)
+      {
+        bytes[14].Should().Be(0x00, "the corpus is what showed the 0x03 control gate to be wrong");
+
+        var frame = new Frame { Bytes = bytes, CrcValid = true, Framing = Framing.USP };
+        RawJpegSource.Usp.Extract(frame)
+          .Should().BeEmpty("every USP frame captured so far is telemetry, not a file transfer");
+
+        // and the walk really did reach the end of the genuine info field: a DATA message appended to it
+        // is only found when the telemetry messages ahead of it were consumed exactly.
+        var extended = frame with { Bytes = [.. bytes, .. Data(3, 0x2000, [7, 7, 7])] };
+        RawJpegSource.Usp.Extract(extended).Should().ContainSingle()
+          .Which.Offset.Should().Be(0x2000);
+      }
+    }
 
 
     // ---- assembling --------------------------------------------------------------------------------
@@ -322,20 +374,26 @@ namespace VE3NEA.SkyTlm.Tests.Unit
       // a hole, which costs a colour shift below it and nothing else, and truncating at the first gap
       // threw away most of a nearly complete picture to avoid that. FirstGapOffset stays as the honesty
       // metric the UI shows; it is no longer where the file is cut.
+      // the dropped block must land past the 623-byte header: a hole in the header is a different
+      // failure entirely and emits nothing at all — see RawJpegHeaderGateTests.
+      const int lost = 13;                                           // covers [624, 672), clear of the header
       var jpeg = KnownJpeg();
       var frames = Transfer(jpeg);
       var (a, _, done) = Assembler();
 
-      foreach (var f in frames.Where((_, i) => i != 6)) a.Push(f);   // index 0 is the announcement
+      foreach (var f in frames.Where((_, i) => i != lost + 1)) a.Push(f);   // index 0 is the announcement
       a.Flush();
 
       var final = done.Should().ContainSingle().Subject;
       final.Complete.Should().BeFalse();
-      final.FirstGapOffset.Should().Be(5 * BlockLen, "that is still where truth stops");
-      final.Jpeg.Length.Should().Be(jpeg.Length, "but the whole file is emitted, EOI already in place");
-      final.Jpeg.Take(5 * BlockLen).Should().Equal(jpeg.Take(5 * BlockLen));
-      final.Jpeg.Skip(5 * BlockLen).Take(BlockLen).Should().OnlyContain(b => b == 0, "the hole reads as zero");
-      final.Jpeg.Skip(6 * BlockLen).Should().Equal(jpeg.Skip(6 * BlockLen), "and the rest is where it belongs");
+      final.FirstGapOffset.Should().Be(lost * BlockLen, "that is still where truth stops");
+      // Superseded on 2026-09-14 by the entropy repair (design-docs/imaging-improvement-plan.md, B5):
+      // the scan is re-encoded rather than copied, so the rest is where it belongs in MCUs rather than in
+      // bytes, and the hole reads as neutral gray rather than as zero. JpegEntropyWalkerTests asserts that
+      // equivalence coefficient for coefficient; what is left here is that the file is not truncated.
+      final.Jpeg.Length.Should().BeGreaterThan(lost * BlockLen, "but the whole file is emitted");
+      final.Jpeg.Take(RawJpegAssemblerTests.FirstScanStart).Should()
+        .Equal(jpeg.Take(RawJpegAssemblerTests.FirstScanStart), "the header is the file's own");
     }
 
     [Fact]

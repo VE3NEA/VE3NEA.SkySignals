@@ -1,0 +1,69 @@
+{
+  "Utc": "2026-09-13T21:51:56.0574346Z",
+  "Satellite": "Geoscan-5",
+  "Norad": 64891,
+  "Transmitter": "Mode U - GFSK9k6 - AX.25 Beacon and Ham Payload (Geoscan framing)",
+  "TransmitterUuid": "2PaEUBRtkAhf2baamE3yEw",
+  "ImageId": 14,
+  "Source": "Geoscan-5",
+  "Width": 0,
+  "Height": 0,
+  "FragmentsReceived": 10,
+  "FragmentsExpected": 283,
+  "FirstGapOffset": 0,
+  "Complete": false,
+  "Format": 1,
+  "Variant": "geoscan-v2",
+  "Packets": [
+    {
+      "Id": 13824,
+      "Corrected": 0,
+      "Data": "/BJ1iT+70w42JUNWKND9mhph9FGz+pKV4To3zLoo2f1JSsTocsb5cqP7CjWGb5l34NP195us"
+    },
+    {
+      "Id": 14040,
+      "Corrected": 0,
+      "Data": "Jd+guEukMS54y78/szZi9omQw/SLeVwk3ZEkyL94pGzNmbPEEUikNKhFLFsj7WJMj7KRSzLv"
+    },
+    {
+      "Id": 14094,
+      "Corrected": 0,
+      "Data": "z+qGR4TE6N2J36NUao1WNUxKhqx/x4bs2eNUao1Q/wCPCLvEuY3eFFHMNWNVwUnedn+gb4Uq"
+    },
+    {
+      "Id": 14148,
+      "Corrected": 0,
+      "Data": "P7GhKNCdG+NxDlRF2SdF7ehxzuIcqG7E6FKyXMaY3E7y1Yo1jT9B0zGVG5e3o0NMrhLpDhMT"
+    },
+    {
+      "Id": 14202,
+      "Corrected": 0,
+      "Data": "ocvBTG7ynQ5C8FKhO8s3w/0FxZoxqhKyMaxssqSGr9kVRJWaM1edH4JWONCNX4KNkVQ3Rui7"
+    },
+    {
+      "Id": 14364,
+      "Corrected": 0,
+      "Data": "H0jzEyHfpR79CXML9C2eLZsy87M2eH0tkSeIt34xXopFIpFLGzw27NmbMiyXCPSlikPvz+qN"
+    },
+    {
+      "Id": 14418,
+      "Corrected": 0,
+      "Data": "Uao1RqjVGqHFZ1RJUyHBqzVFV7FJ+Ck0bs3ZuxSd41WJdIxTRJUQJcI9zs/0Hc3Nzc3FK2Pm"
+    },
+    {
+      "Id": 14850,
+      "Corrected": 0,
+      "Data": "/jL/xAAvEQACAQMEAgEEAwACAQUAAAABAgADERIQEzEyIVFBICJQYTBAYCMzQlJwcYCg/9oA"
+    },
+    {
+      "Id": 15066,
+      "Corrected": 0,
+      "Data": "hFpTqW8GVuuleJ2mC+pUp28iA2g0IvHXEwVCBaAXlttNKaC1zLSqmPkRTY3lbtKXb6B/1nQM"
+    },
+    {
+      "Id": 15228,
+      "Corrected": 0,
+      "Data": "Wb4gF5WHmIbNfR2xGgH/AB6YNoqZRVxH94fYfuEBQmAXeVEGMBGHmA+PCxTYGUlBFzNsA3EU"
+    }
+  ]
+}

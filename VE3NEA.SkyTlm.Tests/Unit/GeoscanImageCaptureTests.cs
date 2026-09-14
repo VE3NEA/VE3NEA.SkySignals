@@ -141,7 +141,10 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
       best.FragmentsReceived.Should().Be(579);
       best.FirstGapOffset.Should().Be(9126, "the honesty metric stays, it just stops being the cut");
-      best.Jpeg.Length.Should().Be(34022, "the whole 34,020-byte span plus a synthetic EOI, not 9,128 B");
+      // Until B5 this was the whole 34,020-byte span plus a synthetic EOI. It is now the repaired
+      // re-encode of it: 969 MCUs placed exactly and the 931 between the two anchors written as neutral
+      // gray, which costs almost no bits, so the file is half the size and carries twice the picture.
+      best.Jpeg.Length.Should().Be(16939, "the repaired re-encode, not the 9,128-byte truncation");
       Render(best.Jpeg).Should().Be(new Size(800, 600));
     }
 
@@ -242,7 +245,12 @@ namespace VE3NEA.SkyTlm.Tests.Unit
 
       merged.Should().NotBeNull();
       merged!.FragmentsReceived.Should().Be(583, "the three runs together, 91.9 % -> 92.5 %");
-      merged.Jpeg.Should().Equal(Reference("geoscan5_pic5_baseline"),
+      // the claim is about the merge and not about the emitter, so it is the reassembled buffer that is
+      // compared: since B5 the emission re-encodes the scan, and comparing that to a reference produced by
+      // an independent reassembly would be testing the repair rather than the merge
+      var buffer = new SparseImageBuffer();
+      foreach (var f in merged.Fragments) buffer.Write(f.Id, f.Bytes);
+      buffer.Span.ToArray().Should().Equal(Reference("geoscan5_pic5_baseline").Take(buffer.Length),
         "byte for byte what an independent reassembly of the same frames produces");
       Render(merged.Jpeg).Should().Be(new Size(800, 600));
     }

@@ -162,7 +162,8 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       // interleaves photographs with one-fragment ASCII slides, which used to assemble into 56-byte
       // "JPEGs" that no decoder would open.
       var text = RawJpegEmitter.ToText(image.Buffer);
-      byte[] jpeg = text != null ? [] : image.ToJpeg();
+      JpegRepair? repaired = null;
+      byte[] jpeg = text != null ? [] : RawJpegEmitter.ToJpeg(image.Buffer, true, out repaired);
       JpegHeader.ReadSize(jpeg, out int width, out int height);
 
       return new ImageProduct(
@@ -190,7 +191,8 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
         // layout here yields a byte range with no identity at all and archives nothing.
         Fragments: image.Archivable ? [.. image.Archive.Values] : [],
         FragmentFormat: image.Archivable ? RawJpegMerge.Format : null,
-        Text: text);
+        Text: text,
+        Repair: repaired);
     }
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;

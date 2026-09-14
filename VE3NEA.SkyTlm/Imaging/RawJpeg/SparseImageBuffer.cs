@@ -74,6 +74,29 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
     }
 
     /// <summary>
+    /// The byte ranges in [<paramref name="start"/>, <paramref name="end"/>) that never arrived, sorted
+    /// and disjoint: the complement of the written runs, which <see cref="CoveredBytes"/> counts but does
+    /// not locate. The entropy walker needs them located, because a gap is where the entropy stream
+    /// desynchronises and so where a resync has to be searched for.
+    /// </summary>
+    public List<(int Start, int End)> Gaps(int start, int end)
+    {
+      var gaps = new List<(int Start, int End)>();
+      int at = start;
+
+      foreach (var (s, e) in spans)
+      {
+        if (e <= start) continue;
+        if (s >= end) break;
+        if (s > at) gaps.Add((at, s));
+        at = Math.Max(at, e);
+      }
+      if (end > at) gaps.Add((at, end));
+
+      return gaps;
+    }
+
+    /// <summary>
     /// Whether writing <paramref name="data"/> at <paramref name="offset"/> would contradict a byte
     /// already held. Bytes not yet written cannot contradict anything, so a fragment landing entirely in
     /// empty space never conflicts.

@@ -60,10 +60,35 @@ namespace VE3NEA.SkyTlm.Imaging
   /// <param name="Text">The transfer read as text, when it is text rather than a picture: the Geoscan
   /// playlist interleaves photographs with one-fragment ASCII slides. Null for an image, which is the
   /// normal case, and <paramref name="Jpeg"/> is then empty because there is no picture to show.</param>
+  /// <param name="Repair">What the entropy repair did to <paramref name="Jpeg"/>, or null when it did
+  /// nothing — a complete file, a progressive one, a family that is not raw JPEG, or a repair the
+  /// operator switched off. See <see cref="JpegRepair"/>.</param>
   public sealed record ImageProduct(
     int ImageId, string? Source, byte[] Jpeg, int Width, int Height,
     int FragmentsReceived, int FragmentsExpected, int FirstGapOffset, bool Complete,
-    IReadOnlyList<ImageFragment> Fragments, string? FragmentFormat, string? Text = null);
+    IReadOnlyList<ImageFragment> Fragments, string? FragmentFormat, string? Text = null,
+    JpegRepair? Repair = null);
+
+
+  /// <summary>
+  /// What the entropy repair made of one holey baseline JPEG: which runs of surviving scan data it could
+  /// place in the MCU sequence, and how much of the frame that accounts for. Present only when the repair
+  /// actually ran and produced a file — it is a record of what the operator is looking at, not a log.
+  /// <para>
+  /// <see cref="PlacedMcus"/> has one entry per run placed, in MCU order, because the two are not
+  /// interchangeable: the run that starts the scan is decoded outright, and the run that ends it is found
+  /// by a resync search. <see cref="DeclinedRuns"/> is the runs between them, whose MCU counts are known
+  /// exactly and whose positions are not — declining those is the correct answer rather than a failure,
+  /// so it is reported beside the successes rather than as an error.
+  /// </para>
+  /// </summary>
+  /// <param name="Gaps">Holes inside the scan's entropy data.</param>
+  /// <param name="PlacedMcus">MCUs recovered by each run that could be placed, in MCU order.</param>
+  /// <param name="DeclinedRuns">Runs anchored at neither end of the scan, and so not placed.</param>
+  /// <param name="RecoveredMcus">MCUs placed in total — the sum of <paramref name="PlacedMcus"/>.</param>
+  /// <param name="McuCount">MCUs in the frame, which is what the recovery is a fraction of.</param>
+  public sealed record JpegRepair(
+    int Gaps, IReadOnlyList<int> PlacedMcus, int DeclinedRuns, int RecoveredMcus, int McuCount);
 
 
   /// <summary>

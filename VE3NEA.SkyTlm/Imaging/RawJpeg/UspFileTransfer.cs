@@ -13,9 +13,10 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
   /// send pictures down the ordinary telemetry downlink rather than a dedicated imaging one, which is
   /// why none of them advertises an imaging transmitter.
   /// <para>
-  /// Frames arrive as AX.25 UI (PID <c>0xF0</c>) and their info field is a run of <c>Data</c> messages,
-  /// each an 8-byte header and a payload. One frame can therefore announce a file and carry a piece of
-  /// it, which is why extraction yields a list. Ported from SatsDecoder's <c>usp.py</c>.
+  /// Frames arrive in an AX.25 envelope with PID <c>0xF0</c> — no layer 3, so the info field is the
+  /// payload — and that info field is a run of <c>Data</c> messages, each an 8-byte header and a
+  /// payload. One frame can therefore announce a file and carry a piece of it, which is why extraction
+  /// yields a list. Ported from SatsDecoder's <c>usp.py</c>.
   /// </para>
   /// <para>
   /// <b>Unvalidated.</b> Every USP frame captured so far is telemetry — no <c>FILETRANSFER_*</c> message
@@ -43,11 +44,12 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
     /// <summary>Fixed part of an INIT payload before the name: mode, session, block size, offset, reserved.</summary>
     private const int InitFixedLen = 10;
 
-    private const byte UiControl = 0x03, NoLayer3Pid = 0xF0;
+    private const byte NoLayer3Pid = 0xF0;
 
     /// <summary>
     /// Pull every file-transfer fragment out of one frame. Returns an empty list when the frame is not a
-    /// USP file transfer, which is the overwhelmingly common case — telemetry shares this downlink.
+    /// USP file transfer — telemetry shares this downlink, and since no <c>FILETRANSFER_*</c> message has
+    /// ever been captured off air, an empty list is so far not merely the common result but the only one.
     /// </summary>
     public static IReadOnlyList<RawJpegFragment> Extract(Frame frame)
     {
@@ -73,18 +75,33 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
 
         at = payloadAt + size;
       }
+      // The structural test that replaces the control-byte check: a genuine info field is a whole number
+      // of messages, so the walk must land exactly on its end. Every real frame in the corpus does, and
+      // each declared size fits precisely. A short tail — or a break above on a truncated message — means
+      // this was never a USP info field, and nothing walked out of it can be trusted.
+      if (at != info.Length) return [];
       return (IReadOnlyList<RawJpegFragment>?)fragments ?? [];
     }
 
     /// <summary>
-    /// The AX.25 UI info field: past the address field, the control byte and the PID. Anything that is
-    /// not an unnumbered-information frame with no layer 3 is not USP.
+    /// The info field: past the address field, the control byte and the PID. Only the PID is checked —
+    /// <c>0xF0</c> is what carries the meaning, "no layer 3, the info field is the payload".
+    /// <para>
+    /// The control byte is deliberately <b>not</b> checked. Every real USP frame in the corpus carries
+    /// <c>0x00</c> there rather than the <c>0x03</c> of an AX.25 UI frame, which is not a meaningful
+    /// control value for a broadcast beacon and so reads as filler the firmware never chose; an allowlist
+    /// of the two values seen would fail again the moment a build emits a third. The telemetry path agrees
+    /// — <c>Telemetry/Definitions/usp.json</c> skips sixteen bytes and checks no control byte at all — and
+    /// <see cref="Framing.USP"/> has already required syncword, PLS, Viterbi and RS(255,223) by the time
+    /// this runs. The rejection power lost here is taken back in <see cref="Extract"/>, which requires the
+    /// message walk to consume the info field exactly.
+    /// </para>
     /// </summary>
     private static ReadOnlySpan<byte> InfoField(byte[] bytes)
     {
       int addressLen = Ax25Address.AddressFieldLength(bytes);
       if (addressLen == 0 || addressLen + 2 >= bytes.Length) return default;
-      if (bytes[addressLen] != UiControl || bytes[addressLen + 1] != NoLayer3Pid) return default;
+      if (bytes[addressLen + 1] != NoLayer3Pid) return default;
       return bytes.AsSpan(addressLen + 2);
     }
 
