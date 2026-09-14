@@ -120,6 +120,17 @@ namespace VE3NEA.SkyTlm.Imaging
     void Push(Frame frame);
 
     /// <summary>
+    /// Whether this frame is one of ours to begin with — the structural test <see cref="Push"/> applies
+    /// before it looks at content, and nothing more. It answers for a fragment that <see cref="Push"/>
+    /// then throws away: one whose checksum fails, one already held, one that cannot be placed. That is
+    /// the point of it, and it is why this is not "was the frame used": a caller describing a pass wants
+    /// the packets that arrived and died told apart from the telemetry beacons they are interleaved with,
+    /// and only the ones that survived can be counted from the events.
+    /// <para>Pure and cheap: it reads the frame, changes nothing, and may be called on any frame.</para>
+    /// </summary>
+    bool IsImageFrame(Frame frame);
+
+    /// <summary>
     /// End of the stream: finalise whatever image is still open. A pass almost never ends on an image
     /// boundary, so without this the last image of a pass would never be announced as finished.
     /// </summary>

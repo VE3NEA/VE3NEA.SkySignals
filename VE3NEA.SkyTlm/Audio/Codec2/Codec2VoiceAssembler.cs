@@ -71,6 +71,13 @@ namespace VE3NEA.SkyTlm.Audio.Codec2
     }
 
     /// <summary>
+    /// The source's gate — a length and a type byte — and nothing more. True for a sub-frame already
+    /// held, and for one the continuity rule above would split a message on. See
+    /// <see cref="IAudioAssembler.IsVoiceFrame"/>.
+    /// </summary>
+    public bool IsVoiceFrame(Frame frame) => source.TryExtract(frame, out _, out _);
+
+    /// <summary>
     /// End of stream. The pass is over, so the message still being received will get nothing more —
     /// announce it, truncated as it is.
     /// </summary>

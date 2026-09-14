@@ -116,6 +116,14 @@ namespace VE3NEA.SkyTlm.Imaging.RawJpeg
       if (current.IsComplete) Complete(current, product);
     }
 
+    /// <summary>
+    /// Whether the source can cut any fragment at all out of this frame — see
+    /// <see cref="IImageAssembler.IsImageFrame"/>. True for a fragment <see cref="Accept"/> then declines:
+    /// an offset too far out to believe, or a transfer that turns out to be a log or a config rather than
+    /// a picture, both of which travel this channel beside the images.
+    /// </summary>
+    public bool IsImageFrame(Frame frame) => source.Extract(frame).Count > 0;
+
     /// <summary>End of stream: the open image will get nothing more, so announce it as it stands.</summary>
     public void Flush()
     {

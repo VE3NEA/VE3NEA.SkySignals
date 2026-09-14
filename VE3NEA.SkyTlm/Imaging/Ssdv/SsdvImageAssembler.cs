@@ -58,6 +58,13 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     }
 
     /// <summary>
+    /// The source's own gate, which is the whole of what makes a frame ours: a packet type and a length.
+    /// True for a packet whose CRC then fails and for one already held — see
+    /// <see cref="IImageAssembler.IsImageFrame"/>.
+    /// </summary>
+    public bool IsImageFrame(Frame frame) => source.TryExtract(frame, out _);
+
+    /// <summary>
     /// The verdict <see cref="Push"/> would reach on one frame, without assembling anything: <c>null</c>
     /// when the frame is not an SSDV packet of this source at all, otherwise whether it passed the
     /// packet's own CRC-32 and how much RS repair that took. For a caller describing a frame rather than

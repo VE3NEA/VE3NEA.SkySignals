@@ -68,6 +68,18 @@ namespace VE3NEA.SkyTlm.Audio
     void Push(Frame frame);
 
     /// <summary>
+    /// Whether this frame is a voice sub-frame at all — the structural test <see cref="Push"/> applies
+    /// before it looks at content. The image counterpart, <see cref="Imaging.IImageAssembler.IsImageFrame"/>,
+    /// explains why a caller needs this rather than the accept events.
+    /// <para>
+    /// Weaker here than it is there, and knowingly so: the gate is a length and a type byte, because
+    /// type 11 carries no CRC and no FEC. A frame that passes it is a sub-frame as far as anything on
+    /// air can say, even when the assembler's continuity rule later declines it.
+    /// </para>
+    /// </summary>
+    bool IsVoiceFrame(Frame frame);
+
+    /// <summary>
     /// End of the stream: finalise the message still being received. A pass almost never ends on a
     /// message boundary, so without this the last message of a pass would never be announced.
     /// </summary>
