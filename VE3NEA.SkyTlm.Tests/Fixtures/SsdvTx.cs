@@ -54,7 +54,8 @@ namespace VE3NEA.SkyTlm.Tests.Fixtures
       payload.CopyTo(pkt, v.HeaderLen);
 
       // CRC-32 over bytes 1..CrcOffset, stored big-endian; then RS(255,223) over everything before it.
-      if (v.HasCrc) WriteBe32(pkt, v.CrcOffset, Crc32.Compute(pkt.AsSpan(1, v.CrcOffset - 1)));
+      int crcStart = v.HasSyncType ? 1 : 0;
+      if (v.HasCrc) WriteBe32(pkt, v.CrcOffset, Crc32.Compute(pkt.AsSpan(crcStart, v.CrcOffset - crcStart), v.CrcInit));
       if (v.HasRs)
       {
         int dataEnd = v.CrcOffset + (v.HasCrc ? 4 : 0);

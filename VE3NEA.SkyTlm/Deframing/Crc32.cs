@@ -16,9 +16,16 @@ namespace VE3NEA.SkyTlm.Deframing
     private static readonly uint[] Table = BuildTable();
 
     /// <summary>CRC-32 over <paramref name="data"/>.</summary>
-    public static uint Compute(ReadOnlySpan<byte> data)
+    public static uint Compute(ReadOnlySpan<byte> data) => Compute(data, 0xFFFFFFFF);
+
+    /// <summary>
+    /// CRC-32 over <paramref name="data"/> starting from a non-standard register value. The final XOR stays
+    /// 0xFFFFFFFF whatever the seed — which is how <c>daniestevez/ssdv</c> builds its DSLWP check, seeding
+    /// the same routine with the magic value 0x4EE4FDE1 instead of 0xFFFFFFFF.
+    /// </summary>
+    public static uint Compute(ReadOnlySpan<byte> data, uint initialValue)
     {
-      uint crc = 0xFFFFFFFF;
+      uint crc = initialValue;
       foreach (byte d in data) crc = (crc >> 8) ^ Table[(crc ^ d) & 0xFF];
       return ~crc;
     }

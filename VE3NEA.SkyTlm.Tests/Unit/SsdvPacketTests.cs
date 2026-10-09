@@ -65,7 +65,7 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     [InlineData("NoFec256", 15, 237)]
     [InlineData("Jy1Sat200", 11, 189)]
     [InlineData("SilverSat195", 15, 176)]
-    [InlineData("Dslwp218", 9, 209)]
+    [InlineData("Dslwp218", 9, 205)]
     public void Variant_HeaderAndPayloadLengths_AreTheDocumentedOnes(string name, int headerLen, int payloadLen)
     {
       var v = Variant(name);

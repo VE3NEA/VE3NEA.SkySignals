@@ -165,13 +165,15 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
       return true;
     }
 
-    /// <summary>CRC-32 over bytes 1..<see cref="SsdvVariant.CrcOffset"/> against the stored value —
-    /// which SSDV writes <b>big-endian</b>, unlike every .NET CRC-32 helper.</summary>
+    /// <summary>CRC-32 over everything after the sync byte up to <see cref="SsdvVariant.CrcOffset"/>
+    /// against the stored value — which SSDV writes <b>big-endian</b>, unlike every .NET CRC-32 helper.
+    /// A variant without a sync byte (DSLWP) is covered from byte 0, as the reference does.</summary>
     private static bool CrcOk(byte[] bytes, SsdvVariant v)
     {
       int at = v.CrcOffset;
+      int start = v.HasSyncType ? 1 : 0;
       uint stored = (uint)(bytes[at] << 24 | bytes[at + 1] << 16 | bytes[at + 2] << 8 | bytes[at + 3]);
-      return Crc32.Compute(bytes.AsSpan(1, at - 1)) == stored;
+      return Crc32.Compute(bytes.AsSpan(start, at - start), v.CrcInit) == stored;
     }
 
     /// <summary>

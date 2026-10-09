@@ -229,10 +229,11 @@ namespace VE3NEA.SkyTlm.Tests.Unit
     public void OnlyAVariantWithItsOwnCrcIsArchivable()
     {
       // the gate that keeps JY1SAT out of the archive: its packets carry no check of their own, so a
-      // stored copy could not later be told from a damaged one, nor from a different picture's
+      // stored copy could not later be told from a damaged one, nor from a different picture's. DSLWP,
+      // and so AO-123, carries a CRC-32 with a magic seed and is archivable.
       SsdvVariant.HadesSa251.HasCrc.Should().BeTrue();
       SsdvVariant.Jy1Sat200.HasCrc.Should().BeFalse();
-      SsdvVariant.Dslwp218.HasCrc.Should().BeFalse();
+      SsdvVariant.Dslwp218.HasCrc.Should().BeTrue();
     }
 
     [Theory]

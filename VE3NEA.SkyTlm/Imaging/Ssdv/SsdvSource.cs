@@ -1,5 +1,6 @@
 using System;
 using VE3NEA.SkyTlm.Core;
+using VE3NEA.SkyTlm.Deframing;
 
 namespace VE3NEA.SkyTlm.Imaging.Ssdv
 {
@@ -95,6 +96,19 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
         if (packet[0] != SsdvVariant.SyncByte || packet[1] != SsdvVariant.Jy1Sat200.TypeByte) return null;
         return packet;
       });
+
+    /// <summary>
+    /// AO-123 / ASRTU-1: one DSLWP-format SSDV packet filling the 218-byte data field of a VC1 frame,
+    /// after the 5-byte TM short header. The gate and the extraction are <see cref="Asrtu1Header.ExtractSsdv"/>,
+    /// which the panel's header description shares.
+    /// <para>
+    /// The spacecraft ID is deliberately not checked. Two IDs have been seen sending the same images byte
+    /// for byte (50, and 517 from a second HIT transmitter), and the images they send are one image set, so
+    /// their packets are allowed to fill the same picture.
+    /// </para>
+    /// </summary>
+    public static readonly SsdvSource Ao123 = new("AO-123", SsdvVariant.Ao123, hasSenderId: false,
+      frame => frame.Framing == Framing.CCSDS ? Asrtu1Header.ExtractSsdv(frame.Bytes) : null);
 
     private const int Ao40FrameLen = 256;
     private const int Jy1SatPacketOffset = Ao40FrameLen - 200;

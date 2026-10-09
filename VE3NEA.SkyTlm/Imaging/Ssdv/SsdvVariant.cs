@@ -35,6 +35,9 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     /// </summary>
     public string Name { get; init; } = "";
 
+    /// <summary>Initial register value of the CRC-32 — 0xFFFFFFFF everywhere except DSLWP's magic seed.</summary>
+    public uint CrcInit { get; init; } = 0xFFFFFFFF;
+
     /// <summary>Standard packet, type 0x66: sync + type + callsign + 9 header bytes, CRC and RS. 205 B payload.</summary>
     public static readonly SsdvVariant Standard256 = new(256, 0x66, true, true, true, true) { Name = "Standard256" };
 
@@ -62,8 +65,23 @@ namespace VE3NEA.SkyTlm.Imaging.Ssdv
     /// </summary>
     public static readonly SsdvVariant SilverSat195 = new(195, 0x67, true, true, true, false) { Name = "SilverSat195" };
 
-    /// <summary>DSLWP / LO-94: no sync, no type byte, no callsign, no CRC, no RS. 209 B payload.</summary>
-    public static readonly SsdvVariant Dslwp218 = new(218, 0x00, false, false, false, false) { Name = "Dslwp218" };
+    /// <summary>
+    /// DSLWP / LO-94: no sync, no type byte, no callsign and no RS, but a CRC-32 over the header and payload
+    /// seeded with <c>CRC32_DSLWP_MAGIC_VALUE</c> (0x4EE4FDE1) instead of 0xFFFFFFFF. 205 B payload.
+    /// <para>
+    /// Earlier taken to carry no CRC and a 209 B payload — wrong, and invisible until real packets arrived:
+    /// the four CRC bytes were then decoded as scan data, smearing every MCU that spans two packets.
+    /// AO-123 put it right on 2026-10-09 (all 367 packets of a SatNOGS harvest pass this CRC).
+    /// </para>
+    /// </summary>
+    public static readonly SsdvVariant Dslwp218 = new(218, 0x00, false, false, true, false)
+    { Name = "Dslwp218", CrcInit = 0x4EE4FDE1 };
+
+    /// <summary>
+    /// AO-123 / ASRTU-1, which <b>is</b> <see cref="Dslwp218"/>: both are Harbin Institute of Technology
+    /// birds, and the 218-byte data field of AO-123's 223-byte CCSDS frame is exactly one DSLWP packet.
+    /// </summary>
+    public static readonly SsdvVariant Ao123 = Dslwp218;
 
     /// <summary>
     /// The variant of that name, or null when it is not one this build knows. Null is the normal answer

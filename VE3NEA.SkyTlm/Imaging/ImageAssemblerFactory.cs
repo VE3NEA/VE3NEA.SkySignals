@@ -1,4 +1,5 @@
 using VE3NEA.SkyTlm.Core;
+using VE3NEA.SkyTlm.Deframing;
 using VE3NEA.SkyTlm.Imaging.RawJpeg;
 using VE3NEA.SkyTlm.Imaging.Ssdv;
 
@@ -11,11 +12,8 @@ namespace VE3NEA.SkyTlm.Imaging
   /// so they cannot drift apart.
   /// <para>
   /// <paramref name="noradId"/> is passed separately because <see cref="SignalParams"/> does not carry
-  /// one — the same arrangement <c>TelemetryRegistry.ForNorad</c> already uses. It is unused today:
-  /// <see cref="Framing.HADES"/> is flown only by HADES-SA, so the framing alone identifies the source.
-  /// The parameter is here because the families still to come need it — the Geoscan fleet shares one
-  /// framing across six satellites, and the Sputnix birds share USP with satellites that send no images
-  /// at all.
+  /// one — the same arrangement <c>TelemetryRegistry.ForNorad</c> already uses. Most framings identify
+  /// their image source alone; <see cref="Framing.CCSDS"/> does not, and AO-123 is selected by it.
   /// </para>
   /// </summary>
   public static class ImageAssemblerFactory
@@ -38,6 +36,10 @@ namespace VE3NEA.SkyTlm.Imaging
       // downlink as USP file transfers. Not all USP satellites image, but the ones that do not simply
       // never send a FILETRANSFER_* message, so the source's gate is the whole filter.
       Framing.USP => new RawJpegAssembler(RawJpegSource.Usp),
+
+      // AO-123: DSLWP-format SSDV on virtual channel 1. CCSDS is flown by many satellites that send no
+      // images, so this is the one entry the NORAD ID has to select.
+      Framing.CCSDS when noradId == Asrtu1Header.NoradId => new SsdvImageAssembler(SsdvSource.Ao123),
 
       _ => null
     };
